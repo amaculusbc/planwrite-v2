@@ -1,0 +1,141 @@
+/* Custom styles for PlanWrite v2 */
+/* Note: Most styling is handled by Tailwind CSS CDN in base.html */
+/* This file is for custom overrides and component styles */
+
+/* Article prose styling */
+.prose-article h1 {
+    font-size: 1.875rem;
+    font-weight: 700;
+    color: #111827;
+    margin-bottom: 1rem;
+}
+
+.prose-article h2 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: #111827;
+    margin-top: 1.5rem;
+    margin-bottom: 0.75rem;
+}
+
+.prose-article h3 {
+    font-size: 1.125rem;
+    font-weight: 500;
+    color: #1f2937;
+    margin-top: 1rem;
+    margin-bottom: 0.5rem;
+}
+
+.prose-article p {
+    color: #374151;
+    line-height: 1.75;
+    margin-bottom: 1rem;
+}
+
+.prose-article ul,
+.prose-article ol {
+    margin-left: 1.5rem;
+    margin-bottom: 1rem;
+    color: #374151;
+}
+
+.prose-article li {
+    margin-bottom: 0.25rem;
+}
+
+.prose-article a {
+    color: #0ea5e9;
+    text-decoration: underline;
+}
+
+.prose-article a:hover {
+    color: #0284c7;
+}
+
+/* Token editor styling */
+.token-editor {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.875rem;
+    line-height: 1.5;
+}
+
+.token-line {
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.25rem;
+}
+
+.token-line:hover {
+    background-color: #f3f4f6;
+}
+
+.token-intro {
+    color: #059669;
+}
+
+.token-shortcode {
+    color: #dc2626;
+}
+
+.token-h2 {
+    color: #2563eb;
+    font-weight: 600;
+}
+
+.token-h3 {
+    color: #7c3aed;
+}
+
+/* Loading states */
+@keyframes shimmer {
+    0% {
+        background-position: -200% 0;
+    }
+    100% {
+        background-position: 200% 0;
+    }
+}
+
+.skeleton {
+    background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+}
+
+/* SSE streaming content */
+.streaming-content {
+    min-height: 200px;
+    transition: all 0.2s ease;
+}
+
+.streaming-cursor {
+    display: inline-block;
+    width: 2px;
+    height: 1em;
+    background-color: #0ea5e9;
+    animation: blink 1s infinite;
+}
+
+@keyframes blink {
+    0%, 50% {
+        opacity: 1;
+    }
+    51%, 100% {
+        opacity: 0;
+    }
+}
+
+/* Compliance badges */
+.compliance-pass {
+    background-color: #dcfce7;
+    color: #166534;
+}
+
+.compliance-warn {
+    background-color: #fef3c7;
+    color: #92400e;
+}
+
+.compliance-fail {
+    background-color: #fee2e2;
+    color: #991b1b;
+}

@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+
+{% block title %}Edit Article - PlanWrite{% endblock %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto space-y-6">
+    <!-- Header -->
+    <div class="flex items-center justify-between">
+        <div>
+            <a href="/" class="text-sm text-gray-500 hover:text-gray-700">&larr; Back to Dashboard</a>
+            <h1 class="mt-2 text-2xl font-bold text-gray-900" id="article-title">Loading...</h1>
+        </div>
+        <div class="flex space-x-2">
+            <button type="button"
+                    class="inline-flex items-center rounded-md bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50">
+                <svg class="mr-1.5 h-4 w-4" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                Version History
+            </button>
+            <button type="button"
+                    class="inline-flex items-center rounded-md bg-primary-600 px-3 py-2 text-sm font-medium text-white shadow-sm hover:bg-primary-700">
+                <svg class="mr-1.5 h-4 w-4" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                Save Changes
+            </button>
+        </div>
+    </div>
+
+    <!-- Article form -->
+    <div id="article-form"
+         hx-get="/api/articles/{{ article_id }}"
+         hx-trigger="load"
+         hx-swap="innerHTML">
+        <!-- Loading state -->
+        <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-8">
+            <div class="animate-pulse space-y-4">
+                <div class="h-4 bg-gray-200 rounded w-1/4"></div>
+                <div class="h-10 bg-gray-200 rounded"></div>
+                <div class="h-4 bg-gray-200 rounded w-1/4"></div>
+                <div class="h-32 bg-gray-200 rounded"></div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
