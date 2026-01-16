@@ -1,0 +1,365 @@
+<!-- Article edit form partial -->
+<div x-data="articleEditor({{ article | tojson }})" class="space-y-6">
+    <!-- Metadata section -->
+    <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+        <h2 class="text-lg font-medium text-gray-900 mb-4">Article Details</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+                <label class="block text-sm font-medium text-gray-700">Title</label>
+                <input type="text" x-model="article.title"
+                       class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700">Keyword</label>
+                <input type="text" x-model="article.keyword"
+                       class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700">State</label>
+                <select x-model="article.state"
+                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm">
+                    <option value="ALL">All States</option>
+                    <option value="AZ">Arizona</option>
+                    <option value="CO">Colorado</option>
+                    <option value="CT">Connecticut</option>
+                    <option value="DC">Washington DC</option>
+                    <option value="IL">Illinois</option>
+                    <option value="IN">Indiana</option>
+                    <option value="IA">Iowa</option>
+                    <option value="KS">Kansas</option>
+                    <option value="KY">Kentucky</option>
+                    <option value="LA">Louisiana</option>
+                    <option value="MA">Massachusetts</option>
+                    <option value="MD">Maryland</option>
+                    <option value="MI">Michigan</option>
+                    <option value="NJ">New Jersey</option>
+                    <option value="NY">New York</option>
+                    <option value="NC">North Carolina</option>
+                    <option value="OH">Ohio</option>
+                    <option value="PA">Pennsylvania</option>
+                    <option value="TN">Tennessee</option>
+                    <option value="VA">Virginia</option>
+                    <option value="WV">West Virginia</option>
+                    <option value="WY">Wyoming</option>
+                </select>
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700">Status</label>
+                <select x-model="article.status"
+                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm">
+                    <option value="draft">Draft</option>
+                    <option value="published">Published</option>
+                    <option value="archived">Archived</option>
+                </select>
+            </div>
+        </div>
+    </div>
+
+    <!-- Outline section -->
+    <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+        <div class="flex items-center justify-between mb-4">
+            <h2 class="text-lg font-medium text-gray-900">Outline</h2>
+            <button type="button" @click="regenerateOutline()"
+                    :disabled="regenerating"
+                    class="inline-flex items-center rounded-md bg-white px-3 py-1.5 text-sm font-medium text-gray-700 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50 disabled:opacity-50">
+                <svg class="mr-1.5 h-4 w-4" :class="{'animate-spin': regenerating}" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+                </svg>
+                Regenerate
+            </button>
+        </div>
+        <textarea x-model="article.outline" rows="10"
+                  class="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 font-mono text-sm"
+                  placeholder="[INTRO]&#10;[SHORTCODE]&#10;[H2: Section Title]&#10;..."></textarea>
+        <p class="mt-2 text-xs text-gray-500">One token per line: [INTRO], [SHORTCODE], [H2: Title], [H3: Title]</p>
+    </div>
+
+    <!-- Draft section -->
+    <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+        <div class="flex items-center justify-between mb-4">
+            <h2 class="text-lg font-medium text-gray-900">Draft</h2>
+            <div class="flex items-center space-x-2">
+                <span class="text-sm text-gray-500" x-text="wordCount + ' words'"></span>
+                <button type="button" @click="regenerateDraft()"
+                        :disabled="regenerating"
+                        class="inline-flex items-center rounded-md bg-white px-3 py-1.5 text-sm font-medium text-gray-700 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50 disabled:opacity-50">
+                    <svg class="mr-1.5 h-4 w-4" :class="{'animate-spin': regenerating}" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+                    </svg>
+                    Regenerate
+                </button>
+            </div>
+        </div>
+        <textarea x-model="article.draft" rows="20"
+                  class="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 font-mono text-sm"
+                  placeholder="Article content in Markdown..."></textarea>
+    </div>
+
+    <!-- Compliance section -->
+    <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+        <div class="flex items-center justify-between mb-4">
+            <h2 class="text-lg font-medium text-gray-900">Compliance Check</h2>
+            <button type="button" @click="validateContent()"
+                    :disabled="validating"
+                    class="inline-flex items-center rounded-md bg-white px-3 py-1.5 text-sm font-medium text-gray-700 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50 disabled:opacity-50">
+                <svg class="mr-1.5 h-4 w-4" :class="{'animate-spin': validating}" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                Validate
+            </button>
+        </div>
+
+        <template x-if="complianceScore !== null">
+            <div class="space-y-4">
+                <!-- Score -->
+                <div class="flex items-center space-x-3">
+                    <div class="flex-shrink-0">
+                        <div class="h-12 w-12 rounded-full flex items-center justify-center"
+                             :class="{
+                                 'bg-green-100 text-green-800': complianceScore >= 90,
+                                 'bg-yellow-100 text-yellow-800': complianceScore >= 70 && complianceScore < 90,
+                                 'bg-red-100 text-red-800': complianceScore < 70
+                             }">
+                            <span class="text-lg font-bold" x-text="complianceScore"></span>
+                        </div>
+                    </div>
+                    <div>
+                        <p class="text-sm font-medium text-gray-900">Compliance Score</p>
+                        <p class="text-sm text-gray-500" x-text="complianceIssues.length + ' issues found'"></p>
+                    </div>
+                </div>
+
+                <!-- Issues -->
+                <template x-if="complianceIssues.length > 0">
+                    <ul class="divide-y divide-gray-200 border border-gray-200 rounded-md">
+                        <template x-for="issue in complianceIssues" :key="issue.message">
+                            <li class="px-4 py-3 flex items-start space-x-3">
+                                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium"
+                                      :class="{
+                                          'bg-red-100 text-red-800': issue.severity === 'error',
+                                          'bg-yellow-100 text-yellow-800': issue.severity === 'warning',
+                                          'bg-blue-100 text-blue-800': issue.severity === 'info'
+                                      }"
+                                      x-text="issue.severity"></span>
+                                <span class="text-sm text-gray-700" x-text="issue.message"></span>
+                            </li>
+                        </template>
+                    </ul>
+                </template>
+            </div>
+        </template>
+
+        <template x-if="complianceScore === null">
+            <p class="text-sm text-gray-500">Click "Validate" to check content compliance.</p>
+        </template>
+    </div>
+
+    <!-- Actions -->
+    <div class="flex items-center justify-between">
+        <div class="flex space-x-2">
+            <button type="button" @click="exportMarkdown()"
+                    class="inline-flex items-center rounded-md bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50">
+                Export MD
+            </button>
+            <button type="button" @click="exportHTML()"
+                    class="inline-flex items-center rounded-md bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50">
+                Export HTML
+            </button>
+            <button type="button" @click="copyToClipboard()"
+                    class="inline-flex items-center rounded-md bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50">
+                Copy
+            </button>
+        </div>
+        <div class="flex space-x-2">
+            <button type="button" @click="deleteArticle()"
+                    class="inline-flex items-center rounded-md bg-red-50 px-3 py-2 text-sm font-medium text-red-700 shadow-sm ring-1 ring-inset ring-red-300 hover:bg-red-100">
+                Archive
+            </button>
+            <button type="button" @click="saveArticle()"
+                    :disabled="saving"
+                    class="inline-flex items-center rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-primary-700 disabled:opacity-50">
+                <svg x-show="saving" class="animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                Save Changes
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+function articleEditor(initialData) {
+    return {
+        article: initialData,
+        regenerating: false,
+        validating: false,
+        saving: false,
+        complianceScore: null,
+        complianceIssues: [],
+
+        get wordCount() {
+            return this.article.draft ? this.article.draft.split(/\s+/).filter(w => w).length : 0;
+        },
+
+        init() {
+            // Update page title
+            document.getElementById('article-title').textContent = this.article.title || 'Untitled Article';
+        },
+
+        async regenerateOutline() {
+            this.regenerating = true;
+            try {
+                const tokens = this.article.outline ? this.article.outline.split('\n').filter(t => t.trim()) : [];
+                const resp = await fetch('/api/generate/outline/sync', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        keyword: this.article.keyword,
+                        title: this.article.title,
+                        state: this.article.state || 'ALL',
+                        offer_id: this.article.offer_id
+                    })
+                });
+                const data = await resp.json();
+                if (data.outline) {
+                    this.article.outline = data.outline.join('\n');
+                }
+            } catch (e) {
+                console.error('Failed to regenerate outline:', e);
+            } finally {
+                this.regenerating = false;
+            }
+        },
+
+        async regenerateDraft() {
+            this.regenerating = true;
+            try {
+                const tokens = this.article.outline ? this.article.outline.split('\n').filter(t => t.trim()) : [];
+                const resp = await fetch('/api/generate/draft/sync', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        outline_tokens: tokens,
+                        keyword: this.article.keyword,
+                        title: this.article.title,
+                        state: this.article.state || 'ALL',
+                        offer_id: this.article.offer_id
+                    })
+                });
+                const data = await resp.json();
+                if (data.draft) {
+                    this.article.draft = data.draft;
+                }
+            } catch (e) {
+                console.error('Failed to regenerate draft:', e);
+            } finally {
+                this.regenerating = false;
+            }
+        },
+
+        async validateContent() {
+            this.validating = true;
+            try {
+                const resp = await fetch('/api/generate/validate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        content: this.article.draft,
+                        state: this.article.state || 'ALL'
+                    })
+                });
+                const data = await resp.json();
+                this.complianceScore = data.compliance_score || 0;
+                this.complianceIssues = data.issues || [];
+            } catch (e) {
+                console.error('Validation failed:', e);
+            } finally {
+                this.validating = false;
+            }
+        },
+
+        async saveArticle() {
+            this.saving = true;
+            try {
+                const resp = await fetch(`/api/articles/${this.article.id}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        title: this.article.title,
+                        keyword: this.article.keyword,
+                        state: this.article.state,
+                        status: this.article.status,
+                        outline: this.article.outline,
+                        draft: this.article.draft,
+                        offer_id: this.article.offer_id
+                    })
+                });
+                if (resp.ok) {
+                    // Show success notification
+                    alert('Article saved successfully!');
+                }
+            } catch (e) {
+                console.error('Save failed:', e);
+                alert('Failed to save article');
+            } finally {
+                this.saving = false;
+            }
+        },
+
+        async deleteArticle() {
+            if (!confirm('Are you sure you want to archive this article?')) return;
+
+            try {
+                const resp = await fetch(`/api/articles/${this.article.id}`, {
+                    method: 'DELETE'
+                });
+                if (resp.ok) {
+                    window.location.href = '/';
+                }
+            } catch (e) {
+                console.error('Delete failed:', e);
+            }
+        },
+
+        exportMarkdown() {
+            const blob = new Blob([this.article.draft], { type: 'text/markdown' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${this.article.keyword || 'article'}.md`;
+            a.click();
+            URL.revokeObjectURL(url);
+        },
+
+        exportHTML() {
+            // Simple markdown to HTML conversion
+            let html = this.article.draft
+                .replace(/^### (.*$)/gim, '<h3>$1</h3>')
+                .replace(/^## (.*$)/gim, '<h2>$1</h2>')
+                .replace(/^# (.*$)/gim, '<h1>$1</h1>')
+                .replace(/\*\*(.*)\*\*/gim, '<strong>$1</strong>')
+                .replace(/\*(.*)\*/gim, '<em>$1</em>')
+                .replace(/\[(.*?)\]\((.*?)\)/gim, '<a href="$2">$1</a>')
+                .replace(/\n/gim, '<br>');
+
+            const blob = new Blob([html], { type: 'text/html' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${this.article.keyword || 'article'}.html`;
+            a.click();
+            URL.revokeObjectURL(url);
+        },
+
+        async copyToClipboard() {
+            try {
+                await navigator.clipboard.writeText(this.article.draft);
+                alert('Copied to clipboard!');
+            } catch (e) {
+                console.error('Copy failed:', e);
+            }
+        }
+    };
+}
+</script>

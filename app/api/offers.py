@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.offer import Offer
 from app.schemas.offer import OfferCreate, OfferResponse
+from app.services.offers import sync_offers_from_sheets, get_offers
 
 router = APIRouter()
 
@@ -17,22 +18,11 @@ async def list_offers(
     state: str | None = None,
     brand: str | None = None,
 ):
-    """List all offers with optional filters."""
-    query = select(Offer).order_by(Offer.brand)
+    """List all offers with optional filters.
 
-    if brand:
-        query = query.where(Offer.brand == brand)
-
-    # State filtering handled in Python since states is JSON
-    result = await db.execute(query)
-    offers = result.scalars().all()
-
-    if state and state != "ALL":
-        offers = [
-            o for o in offers
-            if state in (o.states or []) or "ALL" in (o.states or [])
-        ]
-
+    Auto-syncs from Google Sheets if cache is expired.
+    """
+    offers = await get_offers(db, state=state, brand=brand)
     return offers
 
 
@@ -65,13 +55,17 @@ async def create_offer(
 
 
 @router.post("/sync")
-async def sync_offers(
+async def sync_offers_endpoint(
     db: AsyncSession = Depends(get_db),
+    force: bool = False,
 ):
     """Sync offers from Google Sheets."""
-    # TODO: Implement Google Sheets sync
-    # This will be ported from v1's offers_layer.py
-    return {"status": "sync not yet implemented"}
+    try:
+        count = await sync_offers_from_sheets(db)
+        await db.commit()
+        return {"status": "success", "synced": count}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 
 @router.get("/brands/list")
