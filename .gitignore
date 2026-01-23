@@ -21,6 +21,7 @@ dist/
 
 # Storage (runtime files)
 storage/*.db
+storage/*.pkl
 storage/faiss_index/
 storage/exports/
 
