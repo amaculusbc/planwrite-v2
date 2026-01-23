@@ -11,7 +11,8 @@ from app.services.llm import generate_completion, generate_completion_streaming
 from app.services.rag import query_articles
 from app.services.internal_links import suggest_links_for_section, format_links_markdown
 from app.services.compliance import get_disclaimer_for_state
-from app.services.offers import render_offer_block
+from app.services.bam_offers import render_bam_offer_block
+from app.services.style import format_constraints_for_prompt, get_rag_usage_guidance
 
 
 def today_long() -> str:
@@ -95,13 +96,17 @@ async def generate_section(
 ) -> str:
     """Generate content for a single H2 or H3 section."""
 
-    # Get RAG snippets for this section
+    # Get RAG snippets for STYLE reference (not facts)
     query = f"{heading_title} {keyword}"
     snippets = await query_articles(query, k=4, snippet_chars=600)
     snippets_md = "\n\n".join([
         f"[{s['source']}]: {s['snippet']}"
         for s in snippets
     ]) or "(none)"
+
+    # Get style constraints
+    style_constraints = format_constraints_for_prompt(style_profile)
+    rag_guidance = get_rag_usage_guidance()
 
     # Get internal link suggestions
     links = await suggest_links_for_section(heading_title, [keyword], k=3)
@@ -113,7 +118,7 @@ async def generate_section(
     # Build rules
     rules = [
         "Begin directly under the heading with helpful, concise copy (no fluff).",
-        "Paraphrase background snippets; do not copy sentences verbatim.",
+        "Match the TONE and STYLE of the example snippets, but write original content.",
         "Use only the provided internal links where they fit naturally; do not invent URLs.",
         "Maintain a neutral, compliant tone; avoid implying guaranteed outcomes.",
         "No tables, no HTML except the supplied CTA block (if any).",
@@ -126,12 +131,16 @@ async def generate_section(
         rules.append("Include at most one brief CTA sentence if it serves the reader.")
 
     system_prompt = """You are an SEO editor writing short, timely Top Stories sections for U.S. sports betting.
-Your output must be well-structured Markdown paragraphs, compliant, and scannable."""
+Your output must be well-structured Markdown paragraphs, compliant, and scannable.
+
+CRITICAL: The "WRITING STYLE EXAMPLES" section shows HOW we write (tone, structure, readability).
+Do NOT copy facts or claims from those examples. Write original content matching our style."""
 
     user_prompt = f"""WRITE UNDER THIS HEADING EXACTLY (DO NOT PRINT THE HEADING):
 {heading_title}
 
-STYLE PROFILE: {style_profile}
+STYLE CONSTRAINTS:
+{style_constraints}
 
 BRAND/OFFER CONTEXT (use only if relevant; no hard sell):
 - Brand: {brand or "(none)"}
@@ -141,7 +150,9 @@ BRAND/OFFER CONTEXT (use only if relevant; no hard sell):
 INTERNAL LINKS (weave in if natural; 0-3 max):
 {links_md}
 
-BACKGROUND SNIPPETS (house articles; paraphrase only):
+WRITING STYLE EXAMPLES (match tone/structure, NOT facts):
+{rag_guidance}
+
 {snippets_md}
 
 DISCLAIMER (append if required):
@@ -197,7 +208,7 @@ async def generate_draft(
 
         elif token_type == "shortcode":
             if offer:
-                block = render_offer_block(offer)
+                block = render_bam_offer_block(offer)
                 parts.append(block + "\n")
             else:
                 parts.append("> [Promo module placeholder]\n")
@@ -282,7 +293,7 @@ async def generate_draft_streaming(
 
         elif token_type == "shortcode":
             if offer:
-                block = render_offer_block(offer)
+                block = render_bam_offer_block(offer)
             else:
                 block = "> [Promo module placeholder]\n"
             content = block + "\n"

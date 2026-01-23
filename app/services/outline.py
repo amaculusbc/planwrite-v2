@@ -101,7 +101,8 @@ OFFER: {offer_text or "(none)"}
 STATE: {state}
 STYLE: {style_profile}
 
-REFERENCE ARTICLES (for structure inspiration):
+STRUCTURE EXAMPLES (use for outline format inspiration, NOT content):
+These show how we typically structure similar articles.
 {rag_context}
 
 {f"COMPETITOR CONTEXT:{chr(10)}{competitor_context}" if competitor_context else ""}
@@ -172,7 +173,8 @@ OFFER: {offer_text or "(none)"}
 STATE: {state}
 STYLE: {style_profile}
 
-REFERENCE ARTICLES (for structure inspiration):
+STRUCTURE EXAMPLES (use for outline format inspiration, NOT content):
+These show how we typically structure similar articles.
 {rag_context}
 
 {f"COMPETITOR CONTEXT:{chr(10)}{competitor_context}" if competitor_context else ""}
