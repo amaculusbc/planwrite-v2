@@ -19,20 +19,20 @@ from app.services.draft import (
     generate_draft_streaming,
 )
 from app.services.compliance import validate_content as validate_content_svc
-from app.services.offers import get_offer_by_id
+from app.services.bam_offers import get_offer_by_id_bam
 
 router = APIRouter()
 
 
 async def _stream_outline(request: OutlineRequest, db: AsyncSession) -> AsyncGenerator[str, None]:
     """Stream outline generation."""
-    # Get offer details if provided
+    # Get offer details from BAM API
     offer = None
     if request.offer_id:
-        offer = await get_offer_by_id(db, request.offer_id)
+        offer = await get_offer_by_id_bam(request.offer_id)
 
-    brand = offer.brand if offer else ""
-    offer_text = offer.offer_text if offer else ""
+    brand = offer.get("brand", "") if offer else ""
+    offer_text = offer.get("offer_text", "") if offer else ""
 
     # Parse competitor URLs if provided
     competitor_context = ""
@@ -55,17 +55,18 @@ async def _stream_outline(request: OutlineRequest, db: AsyncSession) -> AsyncGen
 
 async def _stream_draft(request: DraftRequest, db: AsyncSession) -> AsyncGenerator[str, None]:
     """Stream draft generation."""
-    # Get offer details if provided
+    # Get offer details from BAM API
     offer_dict = None
     if request.offer_id:
-        offer = await get_offer_by_id(db, request.offer_id)
+        offer = await get_offer_by_id_bam(request.offer_id)
         if offer:
             offer_dict = {
-                "brand": offer.brand,
-                "offer_text": offer.offer_text,
-                "bonus_code": offer.bonus_code,
-                "switchboard_link": offer.switchboard_link,
-                "terms": offer.terms,
+                "brand": offer.get("brand", ""),
+                "offer_text": offer.get("offer_text", ""),
+                "bonus_code": offer.get("bonus_code", ""),
+                "switchboard_link": offer.get("switchboard_link", ""),
+                "terms": offer.get("terms", ""),
+                "shortcode": offer.get("shortcode", ""),
             }
 
     try:
@@ -104,13 +105,13 @@ async def generate_outline_sync(
     db: AsyncSession = Depends(get_db),
 ):
     """Generate outline synchronously (non-streaming)."""
-    # Get offer details if provided
+    # Get offer details from BAM API
     offer = None
     if request.offer_id:
-        offer = await get_offer_by_id(db, request.offer_id)
+        offer = await get_offer_by_id_bam(request.offer_id)
 
-    brand = offer.brand if offer else ""
-    offer_text = offer.offer_text if offer else ""
+    brand = offer.get("brand", "") if offer else ""
+    offer_text = offer.get("offer_text", "") if offer else ""
 
     competitor_context = ""
     if request.competitor_urls:
@@ -151,17 +152,18 @@ async def generate_draft_sync(
     db: AsyncSession = Depends(get_db),
 ):
     """Generate draft synchronously (non-streaming)."""
-    # Get offer details if provided
+    # Get offer details from BAM API
     offer_dict = None
     if request.offer_id:
-        offer = await get_offer_by_id(db, request.offer_id)
+        offer = await get_offer_by_id_bam(request.offer_id)
         if offer:
             offer_dict = {
-                "brand": offer.brand,
-                "offer_text": offer.offer_text,
-                "bonus_code": offer.bonus_code,
-                "switchboard_link": offer.switchboard_link,
-                "terms": offer.terms,
+                "brand": offer.get("brand", ""),
+                "offer_text": offer.get("offer_text", ""),
+                "bonus_code": offer.get("bonus_code", ""),
+                "switchboard_link": offer.get("switchboard_link", ""),
+                "terms": offer.get("terms", ""),
+                "shortcode": offer.get("shortcode", ""),
             }
 
     draft = await gen_draft(

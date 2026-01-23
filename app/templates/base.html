@@ -89,13 +89,13 @@
 
                         <!-- Main nav -->
                         <div class="hidden sm:ml-8 sm:flex sm:space-x-6">
-                            <a href="/"
-                               class="inline-flex items-center border-b-2 {% if request.url.path == '/' %}border-primary-500 text-gray-900{% else %}border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700{% endif %} px-1 pt-1 text-sm font-medium">
-                                Dashboard
-                            </a>
                             <a href="/articles/new"
                                class="inline-flex items-center border-b-2 {% if '/articles/new' in request.url.path %}border-primary-500 text-gray-900{% else %}border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700{% endif %} px-1 pt-1 text-sm font-medium">
-                                New Article
+                                Generator
+                            </a>
+                            <a href="/"
+                               class="inline-flex items-center border-b-2 {% if request.url.path == '/' %}border-primary-500 text-gray-900{% else %}border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700{% endif %} px-1 pt-1 text-sm font-medium">
+                                Articles
                             </a>
                             <a href="/batch"
                                class="inline-flex items-center border-b-2 {% if '/batch' in request.url.path %}border-primary-500 text-gray-900{% else %}border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700{% endif %} px-1 pt-1 text-sm font-medium">

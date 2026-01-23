@@ -1,4 +1,7 @@
-"""Offer management endpoints."""
+"""Offer management endpoints.
+
+Uses BAM API as the primary source for offers.
+"""
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -7,75 +10,38 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.offer import Offer
 from app.schemas.offer import OfferCreate, OfferResponse
-from app.services.offers import sync_offers_from_sheets, get_offers
+from app.services.bam_offers import (
+    get_offers_bam,
+    get_offer_by_id_bam,
+    get_all_brands,
+    fetch_offers_from_bam,
+)
 
 router = APIRouter()
 
 
-@router.get("/", response_model=list[OfferResponse])
+@router.get("/")
 async def list_offers(
-    db: AsyncSession = Depends(get_db),
     state: str | None = None,
     brand: str | None = None,
+    force_refresh: bool = False,
 ):
-    """List all offers with optional filters.
+    """List all offers from BAM API with optional filters.
 
-    Auto-syncs from Google Sheets if cache is expired.
+    Args:
+        state: Filter by state code (e.g., "NJ", "PA")
+        brand: Filter by brand name
+        force_refresh: Bypass cache and fetch fresh data
     """
-    offers = await get_offers(db, state=state, brand=brand)
+    offers = await get_offers_bam(state=state, brand=brand, force_refresh=force_refresh)
     return offers
 
 
-@router.get("/{offer_id}", response_model=OfferResponse)
-async def get_offer(
-    offer_id: str,
-    db: AsyncSession = Depends(get_db),
-):
-    """Get a single offer by ID."""
-    result = await db.execute(select(Offer).where(Offer.id == offer_id))
-    offer = result.scalar_one_or_none()
-
-    if not offer:
-        raise HTTPException(status_code=404, detail="Offer not found")
-
-    return offer
-
-
-@router.post("/", response_model=OfferResponse)
-async def create_offer(
-    offer: OfferCreate,
-    db: AsyncSession = Depends(get_db),
-):
-    """Create a new offer."""
-    db_offer = Offer(**offer.model_dump())
-    db.add(db_offer)
-    await db.flush()
-    await db.refresh(db_offer)
-    return db_offer
-
-
-@router.post("/sync")
-async def sync_offers_endpoint(
-    db: AsyncSession = Depends(get_db),
-    force: bool = False,
-):
-    """Sync offers from Google Sheets."""
-    try:
-        count = await sync_offers_from_sheets(db)
-        await db.commit()
-        return {"status": "success", "synced": count}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
-
-
 @router.get("/brands/list")
-async def list_brands(
-    db: AsyncSession = Depends(get_db),
-):
-    """Get unique list of brands."""
-    result = await db.execute(select(Offer.brand).distinct())
-    brands = [row[0] for row in result.all() if row[0]]
-    return sorted(brands)
+async def list_brands():
+    """Get unique list of brands from BAM API."""
+    brands = await get_all_brands()
+    return brands
 
 
 @router.get("/states/list")
@@ -84,5 +50,26 @@ async def list_states():
     return [
         "ALL", "AZ", "CO", "CT", "DC", "IA", "IL", "IN", "KS", "KY",
         "LA", "MA", "MD", "MI", "NC", "NJ", "NY", "OH", "PA", "TN",
-        "VA", "WV",
+        "VA", "WV", "WY",
     ]
+
+
+@router.post("/sync")
+async def sync_offers_endpoint(force: bool = True):
+    """Force refresh offers from BAM API."""
+    try:
+        offers = await fetch_offers_from_bam(force_refresh=force)
+        return {"status": "success", "synced": len(offers)}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@router.get("/{offer_id}")
+async def get_offer(offer_id: str):
+    """Get a single offer by ID."""
+    offer = await get_offer_by_id_bam(offer_id)
+
+    if not offer:
+        raise HTTPException(status_code=404, detail="Offer not found")
+
+    return offer
