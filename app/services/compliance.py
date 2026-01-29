@@ -5,6 +5,7 @@ SEO best practices, and link validation.
 """
 
 import re
+from typing import Any
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -92,6 +93,91 @@ STATE_DISCLAIMERS = {
 ALLOWED_DOMAINS = [
     "example.com",  # Replace with your actual domains
 ]
+
+
+def _extract_expiration_days(terms: str | None) -> int | None:
+    """Extract expiration days from terms text without defaulting."""
+    if not terms:
+        return None
+    text = terms.lower()
+    patterns = [
+        r"expire[sd]?\s+(?:in|within)\s+(\d+)\s+days?",
+        r"valid\s+for\s+(\d+)\s+days?",
+        r"must\s+be\s+used\s+within\s+(\d+)\s+days?",
+        r"(\d+)[-\s]day\s+expiration",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            try:
+                return int(match.group(1))
+            except (ValueError, IndexError):
+                continue
+    return None
+
+
+def check_offer_facts(
+    content: str,
+    offer: dict[str, Any] | None = None,
+    keyword: str | None = None,
+) -> list[ComplianceIssue]:
+    """Check offer-specific facts (bonus code, expiration days, keyword density)."""
+    issues: list[ComplianceIssue] = []
+    if not content:
+        return issues
+
+    if offer:
+        bonus_code = str(offer.get("bonus_code") or "").strip()
+        if bonus_code and not re.search(re.escape(bonus_code), content, re.IGNORECASE):
+            issues.append(ComplianceIssue(
+                type="missing_bonus_code",
+                message=f"Bonus code '{bonus_code}' not found in content",
+                severity=IssueSeverity.ERROR,
+                suggestion="Include the exact promo code in the article body",
+            ))
+
+        expected_days = offer.get("bonus_expiration_days")
+        if expected_days is None:
+            expected_days = _extract_expiration_days(str(offer.get("terms") or ""))
+
+        if expected_days is not None:
+            matches = re.findall(
+                r"expire[sd]?\s+(?:in|within)\s+(\d+)\s+days?",
+                content,
+                flags=re.IGNORECASE,
+            )
+            for match in matches:
+                try:
+                    found_days = int(match)
+                except ValueError:
+                    continue
+                if found_days != int(expected_days):
+                    issues.append(ComplianceIssue(
+                        type="expiration_mismatch",
+                        message=f"Expiration mismatch: content says {found_days} days, expected {expected_days} days",
+                        severity=IssueSeverity.ERROR,
+                        suggestion="Update expiration days to match the offer terms",
+                    ))
+                    break
+
+    if keyword:
+        keyword_count = len(re.findall(re.escape(keyword), content, flags=re.IGNORECASE))
+        if keyword_count < 6:
+            issues.append(ComplianceIssue(
+                type="keyword_density_low",
+                message=f"Low keyword density: '{keyword}' appears {keyword_count} times (target 6-9)",
+                severity=IssueSeverity.WARNING,
+                suggestion="Include the exact keyword a few more times naturally",
+            ))
+        elif keyword_count > 9:
+            issues.append(ComplianceIssue(
+                type="keyword_density_high",
+                message=f"High keyword density: '{keyword}' appears {keyword_count} times (target 6-9)",
+                severity=IssueSeverity.WARNING,
+                suggestion="Reduce exact keyword repetitions to avoid stuffing",
+            ))
+
+    return issues
 
 
 def get_disclaimer_for_state(state: str) -> str:
@@ -258,6 +344,8 @@ def validate_content(
     state: str = "ALL",
     check_links: bool = True,
     allowed_domains: list[str] | None = None,
+    keyword: str | None = None,
+    offer: dict[str, Any] | None = None,
 ) -> ComplianceResult:
     """Run all compliance checks on content.
 
@@ -270,6 +358,7 @@ def validate_content(
     issues.extend(check_responsible_gaming(content))
     issues.extend(check_cta_links(content))
     issues.extend(check_seo(content))
+    issues.extend(check_offer_facts(content, offer=offer, keyword=keyword))
 
     if check_links:
         issues.extend(check_link_quality(content, allowed_domains))

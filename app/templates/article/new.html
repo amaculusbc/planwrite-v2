@@ -54,10 +54,23 @@
             <h2 class="text-lg font-semibold text-gray-900">Article Setup</h2>
 
             <form @submit.prevent="generateOutline" class="space-y-4">
+                <!-- BAM property selector -->
+                <div>
+                    <label for="offer_property" class="block text-sm font-medium text-gray-700">Property</label>
+                    <select x-model="form.offer_property" id="offer_property" name="offer_property"
+                            @change="loadOffers()"
+                            class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm">
+                        <template x-for="prop in properties" :key="prop.key">
+                            <option :value="prop.key" x-text="prop.label"></option>
+                        </template>
+                    </select>
+                </div>
+
                 <!-- Offer selection -->
                 <div>
                     <label for="offer_id" class="block text-sm font-medium text-gray-700">Select Offer</label>
                     <select x-model="form.offer_id" id="offer_id" name="offer_id"
+                            @change="updateAltOffers()"
                             class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm">
                         <option value="">-- No offer (generic article) --</option>
                         <template x-for="offer in offers" :key="offer.id">
@@ -65,12 +78,33 @@
                         </template>
                     </select>
                     <p class="mt-1 text-xs text-gray-500">Leave empty for a generic article without promo</p>
+                    <button type="button" @click="refreshOffers()"
+                            class="mt-2 inline-flex items-center rounded-md bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50">
+                        Refresh offers
+                    </button>
+                </div>
+
+                <!-- Alternative offers -->
+                <div x-show="form.offer_id && altOffers.length > 0" x-transition>
+                    <label class="block text-sm font-medium text-gray-700">Alternative Offers (same brand)</label>
+                    <p class="mt-1 text-xs text-gray-500">Select up to 2 additional promo cards to include</p>
+                    <div class="mt-2 space-y-2">
+                        <template x-for="alt in altOffers" :key="alt.id">
+                            <label class="flex items-center space-x-2 text-sm text-gray-700">
+                                <input type="checkbox"
+                                       :checked="form.alt_offer_ids.includes(alt.id)"
+                                       @change="toggleAltOffer(alt.id, $event.target.checked, $event)"
+                                       class="rounded border-gray-300 text-primary-600 focus:ring-primary-500">
+                                <span x-text="alt.label"></span>
+                            </label>
+                        </template>
+                    </div>
                 </div>
 
                 <!-- State -->
                 <div>
                     <label for="state" class="block text-sm font-medium text-gray-700">State</label>
-                    <select x-model="form.state" id="state" name="state"
+                    <select x-model="form.state" id="state" name="state" @change="loadOffers()"
                             class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm">
                         <option value="ALL">All States</option>
                         <option value="NY">New York</option>
@@ -84,6 +118,122 @@
                         <option value="MA">Massachusetts</option>
                         <option value="KY">Kentucky</option>
                     </select>
+                </div>
+
+                <!-- Game Context Section -->
+                <div class="border-t border-gray-200 pt-4 mt-4">
+                    <h3 class="text-sm font-medium text-gray-900 mb-3">Game Context (Optional)</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <!-- Sport selector -->
+                        <div>
+                            <label for="sport" class="block text-sm font-medium text-gray-700">Sport</label>
+                            <select x-model="form.sport" id="sport" name="sport" @change="loadGames()"
+                                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm">
+                                <option value="">-- Select Sport --</option>
+                                <template x-for="sport in sportsList" :key="sport.code">
+                                    <option :value="sport.code" x-text="sport.label"></option>
+                                </template>
+                            </select>
+                        </div>
+
+                        <!-- Date picker -->
+                        <div>
+                            <label for="game_date" class="block text-sm font-medium text-gray-700">Date</label>
+                            <input type="date" x-model="form.game_date" id="game_date" name="game_date" @change="loadGames()"
+                                   class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm">
+                        </div>
+
+                        <!-- Game selector -->
+                        <div>
+                            <label for="game_id" class="block text-sm font-medium text-gray-700">Game</label>
+                            <select x-model="form.game_id" id="game_id" name="game_id" @change="loadOdds()"
+                                    :disabled="!form.sport || games.length === 0"
+                                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm disabled:bg-gray-100">
+                                <option value="">-- Select Game --</option>
+                                <template x-for="game in games" :key="game.id">
+                                    <option :value="game.id" x-text="game.label"></option>
+                                </template>
+                            </select>
+                            <p x-show="loadingGames" class="mt-1 text-xs text-gray-500">Loading games...</p>
+                            <p x-show="!loadingGames && form.sport && games.length === 0" class="mt-1 text-xs text-yellow-600">No games found for this date</p>
+                        </div>
+                    </div>
+
+                    <!-- Odds Display Panel -->
+                    <div x-show="selectedGame && odds" x-transition class="mt-4 bg-gray-50 rounded-lg p-4">
+                        <div class="flex items-center justify-between mb-3">
+                            <h4 class="text-sm font-medium text-gray-900" x-text="selectedGame ? selectedGame.headline : ''"></h4>
+                            <span class="text-xs text-gray-500" x-text="selectedGame ? selectedGame.time_display : ''"></span>
+                        </div>
+
+                        <!-- Odds grid -->
+                        <div class="grid grid-cols-4 gap-2 text-xs" x-show="odds && odds.spreads">
+                            <div class="font-medium text-gray-500">Book</div>
+                            <div class="font-medium text-gray-500">Spread</div>
+                            <div class="font-medium text-gray-500">ML</div>
+                            <div class="font-medium text-gray-500">Total</div>
+
+                            <template x-for="book in Object.keys(odds.spreads || {})" :key="book">
+                                <template x-if="odds.spreads[book]">
+                                    <div class="contents">
+                                        <div class="font-medium text-gray-700" x-text="book"></div>
+                                        <div class="text-gray-600">
+                                            <span x-text="odds.spreads[book]?.away_line || '-'"></span>
+                                            <span class="text-gray-400" x-text="odds.spreads[book]?.away_odds ? `(${odds.spreads[book].away_odds})` : ''"></span>
+                                        </div>
+                                        <div class="text-gray-600">
+                                            <span x-text="odds.moneylines && odds.moneylines[book]?.away_odds || '-'"></span>
+                                        </div>
+                                        <div class="text-gray-600">
+                                            <span x-text="odds.totals && odds.totals[book]?.total || '-'"></span>
+                                        </div>
+                                    </div>
+                                </template>
+                            </template>
+                        </div>
+
+                        <p x-show="!odds || !odds.spreads" class="text-sm text-gray-500">No odds available for this game</p>
+
+                        <!-- Bet Example Builder -->
+                        <div class="mt-4 pt-4 border-t border-gray-200">
+                            <h4 class="text-sm font-medium text-gray-900 mb-2">Bet Example Builder</h4>
+                            <div class="grid grid-cols-3 gap-3">
+                                <div>
+                                    <label class="block text-xs text-gray-500">Bet Amount</label>
+                                    <input type="number" x-model="betBuilder.amount" min="1" max="1000"
+                                           class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                                           placeholder="100">
+                                </div>
+                                <div>
+                                    <label class="block text-xs text-gray-500">Bet Type</label>
+                                    <select x-model="betBuilder.type"
+                                            class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm">
+                                        <option value="spread">Spread</option>
+                                        <option value="moneyline">Moneyline</option>
+                                        <option value="total">Total</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-xs text-gray-500">Team</label>
+                                    <select x-model="betBuilder.team"
+                                            class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm">
+                                        <option value="away" x-text="selectedGame?.away_team || 'Away'"></option>
+                                        <option value="home" x-text="selectedGame?.home_team || 'Home'"></option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="mt-2">
+                                <button type="button" @click="generateBetExample()"
+                                        class="text-xs text-primary-600 hover:text-primary-800 font-medium">
+                                    Generate bet example text &rarr;
+                                </button>
+                            </div>
+                            <div x-show="betExample" x-transition class="mt-2 p-2 bg-white rounded border text-sm text-gray-700">
+                                <p x-text="betExample"></p>
+                                <button type="button" @click="copyBetExample()" class="mt-1 text-xs text-primary-600 hover:underline">Copy</button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Keyword -->
@@ -152,9 +302,9 @@
                 </label>
                 <textarea x-model="outline" id="outline" name="outline" rows="12"
                           class="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 font-mono text-sm"
-                          placeholder="[INTRO]&#10;[SHORTCODE]&#10;[H2: Main Section]&#10;[H3: Subsection]"></textarea>
+                          placeholder="[INTRO]&#10;[SHORTCODE_MAIN]&#10;[SHORTCODE_1]&#10;[H2: Main Section]&#10;[H3: Subsection]"></textarea>
                 <p class="mt-1 text-xs text-gray-500">
-                    Tokens: [INTRO], [SHORTCODE], [H2: Title], [H3: Title]
+                    Tokens: [INTRO], [SHORTCODE]/[SHORTCODE_MAIN]/[SHORTCODE_1]/[SHORTCODE_2], [H2: Title], [H3: Title]
                 </p>
             </div>
 
@@ -341,15 +491,45 @@ function articleWizard() {
 
         // Form data
         form: {
+            offer_property: 'action_network',
             offer_id: '',
+            alt_offer_ids: [],
             state: 'ALL',
             keyword: '',
             title: '',
-            competitors: ''
+            competitors: '',
+            sport: '',
+            game_date: new Date().toISOString().split('T')[0],
+            game_id: ''
         },
 
         // Offers list
+        properties: [],
+        offersRaw: [],
         offers: [],
+        altOffers: [],
+
+        // Sports and games
+        sportsList: [
+            { code: 'nfl', label: 'NFL' },
+            { code: 'nba', label: 'NBA' },
+            { code: 'mlb', label: 'MLB' },
+            { code: 'nhl', label: 'NHL' },
+            { code: 'ncaaf', label: 'CFB' },
+            { code: 'ncaab', label: 'CBB' }
+        ],
+        games: [],
+        loadingGames: false,
+        selectedGame: null,
+        odds: null,
+
+        // Bet builder
+        betBuilder: {
+            amount: 100,
+            type: 'spread',
+            team: 'away'
+        },
+        betExample: '',
 
         // Content
         outline: '',
@@ -362,22 +542,225 @@ function articleWizard() {
 
         // Initialize
         init() {
+            console.log('ArticleWizard init called');
+            this.loadProperties();
             this.loadOffers();
+        },
+
+        async loadProperties() {
+            try {
+                const resp = await fetch('/api/offers/properties/list');
+                if (resp.ok) {
+                    const data = await resp.json();
+                    if (data.properties) {
+                        this.properties = Object.entries(data.properties).map(([key, label]) => ({ key, label }));
+                        if (!this.form.offer_property && this.properties.length > 0) {
+                            this.form.offer_property = this.properties[0].key;
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error('Failed to load properties:', e);
+            }
         },
 
         // Load offers from API
         async loadOffers() {
+            console.log('Loading offers...');
             try {
-                const resp = await fetch('/api/offers/');
+                const params = new URLSearchParams();
+                if (this.form.offer_property) params.set('property', this.form.offer_property);
+                if (this.form.state) params.set('state', this.form.state);
+
+                const resp = await fetch(`/api/offers/?${params}`);
+                console.log('Offers response status:', resp.status);
                 if (resp.ok) {
-                    const data = await resp.json();
+                    let data = await resp.json();
+                    // Filter out casino-only offers
+                    data = data.filter(o => {
+                        const text = `${o.offer_text || ''} ${o.affiliate_offer || ''}`.toLowerCase();
+                        return !text.includes('casino') && !text.includes('slots') && !text.includes('poker');
+                    });
+                    this.offersRaw = data;
+                    console.log('Offers loaded:', data.length);
                     this.offers = data.map(o => ({
-                        id: o.id,
+                        id: o.id || o.offer_id,
+                        brand: o.brand,
                         label: `${o.brand}: ${o.offer_text || o.affiliate_offer || 'Offer'}${o.bonus_code ? ` (code: ${o.bonus_code})` : ''}`
                     }));
+                    // Ensure current selection is still valid
+                    if (this.form.offer_id && !this.offersRaw.find(o => (o.id || o.offer_id) === this.form.offer_id)) {
+                        this.form.offer_id = '';
+                        this.form.alt_offer_ids = [];
+                    }
+                    this.updateAltOffers();
+                    console.log('Offers mapped:', this.offers.length);
+                } else {
+                    console.error('Offers response not ok:', resp.status);
                 }
             } catch (e) {
                 console.error('Failed to load offers:', e);
+            }
+        },
+
+        updateAltOffers() {
+            this.altOffers = [];
+            if (!this.form.offer_id) {
+                this.form.alt_offer_ids = [];
+                return;
+            }
+            const main = this.offersRaw.find(o => (o.id || o.offer_id) === this.form.offer_id);
+            if (!main || !main.brand) return;
+            this.altOffers = this.offersRaw
+                .filter(o => o.brand === main.brand && (o.id || o.offer_id) !== this.form.offer_id)
+                .map(o => ({
+                    id: o.id || o.offer_id,
+                    label: `${o.bonus_code ? o.bonus_code + ': ' : ''}${(o.offer_text || o.affiliate_offer || 'Offer').slice(0, 70)}`
+                }));
+            this.form.alt_offer_ids = [];
+        },
+
+        toggleAltOffer(id, checked, evt) {
+            if (checked) {
+                if (this.form.alt_offer_ids.length >= 2) {
+                    if (evt && evt.target) evt.target.checked = false;
+                    this.showStatus('You can select up to 2 alternative offers', 'error');
+                    return;
+                }
+                this.form.alt_offer_ids.push(id);
+            } else {
+                this.form.alt_offer_ids = this.form.alt_offer_ids.filter(x => x !== id);
+            }
+        },
+
+        async refreshOffers() {
+            try {
+                const params = new URLSearchParams();
+                if (this.form.offer_property) params.set('property', this.form.offer_property);
+                await fetch(`/api/offers/sync?${params}`, { method: 'POST' });
+                this.loadOffers();
+                this.showStatus('Offers refreshed', 'info');
+            } catch (e) {
+                this.showStatus('Failed to refresh offers', 'error');
+            }
+        },
+
+        // Load games for selected sport and date
+        async loadGames() {
+            if (!this.form.sport) {
+                this.games = [];
+                this.selectedGame = null;
+                this.odds = null;
+                return;
+            }
+
+            this.loadingGames = true;
+            this.games = [];
+            this.form.game_id = '';
+            this.selectedGame = null;
+            this.odds = null;
+
+            try {
+                const params = new URLSearchParams({
+                    sport: this.form.sport,
+                    date: this.form.game_date
+                });
+                const resp = await fetch(`/api/events/games?${params}`);
+                if (resp.ok) {
+                    const data = await resp.json();
+                    this.games = data.map(g => ({
+                        id: g.id,
+                        label: `${g.away_team} @ ${g.home_team} - ${this.formatGameTime(g.start_time)}`,
+                        ...g
+                    }));
+                }
+            } catch (e) {
+                console.error('Failed to load games:', e);
+            } finally {
+                this.loadingGames = false;
+            }
+        },
+
+        // Load odds for selected game
+        async loadOdds() {
+            if (!this.form.game_id || !this.form.sport) {
+                this.selectedGame = null;
+                this.odds = null;
+                return;
+            }
+
+            // Find selected game data
+            this.selectedGame = this.games.find(g => g.id === this.form.game_id);
+            if (!this.selectedGame) return;
+
+            // Add display info
+            this.selectedGame.headline = `${this.selectedGame.away_team} @ ${this.selectedGame.home_team}`;
+            this.selectedGame.time_display = this.formatGameTime(this.selectedGame.start_time);
+
+            try {
+                const params = new URLSearchParams({
+                    sport: this.form.sport,
+                    away_team: this.selectedGame.away_abbrev || this.selectedGame.away_team,
+                    home_team: this.selectedGame.home_abbrev || this.selectedGame.home_team,
+                    game_date: this.form.game_date
+                });
+                const resp = await fetch(`/api/odds/game?${params}`);
+                if (resp.ok) {
+                    this.odds = await resp.json();
+                } else {
+                    this.odds = null;
+                }
+            } catch (e) {
+                console.error('Failed to load odds:', e);
+                this.odds = null;
+            }
+        },
+
+        // Generate bet example text
+        async generateBetExample() {
+            if (!this.selectedGame || !this.odds) {
+                this.betExample = '';
+                return;
+            }
+
+            try {
+                const resp = await fetch('/api/odds/bet-example', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        game: {
+                            away_team: this.selectedGame.away_team,
+                            home_team: this.selectedGame.home_team
+                        },
+                        odds: this.odds,
+                        bet_amount: parseInt(this.betBuilder.amount) || 100,
+                        bet_type: this.betBuilder.type,
+                        team: this.betBuilder.team
+                    })
+                });
+                if (resp.ok) {
+                    const data = await resp.json();
+                    this.betExample = data.example_text;
+                }
+            } catch (e) {
+                console.error('Failed to generate bet example:', e);
+            }
+        },
+
+        copyBetExample() {
+            if (this.betExample) {
+                navigator.clipboard.writeText(this.betExample);
+                this.showStatus('Bet example copied', 'info');
+            }
+        },
+
+        formatGameTime(isoString) {
+            if (!isoString) return '';
+            try {
+                const dt = new Date(isoString);
+                return dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZoneName: 'short' });
+            } catch (e) {
+                return '';
             }
         },
 
@@ -398,6 +781,25 @@ function articleWizard() {
                 .map(u => u.trim())
                 .filter(u => u.startsWith('http'));
 
+            // Build game context if selected
+            let gameContext = null;
+            if (this.selectedGame) {
+                gameContext = {
+                    sport: this.form.sport,
+                    away_team: this.selectedGame.away_team,
+                    home_team: this.selectedGame.home_team,
+                    start_time: this.selectedGame.start_time,
+                    network: this.selectedGame.network,
+                    headline: this.selectedGame.headline
+                };
+                if (this.odds) {
+                    gameContext.odds = this.odds;
+                }
+                if (this.betExample) {
+                    gameContext.bet_example = this.betExample;
+                }
+            }
+
             try {
                 const resp = await fetch('/api/generate/outline/sync', {
                     method: 'POST',
@@ -406,8 +808,11 @@ function articleWizard() {
                         keyword: this.form.keyword,
                         title: this.form.title,
                         offer_id: this.form.offer_id || null,
+                        offer_property: this.form.offer_property || null,
+                        alt_offer_ids: this.form.alt_offer_ids || [],
                         state: this.form.state,
-                        competitor_urls: competitorUrls.length > 0 ? competitorUrls : null
+                        competitor_urls: competitorUrls.length > 0 ? competitorUrls : null,
+                        game_context: gameContext
                     })
                 });
 
@@ -441,6 +846,25 @@ function articleWizard() {
                 .map(t => t.trim())
                 .filter(t => t.startsWith('['));
 
+            // Build game context if selected
+            let gameContext = null;
+            if (this.selectedGame) {
+                gameContext = {
+                    sport: this.form.sport,
+                    away_team: this.selectedGame.away_team,
+                    home_team: this.selectedGame.home_team,
+                    start_time: this.selectedGame.start_time,
+                    network: this.selectedGame.network,
+                    headline: this.selectedGame.headline
+                };
+                if (this.odds) {
+                    gameContext.odds = this.odds;
+                }
+                if (this.betExample) {
+                    gameContext.bet_example = this.betExample;
+                }
+            }
+
             try {
                 const resp = await fetch('/api/generate/draft/sync', {
                     method: 'POST',
@@ -450,7 +874,10 @@ function articleWizard() {
                         title: this.form.title,
                         outline_tokens: tokens,
                         offer_id: this.form.offer_id || null,
-                        state: this.form.state
+                        offer_property: this.form.offer_property || null,
+                        alt_offer_ids: this.form.alt_offer_ids || [],
+                        state: this.form.state,
+                        game_context: gameContext
                     })
                 });
 
@@ -478,7 +905,10 @@ function articleWizard() {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         content: this.draft,
-                        state: this.form.state
+                        state: this.form.state,
+                        keyword: this.form.keyword,
+                        offer_id: this.form.offer_id,
+                        offer_property: this.form.offer_property
                     })
                 });
 
@@ -532,6 +962,7 @@ blockquote{border-left:4px solid #ddd;margin:1rem 0;padding-left:1rem;color:#666
                         keyword: this.form.keyword,
                         state: this.form.state,
                         offer_id: this.form.offer_id || null,
+                        offer_property: this.form.offer_property || null,
                         outline: this.outline,
                         draft: this.draft
                     })

@@ -19,6 +19,7 @@ from app.services.draft import (
     generate_draft_streaming,
 )
 from app.services.compliance import validate_content as validate_content_svc
+from app.services.competitor_scraper import scrape_competitors
 from app.services.bam_offers import get_offer_by_id_bam
 
 router = APIRouter()
@@ -26,10 +27,14 @@ router = APIRouter()
 
 async def _stream_outline(request: OutlineRequest, db: AsyncSession) -> AsyncGenerator[str, None]:
     """Stream outline generation."""
-    # Get offer details from BAM API
     offer = None
+    alt_offers: list[dict] = []
     if request.offer_id:
-        offer = await get_offer_by_id_bam(request.offer_id)
+        offer = await get_offer_by_id_bam(request.offer_id, property_key=request.offer_property)
+    for alt_id in request.alt_offer_ids or []:
+        alt = await get_offer_by_id_bam(alt_id, property_key=request.offer_property)
+        if alt:
+            alt_offers.append(alt)
 
     brand = offer.get("brand", "") if offer else ""
     offer_text = offer.get("offer_text", "") if offer else ""
@@ -37,7 +42,7 @@ async def _stream_outline(request: OutlineRequest, db: AsyncSession) -> AsyncGen
     # Parse competitor URLs if provided
     competitor_context = ""
     if request.competitor_urls:
-        competitor_context = f"Competitor URLs to reference: {', '.join(request.competitor_urls)}"
+        competitor_context = await scrape_competitors(request.competitor_urls, max_chars_per_url=1500)
 
     try:
         async for update in generate_outline_streaming(
@@ -47,6 +52,7 @@ async def _stream_outline(request: OutlineRequest, db: AsyncSession) -> AsyncGen
             brand=brand,
             state=request.state,
             competitor_context=competitor_context,
+            num_offers=(1 + len(alt_offers)) if offer else 1,
         ):
             yield f"data: {json.dumps(update)}\n\n"
     except Exception as e:
@@ -55,19 +61,14 @@ async def _stream_outline(request: OutlineRequest, db: AsyncSession) -> AsyncGen
 
 async def _stream_draft(request: DraftRequest, db: AsyncSession) -> AsyncGenerator[str, None]:
     """Stream draft generation."""
-    # Get offer details from BAM API
     offer_dict = None
+    alt_offers: list[dict] = []
     if request.offer_id:
-        offer = await get_offer_by_id_bam(request.offer_id)
-        if offer:
-            offer_dict = {
-                "brand": offer.get("brand", ""),
-                "offer_text": offer.get("offer_text", ""),
-                "bonus_code": offer.get("bonus_code", ""),
-                "switchboard_link": offer.get("switchboard_link", ""),
-                "terms": offer.get("terms", ""),
-                "shortcode": offer.get("shortcode", ""),
-            }
+        offer_dict = await get_offer_by_id_bam(request.offer_id, property_key=request.offer_property)
+    for alt_id in request.alt_offer_ids or []:
+        alt = await get_offer_by_id_bam(alt_id, property_key=request.offer_property)
+        if alt:
+            alt_offers.append(alt)
 
     try:
         async for update in generate_draft_streaming(
@@ -75,6 +76,7 @@ async def _stream_draft(request: DraftRequest, db: AsyncSession) -> AsyncGenerat
             keyword=request.keyword,
             title=request.title,
             offer=offer_dict,
+            alt_offers=alt_offers,
             state=request.state,
         ):
             yield f"data: {json.dumps(update)}\n\n"
@@ -105,17 +107,38 @@ async def generate_outline_sync(
     db: AsyncSession = Depends(get_db),
 ):
     """Generate outline synchronously (non-streaming)."""
-    # Get offer details from BAM API
     offer = None
+    alt_offers: list[dict] = []
     if request.offer_id:
-        offer = await get_offer_by_id_bam(request.offer_id)
+        offer = await get_offer_by_id_bam(request.offer_id, property_key=request.offer_property)
+    for alt_id in request.alt_offer_ids or []:
+        alt = await get_offer_by_id_bam(alt_id, property_key=request.offer_property)
+        if alt:
+            alt_offers.append(alt)
 
     brand = offer.get("brand", "") if offer else ""
     offer_text = offer.get("offer_text", "") if offer else ""
 
     competitor_context = ""
     if request.competitor_urls:
-        competitor_context = f"Competitor URLs: {', '.join(request.competitor_urls)}"
+        competitor_context = await scrape_competitors(request.competitor_urls, max_chars_per_url=1500)
+
+    # Build game context string if provided
+    game_context_str = ""
+    if request.game_context:
+        gc = request.game_context
+        parts = []
+        if gc.headline:
+            parts.append(f"Featured game: {gc.headline}")
+        elif gc.away_team and gc.home_team:
+            parts.append(f"Featured game: {gc.away_team} vs {gc.home_team}")
+        if gc.start_time:
+            parts.append(f"Game time: {gc.start_time}")
+        if gc.network:
+            parts.append(f"Network: {gc.network}")
+        if gc.bet_example:
+            parts.append(f"Bet example: {gc.bet_example}")
+        game_context_str = ". ".join(parts)
 
     tokens = await gen_outline(
         keyword=request.keyword,
@@ -124,6 +147,8 @@ async def generate_outline_sync(
         brand=brand,
         state=request.state,
         competitor_context=competitor_context,
+        game_context=game_context_str,
+        num_offers=(1 + len(alt_offers)) if offer else 1,
     )
 
     return {"outline": tokens}
@@ -152,26 +177,43 @@ async def generate_draft_sync(
     db: AsyncSession = Depends(get_db),
 ):
     """Generate draft synchronously (non-streaming)."""
-    # Get offer details from BAM API
     offer_dict = None
+    alt_offers: list[dict] = []
     if request.offer_id:
-        offer = await get_offer_by_id_bam(request.offer_id)
-        if offer:
-            offer_dict = {
-                "brand": offer.get("brand", ""),
-                "offer_text": offer.get("offer_text", ""),
-                "bonus_code": offer.get("bonus_code", ""),
-                "switchboard_link": offer.get("switchboard_link", ""),
-                "terms": offer.get("terms", ""),
-                "shortcode": offer.get("shortcode", ""),
-            }
+        offer_dict = await get_offer_by_id_bam(request.offer_id, property_key=request.offer_property)
+    for alt_id in request.alt_offer_ids or []:
+        alt = await get_offer_by_id_bam(alt_id, property_key=request.offer_property)
+        if alt:
+            alt_offers.append(alt)
+
+    # Build game context string if provided
+    game_context_str = ""
+    bet_example_str = ""
+    if request.game_context:
+        gc = request.game_context
+        parts = []
+        if gc.headline:
+            parts.append(f"Featured game: {gc.headline}")
+        elif gc.away_team and gc.home_team:
+            parts.append(f"Featured game: {gc.away_team} vs {gc.home_team}")
+        if gc.start_time:
+            parts.append(f"Game time: {gc.start_time}")
+        if gc.network:
+            parts.append(f"Network: {gc.network}")
+        game_context_str = ". ".join(parts)
+        # Keep bet_example separate for use in "How to Claim" sections
+        if gc.bet_example:
+            bet_example_str = gc.bet_example
 
     draft = await gen_draft(
         outline_tokens=request.outline_tokens,
         keyword=request.keyword,
         title=request.title,
         offer=offer_dict,
+        alt_offers=alt_offers,
         state=request.state,
+        game_context=game_context_str,
+        bet_example=bet_example_str,
     )
 
     return {"draft": draft, "word_count": len(draft.split())}
@@ -181,9 +223,21 @@ async def generate_draft_sync(
 async def validate_content_endpoint(
     content: str = Body(..., embed=True),
     state: str = Body("ALL", embed=True),
+    keyword: str | None = Body(None, embed=True),
+    offer_id: str | None = Body(None, embed=True),
+    offer_property: str | None = Body(None, embed=True),
 ):
     """Validate content for compliance issues."""
-    result = validate_content_svc(content, state=state)
+    offer_dict = None
+    if offer_id:
+        offer_dict = await get_offer_by_id_bam(offer_id, property_key=offer_property)
+
+    result = validate_content_svc(
+        content,
+        state=state,
+        keyword=keyword,
+        offer=offer_dict,
+    )
     return result.to_dict()
 
 
