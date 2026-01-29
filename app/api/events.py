@@ -1,0 +1,86 @@
+"""API endpoints for events/games."""
+
+from datetime import datetime
+from fastapi import APIRouter, Query
+from zoneinfo import ZoneInfo
+
+from app.services.event_fetcher import (
+    get_games_for_date,
+    get_featured_game,
+    format_event_for_prompt,
+    format_game_for_dropdown,
+    get_available_sports,
+)
+
+router = APIRouter(prefix="/api/events", tags=["events"])
+
+
+@router.get("/sports")
+async def list_sports():
+    """Get list of available sports."""
+    return get_available_sports()
+
+
+@router.get("/games")
+async def list_games(
+    sport: str = Query("nfl", description="Sport code (nfl, nba, mlb, nhl, ncaaf, ncaab)"),
+    date: str | None = Query(None, description="Date in YYYY-MM-DD format (defaults to today)"),
+):
+    """Get games for a specific sport and date."""
+    target_date = None
+    if date:
+        try:
+            target_date = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=ZoneInfo("America/New_York"))
+        except ValueError:
+            target_date = None
+
+    games = await get_games_for_date(sport, target_date)
+
+    # Format for dropdown
+    return [
+        {
+            "id": g["id"],
+            "label": format_game_for_dropdown(g),
+            "home_team": g["home_team"],
+            "away_team": g["away_team"],
+            "home_abbrev": g.get("home_abbrev", ""),
+            "away_abbrev": g.get("away_abbrev", ""),
+            "start_time": g["start_time"],
+            "network": g["network"],
+            "sport": g["sport"],
+        }
+        for g in games
+    ]
+
+
+@router.get("/featured")
+async def get_featured(
+    sport: str = Query("nfl", description="Sport code"),
+    date: str | None = Query(None, description="Date in YYYY-MM-DD format"),
+):
+    """Get featured (prime time) game for a sport."""
+    target_date = None
+    if date:
+        try:
+            target_date = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=ZoneInfo("America/New_York"))
+        except ValueError:
+            target_date = None
+
+    game = await get_featured_game(sport, target_date)
+    if not game:
+        return {"game": None, "context": ""}
+
+    return {
+        "game": {
+            "id": game["id"],
+            "label": format_game_for_dropdown(game),
+            "home_team": game["home_team"],
+            "away_team": game["away_team"],
+            "home_abbrev": game.get("home_abbrev", ""),
+            "away_abbrev": game.get("away_abbrev", ""),
+            "start_time": game["start_time"],
+            "network": game["network"],
+            "sport": game["sport"],
+        },
+        "context": format_event_for_prompt(game),
+    }

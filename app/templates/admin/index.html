@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+
+{% block title %}Admin - PlanWrite{% endblock %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto space-y-6">
+    <div>
+        <h1 class="text-2xl font-bold text-gray-900">Admin Tools</h1>
+        <p class="mt-1 text-sm text-gray-500">Maintenance utilities for indexes and caches</p>
+    </div>
+
+    <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 space-y-4">
+        <div class="flex items-center justify-between">
+            <div>
+                <h2 class="text-lg font-medium text-gray-900">Evergreen Links Index</h2>
+                <p class="text-sm text-gray-500">Rebuild internal links index from data/evergreen.jsonl</p>
+                <p id="evergreen-status" class="mt-1 text-xs text-gray-500">Loading status...</p>
+            </div>
+            <button type="button" onclick="rebuildEvergreen()"
+                    class="inline-flex items-center rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-primary-700">
+                Rebuild Index
+            </button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function loadAdminStatus() {
+    try {
+        const resp = await fetch('/api/admin/status');
+        if (!resp.ok) return;
+        const data = await resp.json();
+        const ok = data.evergreen_index && data.evergreen_index.json && data.evergreen_index.vectors;
+        const el = document.getElementById('evergreen-status');
+        if (el) {
+            el.textContent = ok ? 'Index exists' : 'Index missing';
+            el.className = ok ? 'mt-1 text-xs text-green-600' : 'mt-1 text-xs text-yellow-600';
+        }
+    } catch (e) {
+        // ignore
+    }
+}
+
+async function rebuildEvergreen() {
+    try {
+        const resp = await fetch('/api/admin/rebuild-evergreen', { method: 'POST' });
+        if (resp.ok) {
+            const data = await resp.json();
+            showToast(`Evergreen index rebuilt (${data.count} items)`, 'success');
+        } else {
+            showToast('Failed to rebuild evergreen index', 'error');
+        }
+    } catch (e) {
+        showToast('Failed to rebuild evergreen index', 'error');
+    } finally {
+        loadAdminStatus();
+    }
+}
+
+document.addEventListener('DOMContentLoaded', loadAdminStatus);
+</script>
+{% endblock %}
