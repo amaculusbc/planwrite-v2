@@ -202,17 +202,30 @@ async def suggest_links_for_section(
     return await store.suggest_links(title, context=must_include, k=k)
 
 
-def format_links_markdown(links: list[InternalLinkSpec]) -> str:
-    """Format link suggestions as markdown bullets for prompts."""
-    if not links:
-        return "(none)"
+def format_links_markdown(links: list[InternalLinkSpec], brand: str = "") -> str:
+    """Format link suggestions as markdown bullets for prompts.
 
+    Also includes generic contextual link suggestions that the LLM
+    can use with placeholder URLs (href="#") for helpful references.
+    """
     lines = []
-    for link in links:
-        anchor_hint = ""
-        if link.recommended_anchors:
-            anchor_hint = f" — anchors: {', '.join(link.recommended_anchors[:3])}"
-        display = f"[{link.title}]({link.url})" if link.url else link.title
-        lines.append(f"- {display}{anchor_hint}")
+
+    # Add actual evergreen links if available
+    if links:
+        for link in links:
+            anchor_hint = ""
+            if link.recommended_anchors:
+                anchor_hint = f" — anchors: {', '.join(link.recommended_anchors[:3])}"
+            display = f"[{link.title}]({link.url})" if link.url else link.title
+            lines.append(f"- {display}{anchor_hint}")
+
+    # Add generic contextual link suggestions (LLM can use href="#" for these)
+    brand_name = brand or "BRAND"
+    contextual_suggestions = [
+        f"- [{brand_name} sign-up guide](#) — use when explaining registration steps",
+        "- [how bonus bets work](#) — use when explaining bonus bet mechanics",
+        f"- [check your state's {brand_name} terms](#) — use when mentioning state-specific rules",
+    ]
+    lines.extend(contextual_suggestions)
 
     return "\n".join(lines)

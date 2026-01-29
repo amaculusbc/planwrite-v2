@@ -19,6 +19,7 @@ class Article(Base):
     keyword: Mapped[str] = mapped_column(String(200), nullable=False)
     state: Mapped[str] = mapped_column(String(10), default="ALL")
     offer_id: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    offer_property: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
 
     outline: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     draft: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

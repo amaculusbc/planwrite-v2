@@ -73,11 +73,14 @@ templates = Jinja2Templates(directory=settings.templates_dir)
 
 
 # Import and include routers
-from app.api import articles, generate, offers
+from app.api import articles, generate, offers, events, odds, admin
 
 app.include_router(articles.router, prefix="/api/articles", tags=["articles"])
 app.include_router(offers.router, prefix="/api/offers", tags=["offers"])
 app.include_router(generate.router, prefix="/api/generate", tags=["generate"])
+app.include_router(events.router)  # Already has /api/events prefix
+app.include_router(odds.router)  # Already has /api/odds prefix
+app.include_router(admin.router)
 
 
 # Page routes
@@ -105,6 +108,15 @@ async def view_article(request: Request, article_id: int):
     return templates.TemplateResponse(
         "article/edit.html",
         {"request": request, "title": "Edit Article", "article_id": article_id},
+    )
+
+
+@app.get("/admin", response_class=HTMLResponse)
+async def admin_page(request: Request):
+    """Admin tools."""
+    return templates.TemplateResponse(
+        "admin/index.html",
+        {"request": request, "title": "Admin"},
     )
 
 

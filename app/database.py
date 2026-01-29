@@ -3,6 +3,7 @@
 from collections.abc import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy import text
 from sqlalchemy.orm import DeclarativeBase
 
 from app.config import get_settings
@@ -47,3 +48,12 @@ async def init_db() -> None:
     """Initialize database tables."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Lightweight column backfill for existing SQLite DBs (no Alembic here)
+        try:
+            result = await conn.execute(text("PRAGMA table_info(articles)"))
+            cols = {row[1] for row in result.fetchall()}
+            if "offer_property" not in cols:
+                await conn.execute(text("ALTER TABLE articles ADD COLUMN offer_property VARCHAR(50)"))
+        except Exception:
+            # Ignore if PRAGMA/ALTER fails (e.g., non-SQLite)
+            pass

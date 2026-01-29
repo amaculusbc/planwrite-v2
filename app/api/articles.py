@@ -93,6 +93,7 @@ async def get_article(
             "keyword": article.keyword,
             "state": article.state,
             "offer_id": article.offer_id,
+            "offer_property": article.offer_property,
             "outline": article.outline or "",
             "draft": article.draft or "",
             "status": article.status,

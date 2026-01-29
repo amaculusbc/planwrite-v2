@@ -13,6 +13,7 @@ class ArticleBase(BaseModel):
     keyword: str
     state: str = "ALL"
     offer_id: Optional[str] = None
+    offer_property: Optional[str] = None
 
 
 class ArticleCreate(ArticleBase):
@@ -29,6 +30,7 @@ class ArticleUpdate(BaseModel):
     keyword: Optional[str] = None
     state: Optional[str] = None
     offer_id: Optional[str] = None
+    offer_property: Optional[str] = None
     outline: Optional[str] = None
     draft: Optional[str] = None
     status: Optional[str] = None

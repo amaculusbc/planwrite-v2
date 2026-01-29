@@ -27,11 +27,8 @@ class Settings(BaseSettings):
     embed_model: str = "text-embedding-3-small"
     llm_model: str = "gpt-4o-mini"
 
-    # Google Sheets (optional)
-    offers_source: str = "db"  # "gspread" or "db"
-    offers_sheet_id: str = ""
-    offers_worksheet: str = "Ultimate Builder"
-    google_service_account_json: str = ""
+    # Offers (BAM)
+    offers_property: str = "action_network"
 
     # Paths
     @property

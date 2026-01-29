@@ -70,8 +70,8 @@
         </div>
         <textarea x-model="article.outline" rows="10"
                   class="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 font-mono text-sm"
-                  placeholder="[INTRO]&#10;[SHORTCODE]&#10;[H2: Section Title]&#10;..."></textarea>
-        <p class="mt-2 text-xs text-gray-500">One token per line: [INTRO], [SHORTCODE], [H2: Title], [H3: Title]</p>
+                  placeholder="[INTRO]&#10;[SHORTCODE_MAIN]&#10;[SHORTCODE_1]&#10;[H2: Section Title]&#10;..."></textarea>
+        <p class="mt-2 text-xs text-gray-500">One token per line: [INTRO], [SHORTCODE]/[SHORTCODE_MAIN]/[SHORTCODE_1]/[SHORTCODE_2], [H2: Title], [H3: Title]</p>
     </div>
 
     <!-- Draft section -->
@@ -218,7 +218,8 @@ function articleEditor(initialData) {
                         keyword: this.article.keyword,
                         title: this.article.title,
                         state: this.article.state || 'ALL',
-                        offer_id: this.article.offer_id
+                        offer_id: this.article.offer_id,
+                        offer_property: this.article.offer_property || null
                     })
                 });
                 const data = await resp.json();
@@ -244,7 +245,8 @@ function articleEditor(initialData) {
                         keyword: this.article.keyword,
                         title: this.article.title,
                         state: this.article.state || 'ALL',
-                        offer_id: this.article.offer_id
+                        offer_id: this.article.offer_id,
+                        offer_property: this.article.offer_property || null
                     })
                 });
                 const data = await resp.json();
@@ -292,7 +294,8 @@ function articleEditor(initialData) {
                         status: this.article.status,
                         outline: this.article.outline,
                         draft: this.article.draft,
-                        offer_id: this.article.offer_id
+                        offer_id: this.article.offer_id,
+                        offer_property: this.article.offer_property || null
                     })
                 });
                 if (resp.ok) {
