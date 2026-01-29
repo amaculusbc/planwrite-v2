@@ -51,3 +51,5 @@ node_modules/
 *.pem
 *.key
 service_account.json
+# Storage/cache files
+/storage/*.pkl
