@@ -368,7 +368,20 @@
             <!-- Compliance panel -->
             <div class="bg-gray-50 rounded-lg p-4">
                 <div class="flex items-center justify-between mb-2">
-                    <h3 class="text-sm font-medium text-gray-700">Compliance Check</h3>
+                    <div class="flex items-center space-x-3">
+                        <h3 class="text-sm font-medium text-gray-700">Compliance Check</h3>
+                        <div class="flex items-center space-x-2 text-xs" x-show="complianceScore !== null">
+                            <span class="px-2 py-0.5 rounded bg-red-100 text-red-700">
+                                Errors: <span x-text="errorCount"></span>
+                            </span>
+                            <span class="px-2 py-0.5 rounded bg-yellow-100 text-yellow-700">
+                                Warnings: <span x-text="warningCount"></span>
+                            </span>
+                            <span class="px-2 py-0.5 rounded bg-blue-100 text-blue-700">
+                                Info: <span x-text="infoCount"></span>
+                            </span>
+                        </div>
+                    </div>
                     <span x-show="complianceScore !== null"
                           :class="complianceScore >= 80 ? 'bg-green-100 text-green-800' : complianceScore >= 50 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'"
                           class="px-2 py-1 rounded text-xs font-medium"
@@ -382,11 +395,25 @@
                         <p class="text-green-600">No issues found!</p>
                     </template>
                     <template x-if="complianceIssues.length > 0">
-                        <ul class="space-y-1">
+                        <ul class="space-y-2">
                             <template x-for="issue in complianceIssues" :key="issue.message">
-                                <li :class="issue.severity === 'error' ? 'text-red-600' : issue.severity === 'warning' ? 'text-yellow-600' : 'text-gray-600'">
-                                    <span x-text="issue.severity === 'error' ? '✗' : issue.severity === 'warning' ? '⚠' : 'ℹ'"></span>
-                                    <span x-text="issue.message"></span>
+                                <li class="rounded-md border border-gray-200 bg-white p-2">
+                                    <div class="flex items-center justify-between">
+                                        <div class="flex items-center space-x-2">
+                                            <span class="px-2 py-0.5 rounded text-xs font-medium"
+                                                  :class="severityBadgeClass(issue.severity)"
+                                                  x-text="severityLabel(issue.severity)"></span>
+                                            <span class="text-gray-900" x-text="issue.message"></span>
+                                        </div>
+                                        <span class="text-[10px] uppercase tracking-wide text-gray-400"
+                                              x-text="issue.type || 'notice'"></span>
+                                    </div>
+                                    <template x-if="issue.suggestion">
+                                        <p class="mt-1 text-xs text-gray-500" x-text="'Suggestion: ' + issue.suggestion"></p>
+                                    </template>
+                                    <template x-if="issue.location">
+                                        <p class="text-[11px] text-gray-400" x-text="'Location: ' + issue.location"></p>
+                                    </template>
                                 </li>
                             </template>
                         </ul>
@@ -539,6 +566,26 @@ function articleWizard() {
         // Compliance
         complianceScore: null,
         complianceIssues: [],
+
+        get errorCount() {
+            return this.complianceIssues.filter(i => i.severity === 'error').length;
+        },
+        get warningCount() {
+            return this.complianceIssues.filter(i => i.severity === 'warning').length;
+        },
+        get infoCount() {
+            return this.complianceIssues.filter(i => i.severity === 'info').length;
+        },
+        severityLabel(severity) {
+            if (severity === 'error') return 'Error';
+            if (severity === 'warning') return 'Warning';
+            return 'Info';
+        },
+        severityBadgeClass(severity) {
+            if (severity === 'error') return 'bg-red-100 text-red-700';
+            if (severity === 'warning') return 'bg-yellow-100 text-yellow-700';
+            return 'bg-blue-100 text-blue-700';
+        },
 
         // Initialize
         init() {
@@ -916,7 +963,10 @@ function articleWizard() {
 
                 const data = await resp.json();
                 this.complianceScore = Math.round(data.compliance_score);
-                this.complianceIssues = data.issues || [];
+                const severityOrder = { error: 0, warning: 1, info: 2 };
+                this.complianceIssues = (data.issues || []).sort((a, b) => {
+                    return (severityOrder[a.severity] ?? 9) - (severityOrder[b.severity] ?? 9);
+                });
                 this.wordCount = data.word_count;
             } catch (e) {
                 this.showStatus('Validation error: ' + e.message, 'error');
