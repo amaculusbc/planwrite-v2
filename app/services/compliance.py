@@ -238,13 +238,15 @@ def check_cta_links(content: str) -> list[ComplianceIssue]:
 
     cta_pattern = re.compile(r"\[Claim Offer\]\(([^)]+)\)", re.IGNORECASE)
     cta_matches = cta_pattern.findall(content)
+    html_cta_pattern = re.compile(r"<a\s+[^>]*>.*?Claim Offer.*?</a>", re.IGNORECASE | re.DOTALL)
+    html_cta_matches = html_cta_pattern.findall(content)
 
-    if len(cta_matches) < 1:
+    if len(cta_matches) < 1 and len(html_cta_matches) < 1:
         issues.append(ComplianceIssue(
             type="missing_cta",
             message="No CTA link found",
             severity=IssueSeverity.WARNING,
-            suggestion="Add at least one '[Claim Offer](url)' link",
+            suggestion="Add at least one 'Claim Offer' link (markdown or HTML anchor)",
         ))
 
     return issues
