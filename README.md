@@ -93,6 +93,18 @@ ruff check app/
 ruff format app/
 ```
 
+### Index Maintenance
+
+```bash
+# Rebuild article RAG index
+python scripts/build_rag_index.py
+```
+
+```bash
+# Rebuild evergreen links index (via API)
+curl -X POST http://localhost:8000/api/admin/rebuild-evergreen
+```
+
 ## Deployment
 
 ### Docker
@@ -116,6 +128,7 @@ docker run -p 8000:8000 --env-file .env planwrite-v2
 | `DATABASE_URL` | SQLite connection string | `sqlite+aiosqlite:///./storage/planwrite.db` |
 | `LLM_MODEL` | Model for generation | `gpt-4o-mini` |
 | `EMBED_MODEL` | Model for embeddings | `text-embedding-3-small` |
+| `ODDS_API_KEY` | Charlotte/RotoGrinders odds API key | Required for odds endpoints |
 | `DEBUG` | Enable debug mode | `false` |
 
 ## License

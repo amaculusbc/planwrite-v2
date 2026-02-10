@@ -9,10 +9,10 @@ import pickle
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
-import httpx
 
 from app.config import get_settings
 from app.services.offer_parsing import enrich_offer_dict
+from app.services.http_utils import get_json
 
 settings = get_settings()
 
@@ -268,20 +268,18 @@ async def fetch_offers_from_bam(
 
     # Fetch from API
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                api_url,
-                params={
-                    "user_parent_book_ids": "",
-                    "context": context,
-                },
-                headers={
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                },
-                timeout=10.0,
-            )
-            response.raise_for_status()
-            data = response.json()
+        data = await get_json(
+            api_url,
+            params={
+                "user_parent_book_ids": "",
+                "context": context,
+            },
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            },
+            timeout=10.0,
+            retries=3,
+        )
     except Exception as e:
         print(f"BAM API fetch failed: {e}")
         # Fall back to cache
@@ -393,8 +391,6 @@ def render_bam_offer_block(offer: dict, placement: str = "inline") -> str:
 
     if terms:
         block += f"\n<details><summary>Terms apply</summary><p>{terms}</p></details>\n"
-
-    block += "\n21+. Gambling problem? Call 1-800-GAMBLER. Please bet responsibly.\n"
 
     import re
     block = re.sub(r"\n{3,}", "\n\n", block).strip() + "\n"

@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Admin - PlanWrite{% endblock %}
+{% block title %}Admin - TopStoriesGenerator{% endblock %}
 
 {% block content %}
 <div class="max-w-4xl mx-auto space-y-6">
@@ -22,6 +22,20 @@
             </button>
         </div>
     </div>
+
+    <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 space-y-4">
+        <div class="flex items-center justify-between">
+            <div>
+                <h2 class="text-lg font-medium text-gray-900">Article RAG Index</h2>
+                <p class="text-sm text-gray-500">Rebuild FAISS index from data/articles</p>
+                <p id="rag-status" class="mt-1 text-xs text-gray-500">Loading status...</p>
+            </div>
+            <button type="button" onclick="rebuildRag()"
+                    class="inline-flex items-center rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-primary-700">
+                Rebuild RAG
+            </button>
+        </div>
+    </div>
 </div>
 {% endblock %}
 
@@ -37,6 +51,12 @@ async function loadAdminStatus() {
         if (el) {
             el.textContent = ok ? 'Index exists' : 'Index missing';
             el.className = ok ? 'mt-1 text-xs text-green-600' : 'mt-1 text-xs text-yellow-600';
+        }
+        const ragOk = data.rag_index && data.rag_index.index && data.rag_index.metadata;
+        const ragEl = document.getElementById('rag-status');
+        if (ragEl) {
+            ragEl.textContent = ragOk ? 'Index exists' : 'Index missing';
+            ragEl.className = ragOk ? 'mt-1 text-xs text-green-600' : 'mt-1 text-xs text-yellow-600';
         }
     } catch (e) {
         // ignore
@@ -54,6 +74,22 @@ async function rebuildEvergreen() {
         }
     } catch (e) {
         showToast('Failed to rebuild evergreen index', 'error');
+    } finally {
+        loadAdminStatus();
+    }
+}
+
+async function rebuildRag() {
+    try {
+        const resp = await fetch('/api/admin/rebuild-rag', { method: 'POST' });
+        if (resp.ok) {
+            const data = await resp.json();
+            showToast(`RAG index rebuilt (${data.chunks} chunks)`, 'success');
+        } else {
+            showToast('Failed to rebuild RAG index', 'error');
+        }
+    } catch (e) {
+        showToast('Failed to rebuild RAG index', 'error');
     } finally {
         loadAdminStatus();
     }

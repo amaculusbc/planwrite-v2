@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -55,8 +55,8 @@ async def lifespan(app: FastAPI):
 
 # Create FastAPI app
 app = FastAPI(
-    title="PlanWrite v2",
-    description="Automated content creation system",
+    title="TopStoriesGenerator",
+    description="Better Collective internal content tool",
     version="2.0.0",
     lifespan=lifespan,
 )
@@ -86,11 +86,8 @@ app.include_router(admin.router)
 # Page routes
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
-    """Dashboard - list of articles."""
-    return templates.TemplateResponse(
-        "dashboard.html",
-        {"request": request, "title": "Dashboard"},
-    )
+    """Internal tool entrypoint."""
+    return RedirectResponse(url="/articles/new")
 
 
 @app.get("/articles/new", response_class=HTMLResponse)

@@ -1,12 +1,26 @@
 {% extends "base.html" %}
 
-{% block title %}New Article - PlanWrite{% endblock %}
+{% block title %}New Draft - TopStoriesGenerator{% endblock %}
 
 {% block content %}
-<div x-data="articleWizard()" class="max-w-4xl mx-auto space-y-6">
+<div x-data="articleWizard()" class="space-y-6">
+
+    <!-- Mode tabs -->
+    <div class="bw-panel p-2 flex flex-wrap gap-2">
+        <button type="button" @click="activeTab = 'single'"
+                class="px-4 py-2 text-sm font-medium rounded-md"
+                :class="activeTab === 'single' ? 'bg-primary-600 text-white' : 'bg-white text-gray-600 border border-gray-200'">
+            Single Draft
+        </button>
+        <button type="button" @click="activeTab = 'batch'"
+                class="px-4 py-2 text-sm font-medium rounded-md"
+                :class="activeTab === 'batch' ? 'bg-primary-600 text-white' : 'bg-white text-gray-600 border border-gray-200'">
+            Batch Generator
+        </button>
+    </div>
 
     <!-- Progress steps -->
-    <nav aria-label="Progress">
+    <nav aria-label="Progress" class="bw-panel p-4" x-show="activeTab === 'single'" x-transition>
         <ol class="flex items-center">
             <li class="relative pr-8 sm:pr-20" :class="step >= 1 ? 'text-primary-600' : 'text-gray-500'">
                 <div class="absolute inset-0 flex items-center" aria-hidden="true">
@@ -50,10 +64,10 @@
 
     <div class="mt-12">
         <!-- Step 1: Setup -->
-        <div x-show="step === 1" x-transition class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 space-y-6">
+        <div x-show="(activeTab === 'single' && step === 1) || activeTab === 'batch'" x-transition class="bw-panel p-6 space-y-6">
             <h2 class="text-lg font-semibold text-gray-900">Article Setup</h2>
 
-            <form @submit.prevent="generateOutline" class="space-y-4">
+            <form @submit.prevent="activeTab === 'single' ? generateOutline() : null" class="space-y-4">
                 <!-- BAM property selector -->
                 <div>
                     <label for="offer_property" class="block text-sm font-medium text-gray-700">Property</label>
@@ -159,40 +173,46 @@
                         </div>
                     </div>
 
-                    <!-- Odds Display Panel -->
-                    <div x-show="selectedGame && odds" x-transition class="mt-4 bg-gray-50 rounded-lg p-4">
-                        <div class="flex items-center justify-between mb-3">
-                            <h4 class="text-sm font-medium text-gray-900" x-text="selectedGame ? selectedGame.headline : ''"></h4>
-                            <span class="text-xs text-gray-500" x-text="selectedGame ? selectedGame.time_display : ''"></span>
-                        </div>
+                      <!-- Odds Display Panel -->
+                      <div x-show="selectedGame && odds" x-transition class="mt-4 bw-card p-4">
+                          <div class="flex items-center justify-between mb-3">
+                              <h4 class="text-sm font-medium text-gray-900" x-text="selectedGame ? selectedGame.headline : ''"></h4>
+                              <span class="text-xs text-gray-500" x-text="selectedGame ? selectedGame.time_display : ''"></span>
+                          </div>
 
-                        <!-- Odds grid -->
-                        <div class="grid grid-cols-4 gap-2 text-xs" x-show="odds && odds.spreads">
-                            <div class="font-medium text-gray-500">Book</div>
-                            <div class="font-medium text-gray-500">Spread</div>
-                            <div class="font-medium text-gray-500">ML</div>
-                            <div class="font-medium text-gray-500">Total</div>
+                          <div class="mb-3">
+                              <label class="block text-xs text-gray-500">Book</label>
+                              <select x-model="selectedBook"
+                                      class="mt-1 block w-full rounded-md border-gray-300 bg-white shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm">
+                                  <template x-for="book in availableBooks" :key="book">
+                                      <option :value="book" x-text="book"></option>
+                                  </template>
+                              </select>
+                          </div>
 
-                            <template x-for="book in Object.keys(odds.spreads || {})" :key="book">
-                                <template x-if="odds.spreads[book]">
-                                    <div class="contents">
-                                        <div class="font-medium text-gray-700" x-text="book"></div>
-                                        <div class="text-gray-600">
-                                            <span x-text="odds.spreads[book]?.away_line || '-'"></span>
-                                            <span class="text-gray-400" x-text="odds.spreads[book]?.away_odds ? `(${odds.spreads[book].away_odds})` : ''"></span>
-                                        </div>
-                                        <div class="text-gray-600">
-                                            <span x-text="odds.moneylines && odds.moneylines[book]?.away_odds || '-'"></span>
-                                        </div>
-                                        <div class="text-gray-600">
-                                            <span x-text="odds.totals && odds.totals[book]?.total || '-'"></span>
-                                        </div>
-                                    </div>
-                                </template>
-                            </template>
-                        </div>
+                          <!-- Odds grid (selected book only) -->
+                          <div class="grid grid-cols-4 gap-2 text-xs" x-show="availableBooks.length">
+                              <div class="font-medium text-gray-500">Book</div>
+                              <div class="font-medium text-gray-500">Spread</div>
+                              <div class="font-medium text-gray-500">ML</div>
+                              <div class="font-medium text-gray-500">Total</div>
 
-                        <p x-show="!odds || !odds.spreads" class="text-sm text-gray-500">No odds available for this game</p>
+                              <div class="contents" x-show="selectedBook">
+                                  <div class="font-medium text-gray-700" x-text="selectedBook"></div>
+                                  <div class="text-gray-600">
+                                      <span x-text="odds.spreads && odds.spreads[selectedBook]?.away_line || '-'"></span>
+                                      <span class="text-gray-400" x-text="odds.spreads && odds.spreads[selectedBook]?.away_odds ? `(${odds.spreads[selectedBook].away_odds})` : ''"></span>
+                                  </div>
+                                  <div class="text-gray-600">
+                                      <span x-text="odds.moneylines && odds.moneylines[selectedBook]?.away_odds || '-'"></span>
+                                  </div>
+                                  <div class="text-gray-600">
+                                      <span x-text="odds.totals && odds.totals[selectedBook]?.total || '-'"></span>
+                                  </div>
+                              </div>
+                          </div>
+
+                          <p x-show="!availableBooks.length" class="text-sm text-gray-500">No odds available for this game</p>
 
                         <!-- Bet Example Builder -->
                         <div class="mt-4 pt-4 border-t border-gray-200">
@@ -228,7 +248,7 @@
                                     Generate bet example text &rarr;
                                 </button>
                             </div>
-                            <div x-show="betExample" x-transition class="mt-2 p-2 bg-white rounded border text-sm text-gray-700">
+                            <div x-show="betExample" x-transition class="mt-2 p-2 bw-card text-sm text-gray-700">
                                 <p x-text="betExample"></p>
                                 <button type="button" @click="copyBetExample()" class="mt-1 text-xs text-primary-600 hover:underline">Copy</button>
                             </div>
@@ -236,33 +256,33 @@
                     </div>
                 </div>
 
-                <!-- Keyword -->
-                <div>
-                    <label for="keyword" class="block text-sm font-medium text-gray-700">Focus Keyword <span class="text-red-500">*</span></label>
-                    <input type="text" x-model="form.keyword" id="keyword" name="keyword" required
-                           placeholder="e.g., DraftKings promo code"
-                           class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm">
+                <!-- Keyword / Title / Competitors (single draft only) -->
+                <div x-show="activeTab === 'single'" x-transition class="space-y-4">
+                    <div>
+                        <label for="keyword" class="block text-sm font-medium text-gray-700">Focus Keyword <span class="text-red-500">*</span></label>
+                        <input type="text" x-model="form.keyword" id="keyword" name="keyword" :required="activeTab === 'single'"
+                               placeholder="e.g., DraftKings promo code"
+                               class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm">
+                    </div>
+
+                    <div>
+                        <label for="title" class="block text-sm font-medium text-gray-700">H1 Title <span class="text-red-500">*</span></label>
+                        <input type="text" x-model="form.title" id="title" name="title" :required="activeTab === 'single'"
+                               placeholder="e.g., DraftKings Promo Code: Get $150 Bonus Bets in January 2025"
+                               class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm">
+                    </div>
+
+                    <div>
+                        <label for="competitors" class="block text-sm font-medium text-gray-700">
+                            Competitor URLs <span class="text-gray-400">(optional, one per line)</span>
+                        </label>
+                        <textarea x-model="form.competitors" id="competitors" name="competitors" rows="3"
+                                  placeholder="https://competitor1.com/article&#10;https://competitor2.com/article"
+                                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"></textarea>
+                    </div>
                 </div>
 
-                <!-- Title -->
-                <div>
-                    <label for="title" class="block text-sm font-medium text-gray-700">H1 Title <span class="text-red-500">*</span></label>
-                    <input type="text" x-model="form.title" id="title" name="title" required
-                           placeholder="e.g., DraftKings Promo Code: Get $150 Bonus Bets in January 2025"
-                           class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm">
-                </div>
-
-                <!-- Competitor URLs (optional) -->
-                <div>
-                    <label for="competitors" class="block text-sm font-medium text-gray-700">
-                        Competitor URLs <span class="text-gray-400">(optional, one per line)</span>
-                    </label>
-                    <textarea x-model="form.competitors" id="competitors" name="competitors" rows="3"
-                              placeholder="https://competitor1.com/article&#10;https://competitor2.com/article"
-                              class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"></textarea>
-                </div>
-
-                <div class="flex justify-end">
+                <div class="flex justify-end" x-show="activeTab === 'single'">
                     <button type="submit" :disabled="generating || !form.keyword || !form.title"
                             :class="generating ? 'opacity-50 cursor-not-allowed' : ''"
                             class="inline-flex items-center rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-primary-700">
@@ -278,6 +298,9 @@
                         </svg>
                     </button>
                 </div>
+                <div x-show="activeTab === 'batch'" class="text-xs text-gray-500">
+                    Setup applies to every queued item.
+                </div>
             </form>
 
             <!-- Status message -->
@@ -286,8 +309,97 @@
             </div>
         </div>
 
+        <!-- Batch Generator Tab -->
+        <div x-show="activeTab === 'batch'" x-transition class="bw-panel p-6 space-y-4">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h2 class="text-lg font-semibold text-gray-900">Batch Generator</h2>
+                    <p class="text-xs text-gray-500">Uses the setup context above for all queued drafts.</p>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-5 gap-3">
+                <div class="md:col-span-2">
+                    <label class="block text-sm font-medium text-gray-700">Keyword</label>
+                    <input type="text" x-model="batch.newItem.keyword"
+                           placeholder="e.g., bet365 promo code"
+                           class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm">
+                </div>
+                <div class="md:col-span-3">
+                    <label class="block text-sm font-medium text-gray-700">Title</label>
+                    <input type="text" x-model="batch.newItem.title"
+                           placeholder="e.g., bet365 Promo Code: Get $200 Bonus Bets"
+                           class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm">
+                </div>
+            </div>
+
+            <div class="flex flex-wrap items-center gap-3">
+                <button type="button" @click="addToQueue()"
+                        class="inline-flex items-center rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-primary-700">
+                    Add to Queue
+                </button>
+                <div class="flex items-center gap-2">
+                    <label class="text-xs text-gray-500">Mode</label>
+                    <select x-model="batch.mode"
+                            class="rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 text-xs">
+                        <option value="draft">Drafts</option>
+                        <option value="outline">Outlines</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="space-y-3" x-show="batch.queue.length > 0">
+                <template x-for="item in batch.queue" :key="item.id">
+                    <div class="bw-card p-4 space-y-2">
+                        <div class="flex items-start justify-between gap-4">
+                            <div>
+                                <div class="text-sm font-semibold text-gray-900" x-text="item.title"></div>
+                                <div class="text-xs text-gray-500" x-text="item.keyword"></div>
+                            </div>
+                            <div class="flex items-center gap-3">
+                                <span class="text-xs text-gray-500" x-text="item.status"></span>
+                                <button type="button" @click="removeFromQueue(item.id)"
+                                        class="text-xs text-gray-500 hover:text-red-600">
+                                    Remove
+                                </button>
+                            </div>
+                        </div>
+                        <template x-if="item.error">
+                            <p class="text-xs text-red-600" x-text="item.error"></p>
+                        </template>
+                        <template x-if="item.output">
+                            <div class="space-y-2">
+                                <textarea readonly rows="6"
+                                          class="w-full rounded-md border border-gray-200 bg-white p-2 text-xs text-gray-700"
+                                          x-text="item.output"></textarea>
+                                <button type="button" @click="copyBatchOutput(item.output)"
+                                        class="text-xs text-primary-600 hover:underline">
+                                    Copy output
+                                </button>
+                            </div>
+                        </template>
+                    </div>
+                </template>
+            </div>
+
+            <p x-show="batch.queue.length === 0" class="text-xs text-gray-500">No items in the queue yet.</p>
+
+            <div class="flex flex-wrap gap-3">
+                <button type="button" @click="runBatchQueue()" :disabled="batch.running || batch.queue.length === 0"
+                        :class="(batch.running || batch.queue.length === 0) ? 'opacity-50 cursor-not-allowed' : ''"
+                        class="inline-flex items-center rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-primary-700">
+                    Batch Generate
+                </button>
+                <button type="button" @click="clearBatch()"
+                        class="inline-flex items-center rounded-md bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50">
+                    Clear Queue
+                </button>
+                <span x-show="batch.running" class="text-xs text-primary-600" x-text="batch.progress"></span>
+            </div>
+        </div>
+
         <!-- Step 2: Outline -->
-        <div x-show="step === 2" x-transition class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 space-y-6">
+        <div x-show="activeTab === 'single' && step === 2" x-transition class="bw-panel p-6 space-y-6">
             <div class="flex items-center justify-between">
                 <h2 class="text-lg font-semibold text-gray-900">Article Outline</h2>
                 <button type="button" @click="step = 1" class="text-sm text-gray-500 hover:text-gray-700">
@@ -346,11 +458,25 @@
         </div>
 
         <!-- Step 3: Draft -->
-        <div x-show="step === 3" x-transition class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 space-y-6">
+        <div x-show="activeTab === 'single' && step === 3" x-transition class="bw-panel p-6 space-y-6">
             <div class="flex items-center justify-between">
                 <h2 class="text-lg font-semibold text-gray-900">Article Draft</h2>
                 <div class="flex items-center space-x-4">
                     <span class="text-sm text-gray-500" x-show="wordCount > 0" x-text="wordCount + ' words'"></span>
+                    <div class="inline-flex rounded-md shadow-sm" role="group">
+                        <button type="button"
+                                @click="previewMode = false"
+                                :class="previewMode ? 'bg-white text-gray-700' : 'bg-primary-600 text-white'"
+                                class="px-3 py-1.5 text-xs font-medium border border-gray-300 rounded-l-md hover:bg-gray-50">
+                            Edit
+                        </button>
+                        <button type="button"
+                                @click="previewMode = true"
+                                :class="previewMode ? 'bg-primary-600 text-white' : 'bg-white text-gray-700'"
+                                class="px-3 py-1.5 text-xs font-medium border border-gray-300 border-l-0 rounded-r-md hover:bg-gray-50">
+                            Preview
+                        </button>
+                    </div>
                     <button type="button" @click="step = 2" class="text-sm text-gray-500 hover:text-gray-700">
                         &larr; Back to Outline
                     </button>
@@ -358,11 +484,15 @@
             </div>
 
             <!-- Draft editor -->
-            <div>
+            <div x-show="!previewMode">
                 <textarea x-model="draft" id="draft" name="draft" rows="20"
                           @input="wordCount = draft.split(/\s+/).filter(w => w).length"
                           class="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 font-mono text-sm"
                           placeholder="Draft content will appear here..."></textarea>
+            </div>
+            <div x-show="previewMode" x-transition
+                 class="prose-article max-w-none rounded-md border border-gray-200 bg-gray-50 p-4">
+                <div x-html="previewHtml || '<p class=&quot;text-gray-500&quot;>No draft to preview yet.</p>'"></div>
             </div>
 
             <!-- Compliance panel -->
@@ -443,7 +573,7 @@
         </div>
 
         <!-- Step 4: Export -->
-        <div x-show="step === 4" x-transition class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 space-y-6">
+        <div x-show="activeTab === 'single' && step === 4" x-transition class="bw-panel p-6 space-y-6">
             <div class="flex items-center justify-between">
                 <h2 class="text-lg font-semibold text-gray-900">Export Article</h2>
                 <button type="button" @click="step = 3" class="text-sm text-gray-500 hover:text-gray-700">
@@ -511,6 +641,7 @@
 <script>
 function articleWizard() {
     return {
+        activeTab: 'single',
         step: 1,
         generating: false,
         statusMessage: '',
@@ -547,8 +678,9 @@ function articleWizard() {
         ],
         games: [],
         loadingGames: false,
-        selectedGame: null,
-        odds: null,
+          selectedGame: null,
+          odds: null,
+          selectedBook: '',
 
         // Bet builder
         betBuilder: {
@@ -558,10 +690,20 @@ function articleWizard() {
         },
         betExample: '',
 
-        // Content
-        outline: '',
-        draft: '',
-        wordCount: 0,
+        // Batch generation
+        batch: {
+            mode: 'draft',
+            newItem: { keyword: '', title: '' },
+            queue: [],
+            running: false,
+            progress: ''
+        },
+
+          // Content
+          outline: '',
+          draft: '',
+          wordCount: 0,
+          previewMode: false,
 
         // Compliance
         complianceScore: null,
@@ -576,6 +718,23 @@ function articleWizard() {
         get infoCount() {
             return this.complianceIssues.filter(i => i.severity === 'info').length;
         },
+          get previewHtml() {
+              if (!this.draft) return '';
+              const hasHtml = /<\w+[^>]*>/.test(this.draft);
+              return hasHtml ? this.draft : this.markdownToHtml(this.draft);
+          },
+          get availableBooks() {
+              if (!this.odds) return [];
+              const books = new Set();
+              const spreads = this.odds.spreads || {};
+              const moneylines = this.odds.moneylines || {};
+              const totals = this.odds.totals || {};
+              Object.keys(spreads).forEach(b => books.add(b));
+              Object.keys(moneylines).forEach(b => books.add(b));
+              Object.keys(totals).forEach(b => books.add(b));
+              (this.odds.available_sportsbooks || []).forEach(b => books.add(b));
+              return Array.from(books);
+          },
         severityLabel(severity) {
             if (severity === 'error') return 'Error';
             if (severity === 'warning') return 'Warning';
@@ -701,11 +860,12 @@ function articleWizard() {
                 return;
             }
 
-            this.loadingGames = true;
-            this.games = [];
-            this.form.game_id = '';
-            this.selectedGame = null;
-            this.odds = null;
+              this.loadingGames = true;
+              this.games = [];
+              this.form.game_id = '';
+              this.selectedGame = null;
+              this.odds = null;
+              this.selectedBook = '';
 
             try {
                 const params = new URLSearchParams({
@@ -744,24 +904,39 @@ function articleWizard() {
             this.selectedGame.headline = `${this.selectedGame.away_team} @ ${this.selectedGame.home_team}`;
             this.selectedGame.time_display = this.formatGameTime(this.selectedGame.start_time);
 
-            try {
-                const params = new URLSearchParams({
-                    sport: this.form.sport,
-                    away_team: this.selectedGame.away_abbrev || this.selectedGame.away_team,
-                    home_team: this.selectedGame.home_abbrev || this.selectedGame.home_team,
-                    game_date: this.form.game_date
-                });
-                const resp = await fetch(`/api/odds/game?${params}`);
-                if (resp.ok) {
-                    this.odds = await resp.json();
-                } else {
-                    this.odds = null;
-                }
-            } catch (e) {
-                console.error('Failed to load odds:', e);
-                this.odds = null;
-            }
-        },
+                try {
+                    const awayParam = [this.selectedGame.away_abbrev, this.selectedGame.away_team]
+                        .filter(Boolean)
+                        .join(' ');
+                    const homeParam = [this.selectedGame.home_abbrev, this.selectedGame.home_team]
+                        .filter(Boolean)
+                        .join(' ');
+                    const params = new URLSearchParams({
+                        sport: this.form.sport,
+                        away_team: awayParam,
+                        home_team: homeParam,
+                        game_date: this.form.game_date
+                    });
+                  if (this.selectedGame.week_id) {
+                      params.set('week', this.selectedGame.week_id);
+                  }
+                  const resp = await fetch(`/api/odds/game?${params}`);
+                  if (resp.ok) {
+                      this.odds = await resp.json();
+                      const books = this.availableBooks;
+                      if (!this.selectedBook || !books.includes(this.selectedBook)) {
+                          this.selectedBook = books[0] || '';
+                      }
+                  } else {
+                      this.odds = null;
+                      this.selectedBook = '';
+                  }
+              } catch (e) {
+                  console.error('Failed to load odds:', e);
+                  this.odds = null;
+                  this.selectedBook = '';
+              }
+          },
 
         // Generate bet example text
         async generateBetExample() {
@@ -771,20 +946,21 @@ function articleWizard() {
             }
 
             try {
-                const resp = await fetch('/api/odds/bet-example', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        game: {
-                            away_team: this.selectedGame.away_team,
-                            home_team: this.selectedGame.home_team
-                        },
-                        odds: this.odds,
-                        bet_amount: parseInt(this.betBuilder.amount) || 100,
-                        bet_type: this.betBuilder.type,
-                        team: this.betBuilder.team
-                    })
-                });
+                  const resp = await fetch('/api/odds/bet-example', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                          game: {
+                              away_team: this.selectedGame.away_team,
+                              home_team: this.selectedGame.home_team
+                          },
+                          odds: this.odds,
+                          bet_amount: parseInt(this.betBuilder.amount) || 100,
+                          bet_type: this.betBuilder.type,
+                          team: this.betBuilder.team,
+                          sportsbook: this.selectedBook || 'draftkings'
+                      })
+                  });
                 if (resp.ok) {
                     const data = await resp.json();
                     this.betExample = data.example_text;
@@ -799,6 +975,148 @@ function articleWizard() {
                 navigator.clipboard.writeText(this.betExample);
                 this.showStatus('Bet example copied', 'info');
             }
+        },
+
+        // Batch helpers
+        buildBatchGameContext() {
+            if (!this.selectedGame) return null;
+            const gameContext = {
+                sport: this.form.sport,
+                away_team: this.selectedGame.away_team,
+                home_team: this.selectedGame.home_team,
+                start_time: this.selectedGame.start_time,
+                network: this.selectedGame.network,
+                headline: this.selectedGame.headline
+            };
+            if (this.odds) gameContext.odds = this.odds;
+            if (this.betExample) gameContext.bet_example = this.betExample;
+            return gameContext;
+        },
+
+        async fetchBatchOutline(item, gameContext) {
+            const competitorUrls = this.form.competitors
+                .split('\n')
+                .map(u => u.trim())
+                .filter(u => u.startsWith('http'));
+            const resp = await fetch('/api/generate/outline/sync', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    keyword: item.keyword,
+                    title: item.title,
+                    offer_id: this.form.offer_id || null,
+                    offer_property: this.form.offer_property || null,
+                    alt_offer_ids: this.form.alt_offer_ids || [],
+                    state: this.form.state,
+                    competitor_urls: competitorUrls.length > 0 ? competitorUrls : null,
+                    game_context: gameContext
+                })
+            });
+            if (!resp.ok) throw new Error('Outline failed');
+            const data = await resp.json();
+            return data.outline || [];
+        },
+
+        async fetchBatchDraft(item, outlineTokens, gameContext) {
+            const resp = await fetch('/api/generate/draft/sync', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    keyword: item.keyword,
+                    title: item.title,
+                    outline_tokens: outlineTokens,
+                    offer_id: this.form.offer_id || null,
+                    offer_property: this.form.offer_property || null,
+                    alt_offer_ids: this.form.alt_offer_ids || [],
+                    state: this.form.state,
+                    game_context: gameContext
+                })
+            });
+            if (!resp.ok) throw new Error('Draft failed');
+            const data = await resp.json();
+            return data.draft || '';
+        },
+
+        addToQueue() {
+            const keyword = (this.batch.newItem.keyword || '').trim();
+            const title = (this.batch.newItem.title || '').trim();
+            if (!keyword || !title) {
+                this.showStatus('Add both keyword and title', 'error');
+                return;
+            }
+            this.batch.queue.push({
+                id: Date.now() + Math.random(),
+                keyword,
+                title,
+                status: 'queued',
+                error: '',
+                output: ''
+            });
+            this.batch.newItem.keyword = '';
+            this.batch.newItem.title = '';
+        },
+
+        removeFromQueue(id) {
+            this.batch.queue = this.batch.queue.filter(item => item.id !== id);
+        },
+
+        async runBatchQueue() {
+            if (this.batch.running) return;
+            if (!this.batch.queue.length) {
+                this.showStatus('Add at least one item to the queue', 'error');
+                return;
+            }
+
+            this.batch.running = true;
+            this.batch.progress = `Processing 0/${this.batch.queue.length}`;
+            const gameContext = this.buildBatchGameContext();
+
+            for (let i = 0; i < this.batch.queue.length; i++) {
+                const item = this.batch.queue[i];
+                this.batch.progress = `Processing ${i + 1}/${this.batch.queue.length}`;
+                item.error = '';
+                try {
+                    item.status = 'Generating outline';
+                    const outlineTokens = await this.fetchBatchOutline(item, gameContext);
+                    if (!outlineTokens.length) {
+                        item.status = 'error';
+                        item.error = 'Outline empty';
+                        continue;
+                    }
+
+                    if (this.batch.mode === 'outline') {
+                        item.output = outlineTokens.join('\n');
+                        item.status = 'done';
+                        continue;
+                    }
+
+                    item.status = 'Generating draft';
+                    const draft = await this.fetchBatchDraft(item, outlineTokens, gameContext);
+                    item.output = draft || '';
+                    item.status = draft ? 'done' : 'error';
+                    if (!draft) item.error = 'Draft empty';
+                } catch (e) {
+                    item.status = 'error';
+                    item.error = e.message || 'Failed';
+                }
+            }
+
+            this.batch.running = false;
+            this.batch.progress = 'Done';
+        },
+
+        clearBatch() {
+            this.batch.queue = [];
+            this.batch.newItem.keyword = '';
+            this.batch.newItem.title = '';
+            this.batch.progress = '';
+            this.batch.running = false;
+        },
+
+        copyBatchOutput(text) {
+            if (!text) return;
+            navigator.clipboard.writeText(text);
+            this.showStatus('Batch output copied', 'info');
         },
 
         formatGameTime(isoString) {

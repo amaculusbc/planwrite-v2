@@ -10,9 +10,39 @@ from datetime import datetime
 from typing import Any, AsyncGenerator
 from zoneinfo import ZoneInfo
 
-from app.services.llm import generate_completion, generate_completion_streaming
+from app.services.llm import (
+    generate_completion,
+    generate_completion_streaming,
+    generate_completion_structured,
+)
 from app.services.rag import query_articles
 from app.services.content_guidelines import get_style_instructions, get_temperature_by_section
+
+
+OUTLINE_SCHEMA = {
+    "type": "array",
+    "items": {
+        "type": "object",
+        "properties": {
+            "level": {
+                "type": "string",
+                "enum": ["intro", "shortcode", "h2", "h3"],
+            },
+            "title": {"type": "string"},
+            "talking_points": {
+                "type": "array",
+                "items": {"type": "string"},
+            },
+            "avoid": {
+                "type": "array",
+                "items": {"type": "string"},
+            },
+        },
+        "required": ["level", "title", "talking_points", "avoid"],
+        "additionalProperties": False,
+    },
+    "minItems": 3,
+}
 
 
 def today_long(tz: str = "US/Eastern") -> str:
@@ -137,24 +167,20 @@ TALKING POINTS GUIDANCE:
 
 Output ONLY the JSON array, no other text:"""
 
-    result = await generate_completion(
-        prompt=user_prompt,
-        system_prompt=system_prompt,
-        temperature=get_temperature_by_section("outline"),
-        max_tokens=2000,
-    )
-
-    # Parse JSON from response
     try:
-        # Find JSON array in response
-        json_match = re.search(r"\[.*\]", result, re.DOTALL)
-        if json_match:
-            outline = json.loads(json_match.group())
-            # Ensure shortcodes are properly distributed
-            outline = _ensure_shortcodes(outline)
-            return outline
+        outline = await generate_completion_structured(
+            prompt=user_prompt,
+            system_prompt=system_prompt,
+            schema=OUTLINE_SCHEMA,
+            name="article_outline",
+            description="Structured outline for a promo article",
+            temperature=get_temperature_by_section("outline"),
+            max_tokens=2000,
+        )
+        outline = _ensure_shortcodes(outline)
+        return outline
     except Exception as e:
-        print(f"Failed to parse outline JSON: {e}")
+        print(f"Failed to generate structured outline: {e}")
 
     # Fallback to default structure
     return _get_default_outline(keyword, brand, event_context, bet_example)
@@ -555,6 +581,25 @@ def parse_outline_tokens(text: str, default_shortcode_token: str = "[SHORTCODE]"
         intro_idx = next((i for i, t in enumerate(tokens) if t.upper() == "[INTRO]"), -1)
         tokens.insert(intro_idx + 1, default_shortcode_token)
 
+    return _reposition_alt_shortcodes(tokens)
+
+
+def _reposition_alt_shortcodes(tokens: list[str]) -> list[str]:
+    """Place alt shortcodes immediately after the first shortcode token."""
+    alt_tokens = [t for t in tokens if t.upper() in ("[SHORTCODE_1]", "[SHORTCODE_2]")]
+    if not alt_tokens:
+        return tokens
+
+    tokens = [t for t in tokens if t.upper() not in ("[SHORTCODE_1]", "[SHORTCODE_2]")]
+
+    insert_idx = next((i for i, t in enumerate(tokens) if t.upper().startswith("[SHORTCODE")), -1)
+    if insert_idx == -1:
+        intro_idx = next((i for i, t in enumerate(tokens) if t.upper() == "[INTRO]"), -1)
+        insert_idx = intro_idx
+
+    for offset, tok in enumerate(alt_tokens):
+        tokens.insert(insert_idx + 1 + offset, tok)
+
     return tokens
 
 
@@ -763,4 +808,5 @@ Generate the outline tokens now:"""
 
     # Use defaults if nothing found
     final_tokens = tokens_found if tokens_found else _default_tokens_multi(num_offers=num_offers, keyword=keyword or "Offer")
+    final_tokens = _reposition_alt_shortcodes(final_tokens)
     yield {"type": "done", "outline": final_tokens}

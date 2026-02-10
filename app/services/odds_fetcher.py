@@ -3,15 +3,18 @@
 Fetches live odds from Charlotte/RotoGrinders API (ScoresAndOdds).
 """
 
-import httpx
 from datetime import datetime
+import re
 from typing import Optional, Any
+
+from app.config import get_settings
+from app.services.http_utils import get_json
+
+settings = get_settings()
 
 
 class OddsFetcher:
     """Fetch odds data from Charlotte/RotoGrinders API."""
-
-    API_KEY = "ZV03bez9ie16w553FeuM8Z49Djw67pt6"
 
     # Sport mapping for Charlotte API endpoints
     SPORT_PATHS = {
@@ -65,6 +68,7 @@ class OddsFetcher:
         self.games_cache: list[dict] = []
         self.cache_timestamp: Optional[datetime] = None
         self.is_daily_sport = self.sport in self.DAILY_SPORTS
+        self.api_key = settings.odds_api_key
 
     async def fetch_week_odds(self, week: str = "2025-reg-13") -> dict[str, Any]:
         """Fetch odds for an entire week (NFL/CFB only).
@@ -75,17 +79,17 @@ class OddsFetcher:
         Returns:
             Dict with full API response
         """
+        if not self.api_key:
+            print("Odds API key missing; set ODDS_API_KEY to enable odds fetching.")
+            return {}
         params = {
             "role": "scoresandodds",
             "week": week,
-            "key": self.API_KEY,
+            "key": self.api_key,
         }
 
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(self.base_url, params=params)
-                response.raise_for_status()
-                data = response.json()
+            data = await get_json(self.base_url, params=params, timeout=10.0, retries=3)
 
             self.games_cache = data.get("data", [])
             self.cache_timestamp = datetime.now()
@@ -104,6 +108,9 @@ class OddsFetcher:
         Returns:
             Dict with full API response
         """
+        if not self.api_key:
+            print("Odds API key missing; set ODDS_API_KEY to enable odds fetching.")
+            return {}
         if target_date is None:
             target_date = datetime.now()
 
@@ -112,14 +119,11 @@ class OddsFetcher:
         params = {
             "role": "scoresandodds",
             "date": date_str,
-            "key": self.API_KEY,
+            "key": self.api_key,
         }
 
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(self.base_url, params=params)
-                response.raise_for_status()
-                data = response.json()
+            data = await get_json(self.base_url, params=params, timeout=10.0, retries=3)
 
             self.games_cache = data.get("data", [])
             self.cache_timestamp = datetime.now()
@@ -175,24 +179,38 @@ class OddsFetcher:
         if not self.games_cache:
             await self.fetch_odds(week=week, target_date=target_date)
 
-        away_lower = away_team.lower()
-        home_lower = home_team.lower()
+        def _normalize(value: str) -> str:
+            return re.sub(r"[^a-z0-9]+", " ", (value or "").lower()).strip()
+
+        def _match_team(input_str: str, team: dict) -> bool:
+            s = _normalize(input_str)
+            if not s:
+                return False
+            key = _normalize(team.get("key") or "")
+            mascot = _normalize(team.get("mascot") or "")
+            city = _normalize(team.get("city") or "")
+            full = _normalize(f"{city} {mascot}".strip())
+            tokens = set(s.split())
+
+            if s in {key, mascot, city, full}:
+                return True
+            if key and key in tokens:
+                return True
+            if mascot and mascot in tokens:
+                return True
+            if city and city in tokens:
+                return True
+            if key and len(s) <= 4 and key.startswith(s):
+                return True
+            if key and len(key) <= 4 and s.startswith(key):
+                return True
+            return False
 
         for game in self.games_cache:
             away = game.get("away", {})
             home = game.get("home", {})
 
-            # Match by key or mascot
-            away_match = (
-                away.get("key", "").lower() == away_lower
-                or away.get("mascot", "").lower() == away_lower
-            )
-            home_match = (
-                home.get("key", "").lower() == home_lower
-                or home.get("mascot", "").lower() == home_lower
-            )
-
-            if away_match and home_match:
+            if _match_team(away_team, away) and _match_team(home_team, home):
                 return game
 
         return None
@@ -378,8 +396,15 @@ class OddsFetcher:
     def get_available_sportsbooks(self, game: dict) -> list[str]:
         """Get list of available sportsbooks for a game."""
         try:
-            comparison = game["odds"]["current"]["spread"].get("comparison", {})
-            return list(comparison.keys())
+            current = game.get("odds", {}).get("current", {})
+            for market in ("spread", "moneyline", "total"):
+                comparison = (current.get(market) or {}).get("comparison", {})
+                if comparison:
+                    return list(comparison.keys())
+
+            if any(current.get(market) for market in ("spread", "moneyline", "total")):
+                return ["consensus"]
+            return []
         except (KeyError, TypeError):
             return []
 

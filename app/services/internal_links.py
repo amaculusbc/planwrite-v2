@@ -101,6 +101,7 @@ class InternalLinksStore:
                     "title": rec.get("title", ""),
                     "url": rec.get("url", ""),
                     "summary": rec.get("summary", ""),
+                    "recommended_anchors": rec.get("recommended_anchors") or rec.get("anchors") or [],
                 })
 
         if not items:
@@ -172,7 +173,7 @@ class InternalLinksStore:
             results.append(InternalLinkSpec(
                 title=item["title"],
                 url=item["url"],
-                recommended_anchors=[item["title"], item["title"].lower()],
+                recommended_anchors=item.get("recommended_anchors") or [item["title"], item["title"].lower()],
                 description=item.get("summary", ""),
                 score=float(sims[idx]),
             ))

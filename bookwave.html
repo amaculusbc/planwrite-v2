@@ -1,0 +1,433 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Bookwave</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        --ink: #0b1220;
+        --deep: #0f1d3a;
+        --wave: #1b2f63;
+        --foam: #b9f2e3;
+        --reef: #ff7a63;
+        --mist: #e8eef7;
+        --glass: rgba(255, 255, 255, 0.08);
+        --stroke: rgba(255, 255, 255, 0.15);
+        --shadow: 0 24px 60px rgba(7, 16, 32, 0.35);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Sora", system-ui, sans-serif;
+        color: var(--mist);
+        background: radial-gradient(1200px 600px at 20% -10%, #1a2d5a 0%, transparent 70%),
+          radial-gradient(900px 500px at 90% 10%, #102040 0%, transparent 60%),
+          linear-gradient(160deg, var(--deep) 0%, #0a1630 50%, #060c1c 100%);
+        min-height: 100vh;
+      }
+
+      .shell {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 40px 28px 80px;
+      }
+
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 24px;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        font-family: "Space Grotesk", system-ui, sans-serif;
+        font-weight: 600;
+        letter-spacing: 0.2px;
+      }
+
+      .brand svg {
+        width: 42px;
+        height: 42px;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 14px;
+        border-radius: 999px;
+        background: var(--glass);
+        border: 1px solid var(--stroke);
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 1.2px;
+      }
+
+      .hero {
+        display: grid;
+        grid-template-columns: 1.1fr 0.9fr;
+        gap: 36px;
+        align-items: center;
+        margin-top: 56px;
+      }
+
+      .hero h1 {
+        font-family: "Space Grotesk", system-ui, sans-serif;
+        font-size: clamp(36px, 5vw, 58px);
+        line-height: 1.05;
+        margin: 20px 0 16px;
+      }
+
+      .hero p {
+        font-size: 17px;
+        line-height: 1.6;
+        color: #c8d4ea;
+      }
+
+      .cta-row {
+        display: flex;
+        gap: 14px;
+        flex-wrap: wrap;
+        margin-top: 28px;
+      }
+
+      .cta {
+        padding: 12px 20px;
+        border-radius: 12px;
+        font-weight: 600;
+        border: 1px solid transparent;
+        cursor: pointer;
+        font-size: 14px;
+      }
+
+      .cta.primary {
+        background: linear-gradient(135deg, var(--reef), #ffad86);
+        color: #111;
+        box-shadow: 0 16px 40px rgba(255, 122, 99, 0.35);
+      }
+
+      .cta.secondary {
+        background: transparent;
+        border-color: var(--stroke);
+        color: var(--mist);
+      }
+
+      .hero-card {
+        background: rgba(11, 18, 32, 0.55);
+        border: 1px solid var(--stroke);
+        border-radius: 20px;
+        padding: 26px;
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(10px);
+      }
+
+      .hero-card h3 {
+        margin: 0 0 14px;
+        font-size: 16px;
+        letter-spacing: 0.8px;
+        text-transform: uppercase;
+        color: var(--foam);
+      }
+
+      .metrics {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 14px;
+      }
+
+      .metric {
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 14px;
+        padding: 14px;
+      }
+
+      .metric strong {
+        font-size: 20px;
+        display: block;
+      }
+
+      .metric span {
+        font-size: 12px;
+        color: #a7b6d8;
+      }
+
+      .flow {
+        margin-top: 70px;
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 20px;
+      }
+
+      .flow-step {
+        background: rgba(255, 255, 255, 0.04);
+        border-radius: 16px;
+        padding: 18px;
+        border: 1px solid rgba(255, 255, 255, 0.07);
+      }
+
+      .flow-step h4 {
+        margin: 0 0 8px;
+        font-size: 14px;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        color: var(--foam);
+      }
+
+      .flow-step p {
+        margin: 0;
+        font-size: 13px;
+        color: #b7c4e0;
+        line-height: 1.5;
+      }
+
+      .dashboard {
+        margin-top: 70px;
+        display: grid;
+        grid-template-columns: 1.1fr 0.9fr;
+        gap: 22px;
+      }
+
+      .panel {
+        background: rgba(8, 14, 28, 0.7);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 18px;
+        padding: 22px;
+        box-shadow: var(--shadow);
+      }
+
+      .panel h3 {
+        margin: 0 0 12px;
+        font-size: 15px;
+        letter-spacing: 0.6px;
+        text-transform: uppercase;
+        color: var(--foam);
+      }
+
+      .list {
+        display: grid;
+        gap: 10px;
+      }
+
+      .list-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: 12px;
+        padding: 12px 14px;
+        font-size: 13px;
+      }
+
+      .status {
+        padding: 4px 10px;
+        border-radius: 999px;
+        font-size: 11px;
+        background: rgba(185, 242, 227, 0.2);
+        color: var(--foam);
+      }
+
+      .preview {
+        height: 280px;
+        border-radius: 16px;
+        border: 1px dashed rgba(255, 255, 255, 0.2);
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.01));
+        padding: 18px;
+        display: grid;
+        gap: 10px;
+      }
+
+      .preview .line {
+        height: 10px;
+        background: rgba(255, 255, 255, 0.12);
+        border-radius: 999px;
+      }
+
+      .preview .line.wide {
+        width: 90%;
+      }
+
+      .preview .line.mid {
+        width: 70%;
+      }
+
+      .preview .line.short {
+        width: 45%;
+      }
+
+      .footer {
+        margin-top: 80px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border-top: 1px solid rgba(255, 255, 255, 0.12);
+        padding-top: 20px;
+        font-size: 12px;
+        color: #93a5c9;
+      }
+
+      .wave {
+        position: absolute;
+        right: 5%;
+        top: 10%;
+        width: 260px;
+        height: 260px;
+        border-radius: 50%;
+        background: radial-gradient(circle at 30% 30%, rgba(185, 242, 227, 0.35), transparent 60%),
+          radial-gradient(circle at 70% 70%, rgba(255, 122, 99, 0.25), transparent 55%);
+        filter: blur(2px);
+        animation: float 8s ease-in-out infinite;
+        z-index: -1;
+      }
+
+      @keyframes float {
+        0%, 100% { transform: translateY(0); }
+        50% { transform: translateY(18px); }
+      }
+
+      @media (max-width: 960px) {
+        .hero {
+          grid-template-columns: 1fr;
+        }
+        .flow, .dashboard {
+          grid-template-columns: 1fr;
+        }
+        header {
+          flex-direction: column;
+          align-items: flex-start;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wave"></div>
+    <div class="shell">
+      <header>
+        <div class="brand">
+          <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <path d="M10 18C18 10 30 8 40 12C50 16 56 26 54 36C52 46 42 54 30 52C18 50 10 40 10 30" stroke="#B9F2E3" stroke-width="4" stroke-linecap="round"/>
+            <path d="M18 42C22 36 30 34 38 36C46 38 50 44 50 50" stroke="#FF7A63" stroke-width="4" stroke-linecap="round"/>
+            <path d="M24 22H40C44 22 46 24 46 28V46C40 42 34 40 24 40V22Z" fill="#0f1d3a" stroke="#E8EEF7" stroke-width="2"/>
+            <path d="M24 22V40" stroke="#E8EEF7" stroke-width="2"/>
+          </svg>
+          <div>
+            <div>Bookwave</div>
+            <div style="font-size:12px; color:#9fb2d8;">Content engine for sportsbook writers</div>
+          </div>
+        </div>
+        <span class="pill">New wave for promos</span>
+      </header>
+
+      <section class="hero">
+        <div>
+          <h1>Draft smarter promos with a clean wave of context.</h1>
+          <p>
+            Bookwave keeps your writers focused: offers, odds, and
+            compliance in one flow. Set the context once, generate
+            outlines fast, and polish each section with targeted
+            controls.
+          </p>
+          <div class="cta-row">
+            <button class="cta primary">Start a Draft</button>
+            <button class="cta secondary">View Writer Journey</button>
+          </div>
+        </div>
+        <div class="hero-card">
+          <h3>Daily Snapshot</h3>
+          <div class="metrics">
+            <div class="metric">
+              <strong>42</strong>
+              <span>Active promos</span>
+            </div>
+            <div class="metric">
+              <strong>6</strong>
+              <span>Sportsbooks synced</span>
+            </div>
+            <div class="metric">
+              <strong>3.2x</strong>
+              <span>Faster outlines</span>
+            </div>
+            <div class="metric">
+              <strong>0</strong>
+              <span>Blocked exports</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="flow">
+        <div class="flow-step">
+          <h4>Setup</h4>
+          <p>Select offer, state, game, and book. Context card follows you.</p>
+        </div>
+        <div class="flow-step">
+          <h4>Outline</h4>
+          <p>Editable tokens, guardrails only. Writers can reorder freely.</p>
+        </div>
+        <div class="flow-step">
+          <h4>Draft</h4>
+          <p>Regenerate by section. Keep tone direct, numbers correct.</p>
+        </div>
+        <div class="flow-step">
+          <h4>Export</h4>
+          <p>Warnings only. HTML and raw text ready for CMS.</p>
+        </div>
+      </section>
+
+      <section class="dashboard">
+        <div class="panel">
+          <h3>Writer Queue</h3>
+          <div class="list">
+            <div class="list-item">
+              <span>bet365 promo code - Seahawks vs Patriots</span>
+              <span class="status">Draft</span>
+            </div>
+            <div class="list-item">
+              <span>FanDuel bonus bets - NBA slate</span>
+              <span class="status">Outline</span>
+            </div>
+            <div class="list-item">
+              <span>Caesars odds boost - Sunday Night</span>
+              <span class="status">Review</span>
+            </div>
+            <div class="list-item">
+              <span>DraftKings SGP - playoff weekend</span>
+              <span class="status">Export</span>
+            </div>
+          </div>
+        </div>
+        <div class="panel">
+          <h3>Live Preview</h3>
+          <div class="preview">
+            <div class="line wide"></div>
+            <div class="line mid"></div>
+            <div class="line wide"></div>
+            <div class="line short"></div>
+            <div class="line mid"></div>
+            <div class="line wide"></div>
+            <div class="line short"></div>
+          </div>
+          <p style="font-size: 12px; color: #9fb2d8;">
+            HTML preview keeps list formatting and link density visible.
+          </p>
+        </div>
+      </section>
+
+      <div class="footer">
+        <span>Bookwave v2 vision</span>
+        <span>Designed for writers who ship every day</span>
+      </div>
+    </div>
+  </body>
+</html>

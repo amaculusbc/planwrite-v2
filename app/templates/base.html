@@ -1,9 +1,13 @@
 <!DOCTYPE html>
-<html lang="en" class="h-full bg-gray-50">
+<html lang="en" class="h-full bw-html">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}PlanWrite{% endblock %}</title>
+    <title>{% block title %}TopStoriesGenerator{% endblock %}</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
 
     <!-- Tailwind CSS via CDN (replace with built CSS in production) -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -13,16 +17,16 @@
                 extend: {
                     colors: {
                         primary: {
-                            50: '#f0f9ff',
-                            100: '#e0f2fe',
-                            200: '#bae6fd',
-                            300: '#7dd3fc',
-                            400: '#38bdf8',
-                            500: '#0ea5e9',
-                            600: '#0284c7',
-                            700: '#0369a1',
-                            800: '#075985',
-                            900: '#0c4a6e',
+                            50: '#e6f7f0',
+                            100: '#c6efe0',
+                            200: '#8ddfc2',
+                            300: '#57cfa5',
+                            400: '#2fbd8c',
+                            500: '#00a766',
+                            600: '#009758',
+                            700: '#007b47',
+                            800: '#005f36',
+                            900: '#004328',
                         }
                     }
                 }
@@ -38,6 +42,163 @@
     <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
 
     <style>
+        :root {
+            --ink: #0b1f14;
+            --deep: #f6fbf8;
+            --wave: #e7f4ee;
+            --foam: #dff3ea;
+            --reef: #00a766;
+            --mist: #0b1f14;
+            --glass: rgba(255, 255, 255, 0.08);
+            --stroke: rgba(0, 167, 102, 0.15);
+            --shadow: 0 20px 40px rgba(9, 28, 18, 0.08);
+        }
+
+        body.bw-body {
+            margin: 0;
+            font-family: "Sora", system-ui, sans-serif;
+            color: var(--ink);
+            background: radial-gradient(1200px 600px at 15% -10%, #e7f6ef 0%, transparent 70%),
+              radial-gradient(900px 500px at 90% 10%, #edf8f3 0%, transparent 60%),
+              linear-gradient(160deg, var(--deep) 0%, #ffffff 45%, #f3fbf7 100%);
+            min-height: 100vh;
+            color-scheme: light;
+        }
+
+        .bw-shell {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 32px 28px 72px;
+        }
+
+        .bw-nav {
+            position: sticky;
+            top: 0;
+            z-index: 20;
+            background: rgba(255, 255, 255, 0.9);
+            border-bottom: 1px solid rgba(0, 167, 102, 0.18);
+            backdrop-filter: blur(12px);
+        }
+
+        .bw-nav-inner {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 20px;
+        }
+
+        .bw-brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-family: "Space Grotesk", system-ui, sans-serif;
+            font-weight: 600;
+            letter-spacing: 0.2px;
+        }
+
+        .bw-brand svg {
+            width: 38px;
+            height: 38px;
+        }
+
+        .bw-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 12px;
+            border-radius: 999px;
+            background: rgba(0, 167, 102, 0.12);
+            border: 1px solid var(--stroke);
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1.2px;
+            color: #0b3b25;
+        }
+
+        .bw-panel {
+            background: #ffffff;
+            border: 1px solid rgba(0, 167, 102, 0.12);
+            border-radius: 18px;
+            box-shadow: var(--shadow);
+            backdrop-filter: blur(10px);
+        }
+
+        .bw-card {
+            background: #f7fcf9;
+            border: 1px solid rgba(0, 167, 102, 0.12);
+            border-radius: 14px;
+        }
+
+        .bw-body input,
+        .bw-body select,
+        .bw-body textarea {
+            background: #ffffff !important;
+            color: var(--ink) !important;
+            border-color: rgba(0, 167, 102, 0.18) !important;
+            border-radius: 12px !important;
+            padding: 0.55rem 0.75rem !important;
+            box-shadow: inset 0 0 0 1px rgba(0, 167, 102, 0.04);
+        }
+
+        .bw-body select {
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 20 20' fill='none'%3E%3Cpath d='M5 7L10 12L15 7' stroke='%23d5f5e8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 0.75rem center;
+            padding-right: 2.25rem !important;
+        }
+
+        .bw-body select option {
+            background: #ffffff;
+            color: #0b1f14;
+        }
+
+        .bw-body input::placeholder,
+        .bw-body textarea::placeholder {
+            color: #7f92b8 !important;
+        }
+
+        .bw-body .bg-white {
+            background: #ffffff !important;
+        }
+        .bw-body .border-gray-200 {
+            border-color: rgba(0, 167, 102, 0.12) !important;
+        }
+        .bw-body .text-gray-900 {
+            color: #0b1f14 !important;
+        }
+        .bw-body .text-gray-700 {
+            color: #243b2f !important;
+        }
+        .bw-body .text-gray-500 {
+            color: #5b7a6a !important;
+        }
+        .bw-body .text-gray-400 {
+            color: #7b9486 !important;
+        }
+        .bw-body .shadow-sm {
+            box-shadow: var(--shadow) !important;
+        }
+
+        .bw-wave {
+            position: fixed;
+            right: 4%;
+            top: 8%;
+            width: 240px;
+            height: 240px;
+            border-radius: 50%;
+            background: radial-gradient(circle at 30% 30%, rgba(0, 167, 102, 0.25), transparent 60%),
+              radial-gradient(circle at 70% 70%, rgba(141, 223, 194, 0.22), transparent 55%);
+            filter: blur(2px);
+            animation: float 8s ease-in-out infinite;
+            z-index: 0;
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(18px); }
+        }
+
         /* HTMX loading indicator */
         .htmx-request .htmx-indicator {
             display: inline-flex;
@@ -53,91 +214,96 @@
         }
 
         /* Prose styling for article content */
+        .prose-article h1 {
+            font-size: 1.875rem;
+            line-height: 2.25rem;
+            font-weight: 700;
+            color: #0b1f14;
+            margin: 1rem 0 0.75rem;
+        }
         .prose-article h2 {
-            @apply text-xl font-semibold text-gray-900 mt-6 mb-3;
+            font-size: 1.25rem;
+            line-height: 1.75rem;
+            font-weight: 600;
+            color: #0b1f14;
+            margin: 1.5rem 0 0.75rem;
         }
         .prose-article h3 {
-            @apply text-lg font-medium text-gray-800 mt-4 mb-2;
+            font-size: 1.125rem;
+            line-height: 1.5rem;
+            font-weight: 600;
+            color: #243b2f;
+            margin: 1.25rem 0 0.5rem;
         }
         .prose-article p {
-            @apply text-gray-700 leading-relaxed mb-4;
+            color: #2e4638;
+            line-height: 1.6;
+            margin-bottom: 1rem;
         }
         .prose-article ul, .prose-article ol {
-            @apply ml-6 mb-4 text-gray-700;
+              margin-left: 1.5rem;
+              margin-bottom: 1rem;
+              color: #2e4638;
+              list-style-position: outside;
+        }
+        .prose-article ol {
+              list-style-type: decimal;
+        }
+        .prose-article ul {
+              list-style-type: disc;
         }
         .prose-article li {
-            @apply mb-1;
+            margin-bottom: 0.25rem;
+        }
+        .prose-article a {
+            color: #009758;
+            text-decoration: underline;
         }
     </style>
 
     {% block head %}{% endblock %}
 </head>
-<body class="h-full" x-data="{ sidebarOpen: false }">
+<body class="h-full bw-body" x-data="{ sidebarOpen: false }">
+    <div class="bw-wave"></div>
     <div class="min-h-full">
         <!-- Navigation -->
-        <nav class="bg-white border-b border-gray-200">
-            <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-                <div class="flex h-16 justify-between">
-                    <div class="flex">
-                        <!-- Logo -->
-                        <div class="flex flex-shrink-0 items-center">
-                            <a href="/" class="text-xl font-bold text-primary-600">
-                                PlanWrite
-                            </a>
-                            <span class="ml-2 text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded">v2</span>
-                        </div>
-
-                        <!-- Main nav -->
-                        <div class="hidden sm:ml-8 sm:flex sm:space-x-6">
-                            <a href="/articles/new"
-                               class="inline-flex items-center border-b-2 {% if '/articles/new' in request.url.path %}border-primary-500 text-gray-900{% else %}border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700{% endif %} px-1 pt-1 text-sm font-medium">
-                                Generator
-                            </a>
-                            <a href="/"
-                               class="inline-flex items-center border-b-2 {% if request.url.path == '/' %}border-primary-500 text-gray-900{% else %}border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700{% endif %} px-1 pt-1 text-sm font-medium">
-                                Articles
-                            </a>
-                            <a href="/batch"
-                               class="inline-flex items-center border-b-2 {% if '/batch' in request.url.path %}border-primary-500 text-gray-900{% else %}border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700{% endif %} px-1 pt-1 text-sm font-medium">
-                                Batch Jobs
-                            </a>
-                            <a href="/admin"
-                               class="inline-flex items-center border-b-2 {% if '/admin' in request.url.path %}border-primary-500 text-gray-900{% else %}border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700{% endif %} px-1 pt-1 text-sm font-medium">
-                                Settings
-                            </a>
-                        </div>
+        <nav class="bw-nav">
+            <div class="bw-shell bw-nav-inner">
+                <div class="bw-brand">
+                    <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                        <path d="M14 44L32 18L50 44" stroke="#00A766" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+                        <path d="M20 44H44" stroke="#BFF0DC" stroke-width="4" stroke-linecap="round"/>
+                        <circle cx="32" cy="18" r="5" fill="#00A766"/>
+                    </svg>
+                    <div>
+                        <div>TopStoriesGenerator</div>
+                        <div style="font-size:12px; color:#4f6b5c;">Better Collective internal tool</div>
                     </div>
+                </div>
 
-                    <!-- Right side -->
-                    <div class="hidden sm:ml-6 sm:flex sm:items-center">
-                        <span class="text-sm text-gray-500">
-                            <span class="htmx-indicator">
-                                <svg class="animate-spin h-4 w-4 text-primary-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                </svg>
-                            </span>
-                        </span>
-                    </div>
-
-                    <!-- Mobile menu button -->
-                    <div class="flex items-center sm:hidden">
-                        <button @click="sidebarOpen = !sidebarOpen" type="button"
-                                class="inline-flex items-center justify-center rounded-md p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-500">
-                            <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
-                            </svg>
-                        </button>
-                    </div>
+                <div class="hidden sm:flex items-center gap-6 text-sm">
+                    <a href="/articles/new"
+                       class="text-sm font-medium {% if '/articles/new' in request.url.path %}text-primary-700{% else %}text-gray-500 hover:text-primary-700{% endif %}">
+                        Generator
+                    </a>
+                    <a href="/admin"
+                       class="text-sm font-medium {% if '/admin' in request.url.path %}text-primary-700{% else %}text-gray-500 hover:text-primary-700{% endif %}">
+                        Admin
+                    </a>
+                    <span class="bw-pill">Better Collective</span>
+                    <span class="htmx-indicator">
+                        <svg class="animate-spin h-4 w-4 text-primary-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                    </span>
                 </div>
             </div>
         </nav>
 
         <!-- Page content -->
-        <main>
-            <div class="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
-                {% block content %}{% endblock %}
-            </div>
+        <main class="bw-shell">
+            {% block content %}{% endblock %}
         </main>
     </div>
 

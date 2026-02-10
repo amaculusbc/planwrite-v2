@@ -3,11 +3,11 @@
 Fetches games from ESPN API for various sports.
 """
 
-import httpx
 from datetime import datetime, timedelta
 from typing import Optional
 from zoneinfo import ZoneInfo
 
+from app.services.http_utils import get_json
 
 SPORT_PATHS = {
     "nfl": "football/nfl",
@@ -49,10 +49,7 @@ async def get_games_for_date(sport: str = "nfl", target_date: datetime | None = 
     url = f"http://site.api.espn.com/apis/site/v2/sports/{sport_path}/scoreboard?dates={date_str}"
 
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(url)
-            resp.raise_for_status()
-            data = resp.json()
+        data = await get_json(url, timeout=10.0, retries=3)
 
         events = data.get("events", [])
         if not events:
@@ -83,6 +80,25 @@ async def get_games_for_date(sport: str = "nfl", target_date: datetime | None = 
             except Exception:
                 pass
 
+            # Extract week/season metadata when available (football)
+            week_info = game.get("week", {}) or competitions.get("week", {})
+            season_info = game.get("season", {}) or competitions.get("season", {})
+            week_num = None
+            season_type = None
+            season_year = None
+            try:
+                week_num = week_info.get("number")
+            except Exception:
+                week_num = None
+            try:
+                season_type = season_info.get("type") or season_info.get("type", {}).get("name")
+            except Exception:
+                season_type = None
+            try:
+                season_year = season_info.get("year")
+            except Exception:
+                season_year = None
+
             games.append({
                 "id": game.get("id", ""),
                 "home_team": home.get("team", {}).get("displayName", ""),
@@ -95,6 +111,9 @@ async def get_games_for_date(sport: str = "nfl", target_date: datetime | None = 
                 "headline": game.get("name", ""),
                 "short_name": game.get("shortName", ""),
                 "sport": sport.upper(),
+                "week": week_num,
+                "season_type": season_type,
+                "season_year": season_year,
             })
 
         # Sort by start time

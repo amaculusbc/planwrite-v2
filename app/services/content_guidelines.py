@@ -88,6 +88,7 @@ SECTION VARIETY (critical - avoid repetition):
 - If you explained the mechanic in Overview, don't re-explain it in Eligibility
 - Later sections should be SHORTER and more specific
 - Use varied sentence structures - not every section starts with "To..."
+- Do NOT repeat responsible gaming disclaimers in multiple sections
 
 SECTION-SPECIFIC GUIDANCE:
 - Overview: Why this offer matters, what makes it valuable
@@ -100,6 +101,12 @@ SENTENCE STRUCTURE:
 - Mix short (8-12 words) and medium (15-25 words) sentences
 - Max 25 words per sentence
 - Vary rhythm - don't start every sentence the same way
+
+SIMPLER PHRASING (important):
+- Prefer direct, plain sentences
+- Good: "Bonus bets expire in seven days."
+- Bad: "Timing is also crucial, as these bonus bets expire in 7 days, encouraging you to engage quickly."
+- Avoid filler like "it’s important to note" or "in order to"
 
 PARAGRAPH FLOW:
 - 2-4 sentences per paragraph, 40-70 words total
@@ -115,7 +122,7 @@ VOCABULARY:
 
 COMPLIANCE (non-negotiable):
 - Always mention 21+ age requirement
-- Include responsible gaming helpline
+- Include responsible gaming helpline ONCE at the end of the article
 - State-specific restrictions when applicable
 - Never imply guaranteed outcomes
 - No "risk-free" claims (unless quoting official bonus name)"""

@@ -80,6 +80,20 @@
             <h2 class="text-lg font-medium text-gray-900">Draft</h2>
             <div class="flex items-center space-x-2">
                 <span class="text-sm text-gray-500" x-text="wordCount + ' words'"></span>
+                <div class="inline-flex rounded-md shadow-sm" role="group">
+                    <button type="button"
+                            @click="previewMode = false"
+                            :class="previewMode ? 'bg-white text-gray-700' : 'bg-primary-600 text-white'"
+                            class="px-3 py-1.5 text-xs font-medium border border-gray-300 rounded-l-md hover:bg-gray-50">
+                        Edit
+                    </button>
+                    <button type="button"
+                            @click="previewMode = true"
+                            :class="previewMode ? 'bg-primary-600 text-white' : 'bg-white text-gray-700'"
+                            class="px-3 py-1.5 text-xs font-medium border border-gray-300 border-l-0 rounded-r-md hover:bg-gray-50">
+                        Preview
+                    </button>
+                </div>
                 <button type="button" @click="regenerateDraft()"
                         :disabled="regenerating"
                         class="inline-flex items-center rounded-md bg-white px-3 py-1.5 text-sm font-medium text-gray-700 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50 disabled:opacity-50">
@@ -90,9 +104,15 @@
                 </button>
             </div>
         </div>
-        <textarea x-model="article.draft" rows="20"
-                  class="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 font-mono text-sm"
-                  placeholder="Article content in Markdown..."></textarea>
+        <div x-show="!previewMode">
+            <textarea x-model="article.draft" rows="20"
+                      class="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 font-mono text-sm"
+                      placeholder="Article content will appear here..."></textarea>
+        </div>
+        <div x-show="previewMode" x-transition
+             class="prose-article max-w-none rounded-md border border-gray-200 bg-gray-50 p-4">
+            <div x-html="previewHtml || '<p class=&quot;text-gray-500&quot;>No draft to preview yet.</p>'"></div>
+        </div>
     </div>
 
     <!-- Compliance section -->
@@ -195,11 +215,17 @@ function articleEditor(initialData) {
         regenerating: false,
         validating: false,
         saving: false,
+        previewMode: false,
         complianceScore: null,
         complianceIssues: [],
 
         get wordCount() {
             return this.article.draft ? this.article.draft.split(/\s+/).filter(w => w).length : 0;
+        },
+        get previewHtml() {
+            if (!this.article.draft) return '';
+            const hasHtml = /<\w+[^>]*>/.test(this.article.draft);
+            return hasHtml ? this.article.draft : this.markdownToHtml(this.article.draft);
         },
 
         init() {
@@ -337,14 +363,7 @@ function articleEditor(initialData) {
 
         exportHTML() {
             // Simple markdown to HTML conversion
-            let html = this.article.draft
-                .replace(/^### (.*$)/gim, '<h3>$1</h3>')
-                .replace(/^## (.*$)/gim, '<h2>$1</h2>')
-                .replace(/^# (.*$)/gim, '<h1>$1</h1>')
-                .replace(/\*\*(.*)\*\*/gim, '<strong>$1</strong>')
-                .replace(/\*(.*)\*/gim, '<em>$1</em>')
-                .replace(/\[(.*?)\]\((.*?)\)/gim, '<a href="$2">$1</a>')
-                .replace(/\n/gim, '<br>');
+            let html = this.markdownToHtml(this.article.draft || '');
 
             const blob = new Blob([html], { type: 'text/html' });
             const url = URL.createObjectURL(blob);
@@ -353,6 +372,24 @@ function articleEditor(initialData) {
             a.download = `${this.article.keyword || 'article'}.html`;
             a.click();
             URL.revokeObjectURL(url);
+        },
+
+        markdownToHtml(md) {
+            // Simple markdown to HTML conversion
+            return md
+                .replace(/^### (.*$)/gm, '<h3>$1</h3>')
+                .replace(/^## (.*$)/gm, '<h2>$1</h2>')
+                .replace(/^# (.*$)/gm, '<h1>$1</h1>')
+                .replace(/^\> (.*$)/gm, '<blockquote>$1</blockquote>')
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                .replace(/\*(.*?)\*/g, '<em>$1</em>')
+                .replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2">$1</a>')
+                .replace(/\n\n/g, '</p><p>')
+                .replace(/^(.+)$/gm, '<p>$1</p>')
+                .replace(/<p><h/g, '<h')
+                .replace(/<\/h(\d)><\/p>/g, '</h$1>')
+                .replace(/<p><blockquote>/g, '<blockquote>')
+                .replace(/<\/blockquote><\/p>/g, '</blockquote>');
         },
 
         async copyToClipboard() {

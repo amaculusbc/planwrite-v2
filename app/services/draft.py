@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import AsyncGenerator, Any
 from zoneinfo import ZoneInfo
 
-from app.services.llm import generate_completion
+from app.services.llm import generate_completion, generate_completion_structured
 from app.services.rag import query_articles
 from app.services.internal_links import suggest_links_for_section, format_links_markdown
 from app.services.compliance import get_disclaimer_for_state
@@ -67,6 +67,212 @@ def _extract_common_phrases(text: str) -> list[str]:
         matches = re.findall(pattern, text, re.IGNORECASE)
         found.extend([m.strip() for m in matches if len(m.strip()) > 10])
     return list(set(found))[:6]
+
+
+def _normalize_heading(text: str) -> str:
+    """Normalize a heading for de-duplication checks."""
+    return re.sub(r"\s+", " ", (text or "").strip().lower())
+
+
+def _is_signup_heading(title_lower: str) -> bool:
+    """Return True if the section title indicates sign-up steps."""
+    if not title_lower:
+        return False
+    return bool(re.search(
+        r"\b(sign ?up|sign-up|signup|register|registration|create an? account|open an? account|"
+        r"get started|how to sign|how to register|how to join)\b",
+        title_lower,
+    ))
+
+
+def _is_claim_heading(title_lower: str, is_signup: bool) -> bool:
+    """Return True if the section title indicates a claim/usage example."""
+    if is_signup:
+        return False
+    if not title_lower:
+        return False
+    return bool(re.search(
+        r"\b(how to claim|claim|worked example|bet example|example|how to use)\b",
+        title_lower,
+    ))
+
+
+def _inject_switchboard_links_for_offers(
+    html_output: str,
+    offers: list[dict[str, Any]],
+    state: str,
+    max_links: int = 12,
+) -> str:
+    """Inject switchboard links for each offer (brand + bonus code)."""
+    if not html_output or not offers:
+        return html_output
+
+    for offer in offers:
+        brand = offer.get("brand", "")
+        bonus_code = offer.get("bonus_code", "")
+        switchboard_url = offer.get("switchboard_link", "")
+        if not switchboard_url and offer.get("affiliate_id") and offer.get("campaign_id"):
+            switchboard_url = build_switchboard_url(
+                offer["affiliate_id"],
+                offer["campaign_id"],
+                state_code=state if state != "ALL" else "",
+            )
+        if not (brand and switchboard_url):
+            continue
+        html_output = inject_switchboard_links(
+            html_output,
+            brand=brand,
+            bonus_code=bonus_code,
+            switchboard_url=switchboard_url,
+            max_links=max_links,
+        )
+    return html_output
+
+
+def _build_signup_list(brand: str, has_code: bool, code_strong: str) -> str:
+    """Build a deterministic 5-step signup list as HTML."""
+    brand_label = brand or "the sportsbook"
+    signup_link = f'<a href="#">{brand_label} sign-up guide</a>'
+    bonus_link = '<a href="#">how bonus bets work</a>'
+
+    step_two = (
+        f"Create your account and enter {code_strong}."
+        if has_code
+        else "Create your account (no promo code required)."
+    )
+
+    steps = [
+        f"Confirm you’re eligible (21+ in your state) and open {signup_link}.",
+        step_two,
+        "Complete verification and log in.",
+        "Make your first deposit.",
+        f"Place a qualifying bet and review {bonus_link} for payout details.",
+    ]
+
+    items = "\n".join(f"<li>{step}</li>" for step in steps)
+    return f"<ol>\n{items}\n</ol>"
+
+
+def _steps_to_html(steps: list[str]) -> str:
+    items = "\n".join(f"<li>{step}</li>" for step in steps)
+    return f"<ol>\n{items}\n</ol>"
+
+
+async def _generate_signup_steps_structured(
+    *,
+    brand: str,
+    keyword: str,
+    state: str,
+    has_code: bool,
+    code_strong: str,
+    style_guide: str,
+    links_md: str,
+) -> list[str] | None:
+    """Generate a structured 5-step sign-up list."""
+    schema = {
+        "type": "object",
+        "properties": {
+            "steps": {
+                "type": "array",
+                "items": {"type": "string"},
+                "minItems": 5,
+                "maxItems": 5,
+            }
+        },
+        "required": ["steps"],
+        "additionalProperties": False,
+    }
+
+    code_line = (
+        f"Step 2 must include {code_strong}."
+        if has_code
+        else "Step 2 must say no promo code is required."
+    )
+
+    user_prompt = f"""Write a 5-step sign-up list for this promo.
+Output JSON with a single key: "steps" (array of 5 strings).
+Each step should be 1-2 sentences and plain language.
+
+Brand: {brand}
+Keyword: {keyword}
+State: {state}
+{code_line}
+
+Include at least one internal link using HTML <a href=\"#\">anchor text</a>.
+Available internal links (use 1-2):
+{links_md}
+
+Do NOT include responsible gaming disclaimers here.
+
+STYLE GUIDE:
+{style_guide}
+"""
+
+    try:
+        data = await generate_completion_structured(
+            prompt=user_prompt,
+            system_prompt="You are a concise sports betting editor. Output only valid JSON.",
+            schema=schema,
+            name="signup_steps",
+            description="Five-step signup list for a promo article",
+            temperature=0.2,
+            max_tokens=400,
+        )
+        steps = data.get("steps", []) if isinstance(data, dict) else []
+        steps = [s.strip() for s in steps if isinstance(s, str) and s.strip()]
+        if len(steps) == 5:
+            return steps
+    except Exception:
+        pass
+    return None
+
+
+def _ensure_two_paragraphs(html: str, brand: str, offer_text: str, has_code: bool, code_strong: str, state: str) -> str:
+    """Ensure intro has at least two paragraphs."""
+    if not html:
+        return html
+
+    paragraphs = re.findall(r"<p>.*?</p>", html, flags=re.DOTALL)
+    if len(paragraphs) >= 2:
+        return html
+
+    # Normalize to a single paragraph body
+    if paragraphs:
+        body = re.sub(r"^<p>|</p>$", "", paragraphs[0].strip(), flags=re.DOTALL)
+    else:
+        body = html.strip()
+
+    sentences = re.split(r"(?<=[.!?])\s+", body)
+    sentences = [s.strip() for s in sentences if s.strip()]
+
+    if len(sentences) >= 3:
+        first = " ".join(sentences[:2]).strip()
+        second = " ".join(sentences[2:]).strip()
+    elif len(sentences) == 2:
+        first, second = sentences
+    else:
+        first = body
+        details = []
+        if brand and offer_text:
+            details.append(f"{brand} is offering {offer_text}.")
+        if has_code:
+            details.append(f"Enter the {code_strong} when you register.")
+        else:
+            details.append("No promo code is required.")
+        if state and state != "ALL":
+            details.append(f"Available in {state}.")
+        second = " ".join(details) or "See full terms for eligibility and timing."
+
+    return f"<p>{first}</p>\n<p>{second}</p>"
+
+
+def _ensure_single_disclaimer(html: str, disclaimer: str) -> str:
+    """Ensure the disclaimer appears only once at the end of the article."""
+    if not disclaimer:
+        return html
+    pattern = rf"<p><em>{re.escape(disclaimer)}</em></p>\s*"
+    cleaned = re.sub(pattern, "", html, flags=re.IGNORECASE)
+    return cleaned.rstrip() + f"\n<p><em>{disclaimer}</em></p>"
 
 
 # ============================================================================
@@ -141,6 +347,7 @@ async def generate_draft_from_outline(
     previous_content = ""
     keyword_count = 0
     target_keyword_total = 9
+    seen_headings: set[str] = set()
 
     for section in outline:
         level = section.get("level", "h2")
@@ -171,6 +378,11 @@ async def generate_draft_from_outline(
                 parts.append("<!-- Promo module placeholder -->")
 
         elif level in ("h2", "h3"):
+            normalized = _normalize_heading(section_title)
+            if normalized and normalized in seen_headings:
+                continue
+            if normalized:
+                seen_headings.add(normalized)
             content = await _generate_body_section(
                 section_title=section_title,
                 level=level,
@@ -183,7 +395,7 @@ async def generate_draft_from_outline(
                 current_keyword_count=keyword_count,
                 target_keyword_total=target_keyword_total,
                 event_context=event_context,
-                bet_example=bet_example if "claim" in section_title.lower() else "",
+                bet_example=bet_example,
             )
             tag = "h2" if level == "h2" else "h3"
             parts.append(f"<{tag}>{section_title}</{tag}>")
@@ -191,21 +403,20 @@ async def generate_draft_from_outline(
             previous_content += f"\n{section_title}:\n{content}"
             keyword_count += _count_keyword(content, keyword)
 
-    # Add final disclaimer
-    disclaimer = get_disclaimer_for_state(state)
-    parts.append(f"<p><em>{disclaimer}</em></p>")
-
     # Join and inject switchboard links
     html_output = "\n".join(parts)
 
-    if switchboard_url and bonus_code:
-        html_output = inject_switchboard_links(
-            html_output,
-            brand=brand,
-            bonus_code=bonus_code,
-            switchboard_url=switchboard_url,
-            max_links=12,
-        )
+    # Ensure single disclaimer at the end
+    disclaimer = get_disclaimer_for_state(state)
+    html_output = _ensure_single_disclaimer(html_output, disclaimer)
+
+    all_offers = [offer] + (alt_offers or []) if offer else (alt_offers or [])
+    html_output = _inject_switchboard_links_for_offers(
+        html_output,
+        offers=all_offers,
+        state=state,
+        max_links=2,
+    )
 
     if output_format == "markdown":
         # Convert back to markdown (basic)
@@ -227,7 +438,7 @@ async def _generate_intro_section(
     The intro should:
     1. Hook with a specific game/event if available (e.g., "Seahawks vs Patriots tonight at 6:30 PM ET on NBC")
     2. State the offer clearly with date
-    3. Mention the promo code TWICE with <strong> tags (these get converted to switchboard links later)
+    3. Mention the promo code twice in plain text, but only wrap ONE natural anchor phrase in <strong> (used for switchboard links)
     4. State eligibility (21+, new users, states)
     """
     brand = offer.get("brand", "")
@@ -240,12 +451,13 @@ async def _generate_intro_section(
     style_guide = get_style_instructions()
     has_code = bool(bonus_code.strip())
     code_strong = f"<strong>{brand} bonus code {bonus_code}</strong>"
+    link_anchor = f"<strong>{brand} promo code</strong>"
 
     # Format talking points for prompt
     points_md = "\n".join(f"- {p}" for p in talking_points) if talking_points else ""
 
     system_prompt = """You are a PUNCHY sports betting writer for Action Network.
-Write a 3-4 sentence intro (lede) that sits between the H1 and H2.
+Write a 2-paragraph intro (lede) that sits between the H1 and H2.
 
 TONE: Direct, confident, conversational. Like you're telling a friend about a deal.
 - "Put the bet365 promo code to work for Seahawks vs Patriots tonight..."
@@ -261,31 +473,30 @@ Output clean HTML only - use <p>, <a>, <strong> tags. No markdown. No exclamatio
     requirements = [
         f'If there is a game hook, START with it: "Put the {brand} Promo Code to work for [Game] tonight at [time] on [network], because..."',
         "If no game hook, start with a direct offer statement; avoid generic openers like \"If you are looking for a valuable offer...\"",
+        "Do NOT include responsible gaming disclaimers here (handled at the end of the article).",
     ]
     if has_code:
         requirements.extend([
-            f"Mention the promo code TWICE using this EXACT format: {code_strong}",
-            f'The second mention should be: "Sign up and enter the {code_strong}, place your bet..."',
+            f"Mention the promo code value {bonus_code} twice in plain text.",
+            f"Include ONE natural link anchor wrapped in <strong>, e.g., {link_anchor} or <strong>{brand} offer</strong>.",
+            "Do NOT wrap every mention in <strong>.",
         ])
     else:
         requirements.append("Clearly state that no promo code is required. Do NOT invent a code. Do NOT wrap this in <strong>.")
     requirements.extend([
-        "End with eligibility: \"This promo is available to new users 21+ nationwide (or specific states)\"",
-        "Include responsible gaming note: \"if you or someone you know has a gambling problem, call 1-800-GAMBLER\"",
+        "Keep sentences short and plain.",
+        "Avoid legal or compliance language here.",
         "NO exclamation points anywhere",
         "Do NOT invent numbers not listed above. If unsure, say \"see full terms.\"",
     ])
     requirements_md = "\n".join(f"- {r}" for r in requirements)
 
     example_output = (
-        f"<p>Put the {brand} Promo Code to work for [Game] tonight at [time] on [network], because {brand} is offering {offer_text} ahead of {date_str}. "
-        f"Sign up and enter the {code_strong}, place your $5 bet, and you will get $200 in bonus bets whether your pick wins or loses. "
-        f"Just make sure you use the {code_strong} at registration, and note this promo is available to new users nationwide (21+); "
-        f"if you or someone you know has a gambling problem, call 1-800-GAMBLER.</p>"
+        f"<p>Put the {link_anchor} to work for [Game] tonight at [time] on [network], because {brand} is offering {offer_text} ahead of {date_str}.</p>"
+        f"<p>Sign up, enter the promo code {bonus_code}, place your $5 bet, and you will get $200 in bonus bets whether your pick wins or loses.</p>"
     ) if has_code else (
-        f"<p>Put the {brand} offer to work for [Game] tonight at [time] on [network], because {brand} is offering {offer_text} ahead of {date_str}. "
-        f"No promo code is required to claim it; just sign up and place your first bet. "
-        f"This promo is available to new users nationwide (21+); if you or someone you know has a gambling problem, call 1-800-GAMBLER.</p>"
+        f"<p>Put the {brand} offer to work for [Game] tonight at [time] on [network], because {brand} is offering {offer_text} ahead of {date_str}.</p>"
+        f"<p>No promo code is required to claim it; just sign up and place your first bet.</p>"
     )
 
     user_prompt = f"""Write the intro paragraph for this promo article:
@@ -313,7 +524,7 @@ CRITICAL REQUIREMENTS:
 EXAMPLE OUTPUT (match this structure):
 {example_output}
 
-Write ONE <p> tag now (HTML only, no markdown):"""
+Write TWO <p> tags now (HTML only, no markdown):"""
 
     result = await generate_completion(
         prompt=user_prompt,
@@ -327,7 +538,7 @@ Write ONE <p> tag now (HTML only, no markdown):"""
     if not result.startswith("<p>"):
         result = f"<p>{result}</p>"
 
-    return result
+    return _ensure_two_paragraphs(result, brand, offer_text, has_code, code_strong, state)
 
 
 async def _generate_body_section(
@@ -364,15 +575,18 @@ async def _generate_body_section(
     rag_guidance = get_rag_usage_guidance()
     has_code = bool(bonus_code.strip())
     code_strong = f"<strong>{brand} Promo Code {bonus_code}</strong>"
+    link_anchor = f"<strong>{brand} promo code</strong>"
     code_requirement = (
-        f"Mention the {code_strong} once."
+        f"Mention the promo code value {bonus_code} at least once in plain text. "
+        f"Include ONE natural <strong> anchor for linking, e.g., {link_anchor} or <strong>{brand} offer</strong>."
         if has_code
-        else "State clearly that no promo code is required; do not invent a code."
+        else f"State clearly that no promo code is required (do not invent a code). "
+             f"Include ONE natural <strong> anchor for linking, e.g., <strong>{brand} offer</strong>."
     )
     code_relevance = (
-        f"Mention the {code_strong} naturally if relevant."
+        f"If relevant, mention the promo code value {bonus_code} in plain text and include ONE <strong> anchor like {link_anchor}."
         if has_code
-        else "If relevant, note that no promo code is required (do not invent a code)."
+        else f"If relevant, note no promo code is required and include ONE <strong> anchor like <strong>{brand} offer</strong>."
     )
     step_two = (
         f"Create account and enter {code_strong}"
@@ -411,20 +625,35 @@ async def _generate_body_section(
 
     # Determine section type and specific objective
     title_lower = section_title.lower()
-    is_numbered_list = any(x in title_lower for x in ["sign up", "step", "how to sign"])
-    is_how_to_claim = any(x in title_lower for x in ["claim", "how to claim", "example"])
+    is_signup = _is_signup_heading(title_lower)
+    is_how_to_claim = _is_claim_heading(title_lower, is_signup)
+    is_numbered_list = is_signup
     is_overview = any(x in title_lower for x in ["overview", "what is", "about"])
     is_eligibility = any(x in title_lower for x in ["eligibility", "key details", "requirements"])
     is_terms = any(x in title_lower for x in ["terms", "conditions", "fine print"])
-
-    disclaimer = get_disclaimer_for_state(state)
+    if not is_how_to_claim:
+        bet_example = ""
 
     if is_terms and terms:
         # Deterministic terms section to avoid hallucinations
         cleaned = terms.replace("\\n", "\n")
         paras = [p.strip() for p in cleaned.splitlines() if p.strip()]
         terms_html = "\n".join(f"<p>{p}</p>" for p in paras)
-        return f"{terms_html}\n<p><em>{disclaimer}</em></p>"
+        return terms_html
+
+    if is_numbered_list:
+        steps = await _generate_signup_steps_structured(
+            brand=brand,
+            keyword=keyword,
+            state=state,
+            has_code=has_code,
+            code_strong=code_strong,
+            style_guide=style_guide,
+            links_md=links_md,
+        )
+        if steps:
+            return _steps_to_html(steps)
+        return _build_signup_list(brand, has_code, code_strong)
 
     system_prompt = """You are a PUNCHY sports betting editor for Action Network's Top Stories.
 
@@ -438,6 +667,7 @@ Follow the STYLE GUIDE provided in the prompt."""
 
     # Build section-specific instructions
     if is_how_to_claim:
+        bet_example = bet_example or ""
         section_objective = f"""SECTION OBJECTIVE: Provide a WORKED EXAMPLE with actual dollar amounts.
 
 CRITICAL: This section must include a first-person bet example with math:
@@ -481,7 +711,7 @@ Each step should be 1-2 sentences. Include relevant internal links."""
     elif is_terms:
         section_objective = f"""SECTION OBJECTIVE: Cover the fine print ONLY.
 
-Just output the raw terms/conditions text followed by compliance disclaimer.
+Just output the raw terms/conditions text.
 Do NOT restate the offer or eligibility - just the legal terms."""
     else:
         section_objective = f"""SECTION OBJECTIVE: Write helpful content under this heading.
@@ -543,10 +773,9 @@ PREVIOUSLY WRITTEN (do NOT repeat this content):
 
 {"PHRASES TO AVOID (overused):" + chr(10) + blacklisted_md if blacklisted_md else ""}
 
-FORMAT: {"Numbered <ol> list with 5 <li> items" if is_numbered_list else "2-3 <p> paragraphs"}
+DO NOT add responsible gaming disclaimers in this section (handled at the end).
 
-COMPLIANCE (end with if space allows):
-{disclaimer}
+FORMAT: {"Numbered <ol> list with 5 <li> items" if is_numbered_list else "2-3 <p> paragraphs"}
 
 Write the section now (HTML only, no heading, no markdown):"""
 
@@ -557,24 +786,22 @@ Write the section now (HTML only, no heading, no markdown):"""
         max_tokens=800,
     )
 
-    return result.strip()
+    result = result.strip()
+
+    if is_numbered_list:
+        li_count = len(re.findall(r"<li\b", result, flags=re.IGNORECASE))
+        if li_count < 5:
+            result = _build_signup_list(brand, has_code, code_strong)
+
+    return result
 
 
 def _render_html_offer_block(offer: dict, switchboard_url: str) -> str:
     """Render offer as HTML CTA block."""
-    brand = offer.get("brand", "")
-    offer_text = offer.get("offer_text", "")
-    bonus_code = offer.get("bonus_code", "")
-    terms = offer.get("terms", "")
-
-    block = f"""<div class="promo-card">
-<p><strong>{brand}: {offer_text}</strong></p>
-{f'<p>Bonus Code: <strong>{bonus_code}</strong></p>' if bonus_code else ''}
-<p><a data-id="switchboard_tracking" href="{switchboard_url}" rel="nofollow"><strong>Claim Offer</strong></a></p>
-{f'<details><summary>Terms apply</summary><p>{terms[:500]}</p></details>' if terms else ''}
-<p><em>21+. Gambling problem? Call 1-800-GAMBLER. Please bet responsibly.</em></p>
-</div>"""
-    return block
+    shortcode = offer.get("shortcode") or ""
+    if not shortcode:
+        return "<!-- Promo module placeholder -->"
+    return shortcode
 
 
 def _html_to_markdown(html: str) -> str:
@@ -646,6 +873,7 @@ async def generate_draft_from_outline_streaming(
     total_sections = len(outline)
     keyword_count = 0
     target_keyword_total = 9
+    seen_headings: set[str] = set()
 
     title_html = f"<h1>{title}</h1>"
     parts.append(title_html)
@@ -684,6 +912,11 @@ async def generate_draft_from_outline_streaming(
                 yield {"type": "content", "section": "shortcode", "content": block}
 
         elif level in ("h2", "h3"):
+            normalized = _normalize_heading(section_title)
+            if normalized and normalized in seen_headings:
+                continue
+            if normalized:
+                seen_headings.add(normalized)
             content = await _generate_body_section(
                 section_title=section_title,
                 level=level,
@@ -696,7 +929,7 @@ async def generate_draft_from_outline_streaming(
                 current_keyword_count=keyword_count,
                 target_keyword_total=target_keyword_total,
                 event_context=event_context,
-                bet_example=bet_example if "claim" in section_title.lower() else "",
+                bet_example=bet_example,
             )
             tag = "h2" if level == "h2" else "h3"
             heading = f"<{tag}>{section_title}</{tag}>"
@@ -706,22 +939,18 @@ async def generate_draft_from_outline_streaming(
             keyword_count += _count_keyword(content, keyword)
             yield {"type": "content", "section": section_title, "content": heading + "\n" + content}
 
-    # Final disclaimer
-    disclaimer = get_disclaimer_for_state(state)
-    footer = f"<p><em>{disclaimer}</em></p>"
-    parts.append(footer)
-    yield {"type": "content", "section": "footer", "content": footer}
-
     # Join and inject links
     html_output = "\n".join(parts)
-    if switchboard_url and bonus_code:
-        html_output = inject_switchboard_links(
-            html_output,
-            brand=brand,
-            bonus_code=bonus_code,
-            switchboard_url=switchboard_url,
-            max_links=12,
-        )
+    disclaimer = get_disclaimer_for_state(state)
+    html_output = _ensure_single_disclaimer(html_output, disclaimer)
+    yield {"type": "content", "section": "footer", "content": f"<p><em>{disclaimer}</em></p>"}
+    all_offers = [offer] + (alt_offers or []) if offer else (alt_offers or [])
+    html_output = _inject_switchboard_links_for_offers(
+        html_output,
+        offers=all_offers,
+        state=state,
+        max_links=2,
+    )
 
     if output_format == "markdown":
         html_output = _html_to_markdown(html_output)
