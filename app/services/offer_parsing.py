@@ -9,13 +9,13 @@ import re
 from typing import Any
 
 
-def extract_bonus_expiration_days(terms: str | None) -> int:
+def extract_bonus_expiration_days(terms: str | None) -> int | None:
     """Extract bonus expiration days from terms text.
 
-    Falls back to 7 days if not found.
+    Returns None if no explicit day value is found.
     """
     if not terms:
-        return 7
+        return None
 
     text = terms.lower()
     patterns = [
@@ -31,7 +31,7 @@ def extract_bonus_expiration_days(terms: str | None) -> int:
                 return int(match.group(1))
             except (ValueError, IndexError):
                 continue
-    return 7
+    return None
 
 
 def extract_minimum_odds(terms: str | None) -> str:

@@ -37,7 +37,9 @@ class DraftRequest(BaseModel):
 
     keyword: str
     title: str
-    outline_tokens: list[str]
+    outline_tokens: Optional[list[str]] = None
+    outline_text: Optional[str] = None
+    outline_structured: Optional[list[dict[str, Any]]] = None
     offer_id: Optional[str] = None
     offer_property: Optional[str] = None
     alt_offer_ids: Optional[list[str]] = None

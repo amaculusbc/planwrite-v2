@@ -359,8 +359,12 @@ def outline_to_text(outline: list[dict]) -> str:
         # Section header
         if level == "intro":
             lines.append("[INTRO]")
-        elif level == "shortcode":
-            lines.append("[SHORTCODE]")
+        elif str(level).startswith("shortcode"):
+            token = str(level).upper()
+            if token == "SHORTCODE":
+                lines.append("[SHORTCODE]")
+            else:
+                lines.append(f"[{token}]")
         elif level in ("h2", "h3"):
             lines.append(f"[{level.upper()}: {title}]")
 
@@ -396,7 +400,7 @@ def text_to_outline(text: str) -> list[dict]:
 
         # Check for section headers
         intro_match = re.match(r"^\[INTRO\]$", line, re.IGNORECASE)
-        shortcode_match = re.match(r"^\[SHORTCODE\]$", line, re.IGNORECASE)
+        shortcode_match = re.match(r"^\[(SHORTCODE(?:_[A-Z0-9]+)?)\]$", line, re.IGNORECASE)
         h2_match = re.match(r"^\[H2:\s*(.+)\]$", line, re.IGNORECASE)
         h3_match = re.match(r"^\[H3:\s*(.+)\]$", line, re.IGNORECASE)
 
@@ -412,8 +416,9 @@ def text_to_outline(text: str) -> list[dict]:
         elif shortcode_match:
             if current_section:
                 outline.append(current_section)
+            shortcode_level = shortcode_match.group(1).lower()
             current_section = {
-                "level": "shortcode",
+                "level": shortcode_level,
                 "title": "",
                 "talking_points": [],
                 "avoid": [],
@@ -469,7 +474,7 @@ def validate_outline(outline: list[dict], keyword: str) -> list[str]:
 
     # Count section types
     h2_count = sum(1 for s in outline if s.get("level") == "h2")
-    shortcode_count = sum(1 for s in outline if s.get("level") == "shortcode")
+    shortcode_count = sum(1 for s in outline if str(s.get("level", "")).startswith("shortcode"))
     has_intro = any(s.get("level") == "intro" for s in outline)
 
     # Structure checks

@@ -158,6 +158,81 @@ def _steps_to_html(steps: list[str]) -> str:
     return f"<ol>\n{items}\n</ol>"
 
 
+def _offer_expiration_prompt_line(expiration_days: int | None) -> str:
+    """Build a safe expiration prompt line for source-of-truth sections."""
+    if expiration_days is None:
+        return "- Expiration: Not provided (if needed, say \"see full terms\"; do not guess)"
+    return f"- Expiration: {expiration_days} days (if mentioned, use exactly {expiration_days})"
+
+
+def _format_offer_for_prompt(offer: dict[str, Any], state: str) -> str:
+    """Format one offer as a compact source-of-truth row for prompts."""
+    brand = str(offer.get("brand") or "[not provided]")
+    offer_text = str(offer.get("offer_text") or offer.get("affiliate_offer") or "[not provided]")
+    code = str(offer.get("bonus_code") or "No code required")
+    terms = str(offer.get("terms") or "")
+    expiration_days = offer.get("bonus_expiration_days")
+    if expiration_days is None:
+        expiration_days = extract_bonus_expiration_days(terms)
+    min_odds = offer.get("minimum_odds") or extract_minimum_odds(terms)
+    wagering = offer.get("wagering_requirement") or extract_wagering_requirement(terms)
+    bonus_amount = offer.get("bonus_amount") or extract_bonus_amount(offer_text)
+    states = offer.get("states_list") or offer.get("states") or state or "ALL"
+    if isinstance(states, list):
+        states_text = ", ".join(str(s) for s in states[:12]) if states else "ALL"
+    else:
+        states_text = str(states)
+    expiration_text = (
+        f"{expiration_days} days"
+        if expiration_days is not None
+        else "Not provided (use \"see full terms\")"
+    )
+    return (
+        f"- Brand: {brand}\n"
+        f"  Offer: {offer_text}\n"
+        f"  Bonus Amount: {bonus_amount or '[not provided]'}\n"
+        f"  Bonus Code: {code}\n"
+        f"  Available in: {states_text}\n"
+        f"  Expiration: {expiration_text}\n"
+        f"  Minimum Odds: {min_odds if min_odds else '[see terms - do not guess]'}\n"
+        f"  Wagering: {wagering if wagering else '[see terms - do not guess]'}"
+    )
+
+
+def _build_multi_offer_prompt_context(offers: list[dict[str, Any]], state: str) -> str:
+    """Build source-of-truth prompt context for one or more offers."""
+    normalized = [o for o in offers if o]
+    if not normalized:
+        return ""
+    rows = [_format_offer_for_prompt(offer, state) for offer in normalized[:3]]
+    return "\n".join(rows)
+
+
+def _render_terms_section_html(
+    *,
+    terms: str,
+    expiration_days: int | None,
+    min_odds: str,
+    wagering: str,
+) -> str:
+    """Render a deterministic terms section to avoid legal hallucinations."""
+    if terms:
+        cleaned = terms.replace("\\n", "\n")
+        paras = [p.strip() for p in cleaned.splitlines() if p.strip()]
+        if paras:
+            return "\n".join(f"<p>{p}</p>" for p in paras)
+
+    points: list[str] = []
+    if expiration_days is not None:
+        points.append(f"Bonus bets expire in {expiration_days} days.")
+    if min_odds:
+        points.append(f"Minimum odds requirement: {min_odds}.")
+    if wagering:
+        points.append(f"Wagering requirement: {wagering}.")
+    points.append("See full terms at the operator site for complete eligibility and restrictions.")
+    return f"<p>{' '.join(points)}</p>"
+
+
 async def _generate_signup_steps_structured(
     *,
     brand: str,
@@ -360,6 +435,7 @@ async def generate_draft_from_outline(
                 keyword=keyword,
                 title=title,
                 offer=offer,
+                all_offers=all_offers,
                 state=state,
                 talking_points=talking_points,
                 event_context=event_context,
@@ -388,6 +464,7 @@ async def generate_draft_from_outline(
                 level=level,
                 keyword=keyword,
                 offer=offer,
+                all_offers=all_offers,
                 state=state,
                 talking_points=talking_points,
                 avoid=avoid,
@@ -410,7 +487,6 @@ async def generate_draft_from_outline(
     disclaimer = get_disclaimer_for_state(state)
     html_output = _ensure_single_disclaimer(html_output, disclaimer)
 
-    all_offers = [offer] + (alt_offers or []) if offer else (alt_offers or [])
     html_output = _inject_switchboard_links_for_offers(
         html_output,
         offers=all_offers,
@@ -429,6 +505,7 @@ async def _generate_intro_section(
     keyword: str,
     title: str,
     offer: dict,
+    all_offers: list[dict[str, Any]] | None,
     state: str,
     talking_points: list[str],
     event_context: str = "",
@@ -447,11 +524,15 @@ async def _generate_intro_section(
     terms = offer.get("terms", "")
     expiration_days = offer.get("bonus_expiration_days") or extract_bonus_expiration_days(terms)
     bonus_amount = offer.get("bonus_amount") or extract_bonus_amount(offer_text)
+    expiration_line = _offer_expiration_prompt_line(expiration_days)
     date_str = today_long()
     style_guide = get_style_instructions()
     has_code = bool(bonus_code.strip())
     code_strong = f"<strong>{brand} bonus code {bonus_code}</strong>"
     link_anchor = f"<strong>{brand} promo code</strong>"
+    prompt_offers = [o for o in (all_offers or []) if o] or [offer]
+    has_multiple_offers = len(prompt_offers) > 1
+    multi_offer_context = _build_multi_offer_prompt_context(prompt_offers, state)
 
     # Format talking points for prompt
     points_md = "\n".join(f"- {p}" for p in talking_points) if talking_points else ""
@@ -475,6 +556,8 @@ Output clean HTML only - use <p>, <a>, <strong> tags. No markdown. No exclamatio
         "If no game hook, start with a direct offer statement; avoid generic openers like \"If you are looking for a valuable offer...\"",
         "Do NOT include responsible gaming disclaimers here (handled at the end of the article).",
     ]
+    if has_multiple_offers:
+        requirements.append("This article includes multiple offers: mention at least two distinct offers naturally in the lede.")
     if has_code:
         requirements.extend([
             f"Mention the promo code value {bonus_code} twice in plain text.",
@@ -508,8 +591,10 @@ DATE (include this): {date_str}
 - Offer: {offer_text}
 - Bonus Code: {bonus_code or "No code required"}
 - Bonus Amount: {bonus_amount or "See offer"}
-- Expiration: {expiration_days} days (if mentioned, use exactly {expiration_days})
+- {expiration_line[2:]}
 - State: {state}
+
+{f"MULTI-OFFER SOURCE OF TRUTH (use correct brand/code pairings):{chr(10)}{multi_offer_context}{chr(10)}" if has_multiple_offers else ""}
 
 KEYWORD: {keyword}
 
@@ -546,6 +631,7 @@ async def _generate_body_section(
     level: str,
     keyword: str,
     offer: dict,
+    all_offers: list[dict[str, Any]] | None,
     state: str,
     talking_points: list[str],
     avoid: list[str],
@@ -563,14 +649,19 @@ async def _generate_body_section(
     3. Promo code mentions with <strong> tags for switchboard link injection
     4. Internal links that ADD context, not just link to other review pages
     """
-    brand = offer.get("brand", "")
-    offer_text = offer.get("offer_text", "")
-    bonus_code = offer.get("bonus_code", "")
-    terms = offer.get("terms", "")
-    bonus_amount = offer.get("bonus_amount") or extract_bonus_amount(offer_text)
-    expiration_days = offer.get("bonus_expiration_days") or extract_bonus_expiration_days(terms)
-    min_odds = offer.get("minimum_odds") or extract_minimum_odds(terms)
-    wagering = offer.get("wagering_requirement") or extract_wagering_requirement(terms)
+    prompt_offers = [o for o in (all_offers or []) if o] or ([offer] if offer else [])
+    primary_offer = offer or (prompt_offers[0] if prompt_offers else {})
+    has_multiple_offers = len(prompt_offers) > 1
+    brand = primary_offer.get("brand", "")
+    offer_text = primary_offer.get("offer_text", "")
+    bonus_code = primary_offer.get("bonus_code", "")
+    terms = primary_offer.get("terms", "")
+    bonus_amount = primary_offer.get("bonus_amount") or extract_bonus_amount(offer_text)
+    expiration_days = primary_offer.get("bonus_expiration_days") or extract_bonus_expiration_days(terms)
+    min_odds = primary_offer.get("minimum_odds") or extract_minimum_odds(terms)
+    wagering = primary_offer.get("wagering_requirement") or extract_wagering_requirement(terms)
+    expiration_line = _offer_expiration_prompt_line(expiration_days)
+    multi_offer_context = _build_multi_offer_prompt_context(prompt_offers, state)
     style_guide = get_style_instructions()
     rag_guidance = get_rag_usage_guidance()
     has_code = bool(bonus_code.strip())
@@ -588,6 +679,14 @@ async def _generate_body_section(
         if has_code
         else f"If relevant, note no promo code is required and include ONE <strong> anchor like <strong>{brand} offer</strong>."
     )
+    if has_multiple_offers:
+        code_requirement = (
+            "When mentioning promo codes, use the correct brand/code pairing for each offer. "
+            "Do not mix codes across sportsbooks."
+        )
+        code_relevance = (
+            "If you reference multiple offers, keep each bonus code tied to the correct sportsbook."
+        )
     step_two = (
         f"Create account and enter {code_strong}"
         if has_code
@@ -634,12 +733,13 @@ async def _generate_body_section(
     if not is_how_to_claim:
         bet_example = ""
 
-    if is_terms and terms:
-        # Deterministic terms section to avoid hallucinations
-        cleaned = terms.replace("\\n", "\n")
-        paras = [p.strip() for p in cleaned.splitlines() if p.strip()]
-        terms_html = "\n".join(f"<p>{p}</p>" for p in paras)
-        return terms_html
+    if is_terms:
+        return _render_terms_section_html(
+            terms=terms,
+            expiration_days=expiration_days,
+            min_odds=min_odds,
+            wagering=wagering,
+        )
 
     if is_numbered_list:
         steps = await _generate_signup_steps_structured(
@@ -708,11 +808,6 @@ Output as a numbered <ol> list with exactly 5 steps:
 5. Place first bet and receive bonus
 
 Each step should be 1-2 sentences. Include relevant internal links."""
-    elif is_terms:
-        section_objective = f"""SECTION OBJECTIVE: Cover the fine print ONLY.
-
-Just output the raw terms/conditions text.
-Do NOT restate the offer or eligibility - just the legal terms."""
     else:
         section_objective = f"""SECTION OBJECTIVE: Write helpful content under this heading.
 
@@ -727,16 +822,11 @@ SECTION TITLE: {section_title}
 
 === SOURCE OF TRUTH - DO NOT DEVIATE ===
 These are exact offer details. Do NOT invent or modify numbers.
-- Brand: {brand or "[not provided]"}
-- Offer: {offer_text or "[not provided]"}
-- Bonus Amount: {bonus_amount or "[not provided]"}
-- Bonus Code: {bonus_code or "[not provided]"}
-- Available in: {state}
-- Expiration: {expiration_days} days (if mentioned, use exactly {expiration_days})
-- Minimum Odds: {min_odds if min_odds else "[see terms - do not guess]"}
-- Wagering: {wagering if wagering else "[see terms - do not guess]"}
+{multi_offer_context}
 RULE: If a detail is not provided, say "see full terms" instead of guessing.
 === END SOURCE OF TRUTH ===
+
+{f"MULTI-OFFER RULES:{chr(10)}- This article includes {len(prompt_offers)} offers.{chr(10)}- Mention at least two distinct offers in overview or key-details style sections.{chr(10)}- Keep brand/code pairings correct for every mention.{chr(10)}" if has_multiple_offers else ""}
 
 {"BET EXAMPLE DATA (use this for the worked example):" + chr(10) + bet_example + chr(10) if bet_example else ""}
 {"EVENT CONTEXT (use for bet examples):" + chr(10) + event_context + chr(10) if event_context else ""}
@@ -746,6 +836,7 @@ OFFER CONTEXT:
 - Offer: {offer_text}
 - Bonus Code: {bonus_code or "No code required"}
 - State: {state}
+- {expiration_line[2:]}
 
 {"TALKING POINTS:" + chr(10) + points_md + chr(10) if points_md else ""}
 {"DO NOT COVER (handled elsewhere):" + chr(10) + avoid_md + chr(10) if avoid_md else ""}
@@ -894,6 +985,7 @@ async def generate_draft_from_outline_streaming(
                 keyword=keyword,
                 title=title,
                 offer=offer,
+                all_offers=all_offers,
                 state=state,
                 talking_points=talking_points,
                 event_context=event_context,
@@ -922,6 +1014,7 @@ async def generate_draft_from_outline_streaming(
                 level=level,
                 keyword=keyword,
                 offer=offer,
+                all_offers=all_offers,
                 state=state,
                 talking_points=talking_points,
                 avoid=avoid,
@@ -985,6 +1078,73 @@ def parse_token(token: str) -> dict:
     return {"type": "unknown", "title": token}
 
 
+def _hydrate_outline_guidance(outline: list[dict], keyword: str) -> list[dict]:
+    """Add baseline talking points for legacy token outlines."""
+    hydrated: list[dict] = []
+    for section in outline:
+        level = str(section.get("level", "h2"))
+        title = str(section.get("title", ""))
+        points = list(section.get("talking_points") or [])
+        avoid = list(section.get("avoid") or [])
+
+        if level in ("h2", "h3") and not points:
+            title_lower = title.lower()
+            is_signup = _is_signup_heading(title_lower)
+            is_claim = _is_claim_heading(title_lower, is_signup)
+            is_terms = any(x in title_lower for x in ["terms", "conditions", "fine print"])
+            is_eligibility = any(x in title_lower for x in ["eligibility", "key details", "requirements"])
+            is_overview = any(x in title_lower for x in ["overview", "what is", "about"])
+
+            if is_signup:
+                points = [
+                    "Step-by-step registration flow",
+                    "Where to enter promo code (or note none is required)",
+                    "How first deposit and qualifying bet work",
+                ]
+                avoid.extend(["Long legal disclaimers", "Repeating full offer description"])
+            elif is_claim:
+                points = [
+                    "First-person worked bet example",
+                    "Win scenario payout math",
+                    "Loss scenario and what bonus is received",
+                ]
+                avoid.extend(["Generic feature descriptions"])
+            elif is_terms:
+                points = [
+                    "Only include verified terms from source data",
+                    "If details are missing, direct reader to full terms",
+                ]
+                avoid.extend(["Inventing legal restrictions"])
+            elif is_eligibility:
+                points = [
+                    "21+ and new customer requirement",
+                    "Eligible states and key restrictions",
+                    "Bonus expiration and minimum odds if available",
+                ]
+                avoid.extend(["Restating full offer mechanics"])
+            elif is_overview:
+                points = [
+                    f"Why the {keyword} offer matters now",
+                    "Who benefits most from this offer",
+                    "Value and timing in plain language",
+                ]
+                avoid.extend(["Step-by-step sign-up details"])
+            else:
+                points = [
+                    f"Address the section angle for {keyword}",
+                    "Include one concrete and verifiable offer detail",
+                ]
+
+        hydrated.append({
+            "level": level,
+            "title": title,
+            "talking_points": points,
+            "avoid": avoid,
+        })
+
+    return hydrated
+
+
 async def generate_draft(
     outline_tokens: list[str],
     keyword: str,
@@ -1010,6 +1170,7 @@ async def generate_draft(
             "talking_points": [],
             "avoid": [],
         })
+    outline = _hydrate_outline_guidance(outline, keyword)
 
     return await generate_draft_from_outline(
         outline=outline,
@@ -1044,6 +1205,7 @@ async def generate_draft_streaming(
             "talking_points": [],
             "avoid": [],
         })
+    outline = _hydrate_outline_guidance(outline, keyword)
 
     async for update in generate_draft_from_outline_streaming(
         outline=outline,

@@ -70,8 +70,8 @@
         </div>
         <textarea x-model="article.outline" rows="10"
                   class="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 font-mono text-sm"
-                  placeholder="[INTRO]&#10;[SHORTCODE_MAIN]&#10;[SHORTCODE_1]&#10;[H2: Section Title]&#10;..."></textarea>
-        <p class="mt-2 text-xs text-gray-500">One token per line: [INTRO], [SHORTCODE]/[SHORTCODE_MAIN]/[SHORTCODE_1]/[SHORTCODE_2], [H2: Title], [H3: Title]</p>
+                  placeholder="[INTRO]&#10;> Hook with date and offer value&#10;&#10;[SHORTCODE]&#10;&#10;[H2: Section Title]&#10;> Talking point"></textarea>
+        <p class="mt-2 text-xs text-gray-500">Use section headers plus optional `>` talking points and `! Avoid:` directives.</p>
     </div>
 
     <!-- Draft section -->
@@ -236,7 +236,6 @@ function articleEditor(initialData) {
         async regenerateOutline() {
             this.regenerating = true;
             try {
-                const tokens = this.article.outline ? this.article.outline.split('\n').filter(t => t.trim()) : [];
                 const resp = await fetch('/api/generate/outline/sync', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -250,7 +249,7 @@ function articleEditor(initialData) {
                 });
                 const data = await resp.json();
                 if (data.outline) {
-                    this.article.outline = data.outline.join('\n');
+                    this.article.outline = data.outline_text || data.outline.join('\n');
                 }
             } catch (e) {
                 console.error('Failed to regenerate outline:', e);
@@ -268,6 +267,7 @@ function articleEditor(initialData) {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         outline_tokens: tokens,
+                        outline_text: this.article.outline,
                         keyword: this.article.keyword,
                         title: this.article.title,
                         state: this.article.state || 'ALL',
