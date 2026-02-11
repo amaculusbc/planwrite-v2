@@ -258,6 +258,28 @@ def format_game_for_dropdown(game: dict) -> str:
     return f"{game['away_team']} @ {game['home_team']}"
 
 
+def format_game_start_time(game: dict) -> str:
+    """Format game start time as an ET date/time display string."""
+    dt_et = game.get("start_time_et")
+    if not dt_et:
+        start_time = game.get("start_time")
+        if start_time:
+            try:
+                dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+                dt_et = dt.astimezone(ZoneInfo("America/New_York"))
+            except Exception:
+                return ""
+
+    if not dt_et:
+        return ""
+
+    hour = dt_et.strftime("%I").lstrip("0") or "12"
+    return (
+        f"{dt_et.strftime('%a')}, {dt_et.strftime('%b')} {dt_et.day}, "
+        f"{hour}:{dt_et.strftime('%M')} {dt_et.strftime('%p')} ET"
+    )
+
+
 def get_available_sports() -> dict[str, str]:
     """Get available sports with their labels.
 

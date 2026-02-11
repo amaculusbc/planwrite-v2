@@ -9,6 +9,7 @@ from app.services.event_fetcher import (
     get_featured_game,
     format_event_for_prompt,
     format_game_for_dropdown,
+    format_game_start_time,
     get_available_sports,
 )
 
@@ -65,6 +66,7 @@ async def list_games(
             "home_abbrev": g.get("home_abbrev", ""),
             "away_abbrev": g.get("away_abbrev", ""),
             "start_time": g["start_time"],
+            "start_time_display": format_game_start_time(g),
             "network": g["network"],
             "sport": g["sport"],
             "week": g.get("week"),
@@ -102,6 +104,7 @@ async def get_featured(
             "home_abbrev": game.get("home_abbrev", ""),
             "away_abbrev": game.get("away_abbrev", ""),
             "start_time": game["start_time"],
+            "start_time_display": format_game_start_time(game),
             "network": game["network"],
             "sport": game["sport"],
             "week": game.get("week"),

@@ -1087,7 +1087,7 @@ function articleWizard() {
                     const data = await resp.json();
                     this.games = data.map(g => ({
                         id: g.id,
-                        label: `${g.away_team} @ ${g.home_team} - ${this.formatGameTime(g.start_time)}`,
+                        label: `${g.away_team} @ ${g.home_team} - ${g.start_time_display || this.formatGameTime(g.start_time)}`,
                         ...g
                     }));
                 }
@@ -1113,7 +1113,7 @@ function articleWizard() {
 
             // Add display info
             this.selectedGame.headline = `${this.selectedGame.away_team} @ ${this.selectedGame.home_team}`;
-            this.selectedGame.time_display = this.formatGameTime(this.selectedGame.start_time);
+            this.selectedGame.time_display = this.selectedGame.start_time_display || this.formatGameTime(this.selectedGame.start_time);
             this.refreshSuggestedTitle();
 
                 try {
@@ -1228,13 +1228,19 @@ function articleWizard() {
                 sport: this.form.sport,
                 away_team: this.selectedGame.away_team,
                 home_team: this.selectedGame.home_team,
-                start_time: this.selectedGame.start_time,
+                start_time: this.getSelectedGameStartTimeForPrompt(),
                 network: this.selectedGame.network,
                 headline: this.selectedGame.headline
             };
             if (this.odds) gameContext.odds = this.odds;
             if (this.betExample) gameContext.bet_example = this.betExample;
             return gameContext;
+        },
+
+        getSelectedGameStartTimeForPrompt() {
+            if (!this.selectedGame) return '';
+            if (this.selectedGame.start_time_display) return this.selectedGame.start_time_display;
+            return this.formatGameTime(this.selectedGame.start_time) || this.selectedGame.start_time || '';
         },
 
         async fetchBatchOutline(item, gameContext) {
@@ -1373,9 +1379,19 @@ function articleWizard() {
             if (!isoString) return '';
             try {
                 const dt = new Date(isoString);
-                return dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZoneName: 'short' });
+                if (Number.isNaN(dt.getTime())) return isoString;
+                const display = new Intl.DateTimeFormat('en-US', {
+                    timeZone: 'America/New_York',
+                    weekday: 'short',
+                    month: 'short',
+                    day: 'numeric',
+                    hour: 'numeric',
+                    minute: '2-digit',
+                    hour12: true
+                }).format(dt);
+                return `${display} ET`;
             } catch (e) {
-                return '';
+                return isoString;
             }
         },
 
@@ -1403,7 +1419,7 @@ function articleWizard() {
                     sport: this.form.sport,
                     away_team: this.selectedGame.away_team,
                     home_team: this.selectedGame.home_team,
-                    start_time: this.selectedGame.start_time,
+                    start_time: this.getSelectedGameStartTimeForPrompt(),
                     network: this.selectedGame.network,
                     headline: this.selectedGame.headline
                 };
@@ -1469,7 +1485,7 @@ function articleWizard() {
                     sport: this.form.sport,
                     away_team: this.selectedGame.away_team,
                     home_team: this.selectedGame.home_team,
-                    start_time: this.selectedGame.start_time,
+                    start_time: this.getSelectedGameStartTimeForPrompt(),
                     network: this.selectedGame.network,
                     headline: this.selectedGame.headline
                 };

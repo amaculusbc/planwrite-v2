@@ -1,7 +1,9 @@
 """Content generation endpoints with SSE streaming."""
 
 import json
+from datetime import datetime
 from typing import AsyncGenerator
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Body
 from fastapi.responses import StreamingResponse
@@ -27,6 +29,31 @@ from app.services.bam_offers import get_offer_by_id_bam
 router = APIRouter()
 
 
+def _normalize_game_time(start_time: str | None) -> str:
+    """Normalize game time to readable ET text for prompts."""
+    if not start_time:
+        return ""
+
+    value = start_time.strip()
+    if not value:
+        return ""
+
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return value
+
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=ZoneInfo("UTC"))
+
+    dt_et = dt.astimezone(ZoneInfo("America/New_York"))
+    hour = dt_et.strftime("%I").lstrip("0") or "12"
+    return (
+        f"{dt_et.strftime('%A')}, {dt_et.strftime('%B')} {dt_et.day} "
+        f"at {hour}:{dt_et.strftime('%M')} {dt_et.strftime('%p')} ET"
+    )
+
+
 def _build_game_context(game_context) -> tuple[str, str]:
     """Build game context and bet example strings from request payload."""
     if not game_context:
@@ -38,7 +65,7 @@ def _build_game_context(game_context) -> tuple[str, str]:
     elif game_context.away_team and game_context.home_team:
         parts.append(f"Featured game: {game_context.away_team} vs {game_context.home_team}")
     if game_context.start_time:
-        parts.append(f"Game time: {game_context.start_time}")
+        parts.append(f"Game time: {_normalize_game_time(game_context.start_time)}")
     if game_context.network:
         parts.append(f"Network: {game_context.network}")
 
