@@ -1,0 +1,26 @@
+.git
+.github
+.pytest_cache
+.venv
+venv
+env
+__pycache__
+*.py[cod]
+*.log
+*.sqlite
+*.sqlite3
+.env
+.env.*
+!.env.example
+.tmp_*
+
+# Runtime/storage noise - keep curated index artifacts only
+storage/*.db
+storage/*.pkl
+storage/exports/
+storage/bam_*.json
+storage/test.db
+storage/planwrite.db
+
+# Data caches not needed at runtime
+data/*.pkl
