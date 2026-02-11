@@ -1,6 +1,7 @@
 """Application configuration using Pydantic Settings."""
 
 from functools import lru_cache
+import json
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -18,6 +19,13 @@ class Settings(BaseSettings):
     # App
     debug: bool = False
     secret_key: str = "change-me-in-production"
+
+    # Authentication
+    auth_enabled: bool = True
+    auth_username: str = "admin"
+    auth_password: str = "change-me"
+    auth_session_secret: str = "change-session-secret"
+    auth_users_json: str = ""
 
     # Database
     database_url: str = "sqlite+aiosqlite:///./storage/planwrite.db"
@@ -53,6 +61,38 @@ class Settings(BaseSettings):
     @property
     def static_dir(self) -> Path:
         return self.base_dir / "app" / "static"
+
+    @property
+    def auth_users(self) -> dict[str, str]:
+        """Return configured username/password pairs for login.
+
+        Preferred format is JSON object in AUTH_USERS_JSON:
+        {"admin":"...","usteam":"..."}
+        Falls back to AUTH_USERNAME/AUTH_PASSWORD.
+        """
+        parsed: dict[str, str] = {}
+        raw = (self.auth_users_json or "").strip()
+        if raw:
+            try:
+                data = json.loads(raw)
+                if isinstance(data, dict):
+                    for username, password in data.items():
+                        user = str(username).strip()
+                        secret = str(password)
+                        if user and secret:
+                            parsed[user] = secret
+            except Exception:
+                # Fallback to single-user auth settings below.
+                parsed = {}
+
+        if parsed:
+            return parsed
+
+        user = (self.auth_username or "").strip()
+        secret = self.auth_password or ""
+        if user and secret:
+            return {user: secret}
+        return {}
 
 
 @lru_cache
