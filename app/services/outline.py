@@ -321,9 +321,9 @@ The outline you create will be reviewed by human writers who may modify it.
 
 Output a structured outline in this exact JSON format:
 [
-  {"level": "intro", "title": "", "talking_points": ["point 1", "point 2"], "avoid": []},
-  {"level": "shortcode", "title": "", "talking_points": [], "avoid": []},
-  {"level": "h2", "title": "Section Title", "talking_points": ["unique point 1", "unique point 2"], "avoid": ["thing covered elsewhere"]},
+  {{"level": "intro", "title": "", "talking_points": ["point 1", "point 2"], "avoid": []}},
+  {{"level": "shortcode", "title": "", "talking_points": [], "avoid": []}},
+  {{"level": "h2", "title": "Section Title", "talking_points": ["unique point 1", "unique point 2"], "avoid": ["thing covered elsewhere"]}},
   ...
 ]
 
