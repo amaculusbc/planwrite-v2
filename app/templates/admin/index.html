@@ -3,23 +3,110 @@
 {% block title %}Admin - TopStoriesGenerator{% endblock %}
 
 {% block content %}
-<div class="max-w-4xl mx-auto space-y-6">
+<div class="max-w-5xl mx-auto space-y-6">
     <div>
         <h1 class="text-2xl font-bold text-gray-900">Admin Tools</h1>
         <p class="mt-1 text-sm text-gray-500">Maintenance utilities for indexes and caches</p>
+    </div>
+
+    <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 space-y-3">
+        <label for="property-select" class="block text-sm font-medium text-gray-700">Property</label>
+        <select id="property-select" onchange="onPropertyChange()"
+                class="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm">
+            <option value="action_network">action_network</option>
+        </select>
+        <p class="text-xs text-gray-500">All link-index actions below apply to the selected property.</p>
     </div>
 
     <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 space-y-4">
         <div class="flex items-center justify-between">
             <div>
                 <h2 class="text-lg font-medium text-gray-900">Evergreen Links Index</h2>
-                <p class="text-sm text-gray-500">Rebuild internal links index from data/evergreen.jsonl</p>
+                <p class="text-sm text-gray-500">Rebuild property-scoped internal links index from `data/evergreen_{property}.jsonl`</p>
                 <p id="evergreen-status" class="mt-1 text-xs text-gray-500">Loading status...</p>
             </div>
             <button type="button" onclick="rebuildEvergreen()"
                     class="inline-flex items-center rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-primary-700">
                 Rebuild Index
             </button>
+        </div>
+    </div>
+
+    <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 space-y-5">
+        <div class="flex items-center justify-between">
+            <div>
+                <h2 class="text-lg font-medium text-gray-900">Internal Links Editor</h2>
+                <p class="text-sm text-gray-500">Add/remove source links for the selected property, then index is rebuilt automatically.</p>
+                <p class="text-xs text-gray-500">Links marked as guaranteed are inserted into every generated article for this property.</p>
+                <p id="links-status" class="mt-1 text-xs text-gray-500">Loading links...</p>
+            </div>
+            <button type="button" onclick="loadInternalLinks()"
+                    class="inline-flex items-center rounded-md bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50">
+                Refresh List
+            </button>
+        </div>
+
+        <form id="link-form" class="grid grid-cols-1 md:grid-cols-2 gap-3" onsubmit="upsertInternalLink(event)">
+            <div>
+                <label for="link-title" class="block text-xs font-medium text-gray-700">Title</label>
+                <input id="link-title" type="text" required
+                       class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                       placeholder="Best Prediction Market Apps">
+            </div>
+            <div>
+                <label for="link-url" class="block text-xs font-medium text-gray-700">URL</label>
+                <input id="link-url" type="url" required
+                       class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                       placeholder="https://example.com/page">
+            </div>
+            <div>
+                <label for="link-anchors" class="block text-xs font-medium text-gray-700">Anchors (comma-separated)</label>
+                <input id="link-anchors" type="text"
+                       class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                       placeholder="best prediction market apps,kalshi referral code">
+            </div>
+            <div>
+                <label for="link-operator" class="block text-xs font-medium text-gray-700">Operator (optional)</label>
+                <input id="link-operator" type="text"
+                       class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                       placeholder="kalshi">
+            </div>
+            <div class="md:col-span-2">
+                <label for="link-description" class="block text-xs font-medium text-gray-700">Description (optional)</label>
+                <input id="link-description" type="text"
+                       class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                       placeholder="Short description shown in prompt context">
+            </div>
+            <div class="md:col-span-2 flex items-center justify-between">
+                <label class="inline-flex items-center gap-2 text-sm text-gray-700">
+                    <input id="link-always-include" type="checkbox" class="rounded border-gray-300 text-primary-600 focus:ring-primary-500">
+                    <span>Guaranteed insertion in every article (this property)</span>
+                </label>
+                <button type="submit"
+                        class="inline-flex items-center rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-primary-700">
+                    Add / Update Link
+                </button>
+            </div>
+        </form>
+
+        <div class="overflow-x-auto border border-gray-200 rounded-lg">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                <tr>
+                    <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Title</th>
+                    <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">URL</th>
+                    <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Operator</th>
+                    <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Guaranteed</th>
+                    <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Anchors</th>
+                    <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                </tr>
+                </thead>
+                <tbody id="links-table-body" class="bg-white divide-y divide-gray-200">
+                <tr>
+                    <td colspan="6" class="px-3 py-4 text-sm text-gray-500">Loading...</td>
+                </tr>
+                </tbody>
+            </table>
         </div>
     </div>
 
@@ -41,12 +128,59 @@
 
 {% block scripts %}
 <script>
+let currentProperty = 'action_network';
+
+function escapeHtml(value) {
+    return (value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+async function loadProperties() {
+    try {
+        const resp = await fetch('/api/offers/properties/list');
+        if (!resp.ok) return;
+        const data = await resp.json();
+        const props = data.properties || {};
+        const select = document.getElementById('property-select');
+        if (!select) return;
+        select.innerHTML = '';
+        Object.entries(props).forEach(([key, label]) => {
+            const opt = document.createElement('option');
+            opt.value = key;
+            opt.textContent = `${label} (${key})`;
+            select.appendChild(opt);
+        });
+        if (props[currentProperty]) {
+            select.value = currentProperty;
+        } else if (Object.keys(props).length > 0) {
+            currentProperty = Object.keys(props)[0];
+            select.value = currentProperty;
+        }
+    } catch (e) {
+        // ignore
+    }
+}
+
+function onPropertyChange() {
+    const select = document.getElementById('property-select');
+    if (!select) return;
+    currentProperty = select.value || 'action_network';
+    loadAdminStatus();
+    loadInternalLinks();
+}
+
 async function loadAdminStatus() {
     try {
         const resp = await fetch('/api/admin/status');
         if (!resp.ok) return;
         const data = await resp.json();
-        const ok = data.evergreen_index && data.evergreen_index.json && data.evergreen_index.vectors;
+        const byProperty = data.evergreen_by_property || {};
+        const status = byProperty[currentProperty] || {};
+        const ok = !!(status.json && status.vectors);
         const el = document.getElementById('evergreen-status');
         if (el) {
             el.textContent = ok ? 'Index exists' : 'Index missing';
@@ -65,10 +199,10 @@ async function loadAdminStatus() {
 
 async function rebuildEvergreen() {
     try {
-        const resp = await fetch('/api/admin/rebuild-evergreen', { method: 'POST' });
+        const resp = await fetch(`/api/admin/rebuild-evergreen?property=${encodeURIComponent(currentProperty)}`, { method: 'POST' });
         if (resp.ok) {
             const data = await resp.json();
-            showToast(`Evergreen index rebuilt (${data.count} items)`, 'success');
+            showToast(`Evergreen index rebuilt for ${data.property} (${data.count} items)`, 'success');
         } else {
             showToast('Failed to rebuild evergreen index', 'error');
         }
@@ -76,6 +210,133 @@ async function rebuildEvergreen() {
         showToast('Failed to rebuild evergreen index', 'error');
     } finally {
         loadAdminStatus();
+    }
+}
+
+async function loadInternalLinks() {
+    const statusEl = document.getElementById('links-status');
+    const tbody = document.getElementById('links-table-body');
+    if (statusEl) statusEl.textContent = 'Loading links...';
+
+    try {
+        const resp = await fetch(`/api/admin/internal-links?property=${encodeURIComponent(currentProperty)}`);
+        if (!resp.ok) throw new Error('Failed to load links');
+        const data = await resp.json();
+        const links = data.links || [];
+        if (statusEl) {
+            statusEl.textContent = `${links.length} link(s) loaded from source`;
+            statusEl.className = 'mt-1 text-xs text-gray-500';
+        }
+        if (!tbody) return;
+        if (!links.length) {
+            tbody.innerHTML = '<tr><td colspan="6" class="px-3 py-4 text-sm text-gray-500">No links yet for this property.</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = links.map(link => {
+            const id = escapeHtml(link.id || '');
+            const url = escapeHtml(link.url || '');
+            const title = escapeHtml(link.title || '');
+            const operator = escapeHtml(link.operator || '');
+            const guaranteed = link.always_include ? 'Yes' : '-';
+            const anchors = escapeHtml((link.recommended_anchors || []).join(', '));
+            return `
+                <tr>
+                    <td class="px-3 py-2 text-sm text-gray-800">${title}</td>
+                    <td class="px-3 py-2 text-sm"><a class="text-primary-700 underline break-all" href="${url}" target="_blank" rel="noopener noreferrer">${url}</a></td>
+                    <td class="px-3 py-2 text-sm text-gray-700">${operator || '-'}</td>
+                    <td class="px-3 py-2 text-sm text-gray-700">${guaranteed}</td>
+                    <td class="px-3 py-2 text-sm text-gray-700">${anchors || '-'}</td>
+                    <td class="px-3 py-2 text-sm">
+                        <button type="button" class="text-red-600 hover:text-red-800" onclick="deleteInternalLink('${id}', '${url}')">Remove</button>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+    } catch (e) {
+        if (statusEl) {
+            statusEl.textContent = 'Failed to load links';
+            statusEl.className = 'mt-1 text-xs text-red-600';
+        }
+        if (tbody) {
+            tbody.innerHTML = '<tr><td colspan="6" class="px-3 py-4 text-sm text-red-600">Failed to load links.</td></tr>';
+        }
+    }
+}
+
+async function upsertInternalLink(event) {
+    event.preventDefault();
+    const titleEl = document.getElementById('link-title');
+    const urlEl = document.getElementById('link-url');
+    const anchorsEl = document.getElementById('link-anchors');
+    const descriptionEl = document.getElementById('link-description');
+    const operatorEl = document.getElementById('link-operator');
+    const alwaysIncludeEl = document.getElementById('link-always-include');
+
+    const title = (titleEl?.value || '').trim();
+    const url = (urlEl?.value || '').trim();
+    if (!title || !url) {
+        showToast('Title and URL are required', 'error');
+        return;
+    }
+
+    const recommendedAnchors = (anchorsEl?.value || '')
+        .split(',')
+        .map(x => x.trim())
+        .filter(Boolean);
+    const payload = {
+        title,
+        url,
+        description: (descriptionEl?.value || '').trim(),
+        operator: (operatorEl?.value || '').trim(),
+        recommended_anchors: recommendedAnchors,
+        always_include: !!alwaysIncludeEl?.checked,
+    };
+
+    try {
+        const resp = await fetch(`/api/admin/internal-links?property=${encodeURIComponent(currentProperty)}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(err.detail || 'Failed to save link');
+        }
+        const data = await resp.json();
+        showToast(`Link ${data.mode} for ${data.property}`, 'success');
+        if (titleEl) titleEl.value = '';
+        if (urlEl) urlEl.value = '';
+        if (anchorsEl) anchorsEl.value = '';
+        if (descriptionEl) descriptionEl.value = '';
+        if (operatorEl) operatorEl.value = '';
+        if (alwaysIncludeEl) alwaysIncludeEl.checked = false;
+        await loadInternalLinks();
+        await loadAdminStatus();
+    } catch (e) {
+        showToast(e.message || 'Failed to save link', 'error');
+    }
+}
+
+async function deleteInternalLink(id, url) {
+    if (!confirm('Remove this link from the property index source?')) return;
+
+    const params = new URLSearchParams();
+    params.set('property', currentProperty);
+    if (id) params.set('id', id);
+    else if (url) params.set('url', url);
+
+    try {
+        const resp = await fetch(`/api/admin/internal-links?${params.toString()}`, { method: 'DELETE' });
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(err.detail || 'Failed to remove link');
+        }
+        showToast('Link removed', 'success');
+        await loadInternalLinks();
+        await loadAdminStatus();
+    } catch (e) {
+        showToast(e.message || 'Failed to remove link', 'error');
     }
 }
 
@@ -95,6 +356,10 @@ async function rebuildRag() {
     }
 }
 
-document.addEventListener('DOMContentLoaded', loadAdminStatus);
+document.addEventListener('DOMContentLoaded', async () => {
+    await loadProperties();
+    await loadAdminStatus();
+    await loadInternalLinks();
+});
 </script>
 {% endblock %}
