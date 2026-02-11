@@ -449,10 +449,47 @@
             <div class="bw-card p-4 space-y-2">
                 <h3 class="text-sm font-semibold text-gray-900">4. Outline Stage</h3>
                 <ul class="list-disc list-inside space-y-1 text-sm text-gray-700">
-                    <li>Generated outline includes section headings + talking points.</li>
-                    <li>You can edit sections before draft generation.</li>
-                    <li>Use `Regenerate Outline` if title/keyword/context changes.</li>
+                    <li>Use bracket tokens for structure, then add guidance lines under each section.</li>
+                    <li>For H2/H3 sections, add `>` lines for what to cover and optional `! Avoid:` line to prevent repetition.</li>
+                    <li>You can freely rewrite headings, add/remove sections, and reorder blocks before generating draft.</li>
                 </ul>
+                <div class="rounded-md border border-gray-200 bg-gray-50 p-3 text-xs text-gray-700 space-y-2">
+                    <p class="font-semibold text-gray-900">Supported section tokens</p>
+                    <ul class="list-disc list-inside space-y-1">
+                        <li>`[INTRO]`: opening lede. Add 2-3 `>` talking points (date, offer value, event/state hook).</li>
+                        <li>`[SHORTCODE]` or `[SHORTCODE_MAIN]`: promo module placement. Usually no talking points needed.</li>
+                        <li>`[SHORTCODE_1]`, `[SHORTCODE_2]`: extra offer modules for multi-offer articles.</li>
+                        <li>`[H2: Title]`: main sections. Add 2-4 `>` talking points plus optional `! Avoid:`.</li>
+                        <li>`[H3: Subtitle]`: optional subsection under preceding H2. Add 1-2 `>` talking points.</li>
+                    </ul>
+                </div>
+                <div class="rounded-md border border-gray-200 bg-white p-3 text-xs text-gray-700 space-y-2">
+                    <p class="font-semibold text-gray-900">Editable outline example</p>
+                    <pre class="whitespace-pre-wrap text-[11px] leading-5 font-mono">[INTRO]
+&gt; Mention today/date and exact offer value
+&gt; Mention promo code and eligible states
+
+[SHORTCODE_MAIN]
+
+[H2: Why This Promo Is Worth It]
+&gt; Who this offer fits best
+&gt; Why this game/event timing matters
+! Avoid: Step-by-step signup, full legal terms
+
+[H2: How to Claim the Offer]
+&gt; Walk through claim flow in plain language
+&gt; Include one worked example using event odds
+
+[H2: Daily Promos Today]
+&gt; Placeholder for same-day promo updates before publish
+
+[H2: Terms &amp; Conditions]
+&gt; Include only verified terms from source data
+! Avoid: Inventing legal restrictions</pre>
+                </div>
+                <p class="text-xs text-gray-600">
+                    Recommended shape: start with `INTRO` then `SHORTCODE`, target 4-5 H2 sections (max 5), and use H3 only when it adds real structure.
+                </p>
             </div>
 
             <div class="bw-card p-4 space-y-2">
@@ -496,7 +533,7 @@
                           class="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 font-mono text-sm"
                           placeholder="[INTRO]&#10;> Hook with date and offer value&#10;&#10;[SHORTCODE]&#10;&#10;[H2: Offer Overview]&#10;> Why this offer is useful&#10;! Avoid: Repeating intro"></textarea>
                 <p class="mt-1 text-xs text-gray-500">
-                    Supported format: section headers plus optional `>` talking points and `! Avoid:` directives.
+                    Supported format: `[INTRO]`, `[SHORTCODE]`, `[SHORTCODE_MAIN]`, `[SHORTCODE_1]`, `[SHORTCODE_2]`, `[H2: ...]`, `[H3: ...]` plus optional `>` talking points and `! Avoid: item1, item2`.
                 </p>
             </div>
 
