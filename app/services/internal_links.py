@@ -596,15 +596,16 @@ def format_links_markdown(
     brand_name = brand or "BRAND"
     if prediction_market:
         contextual_suggestions = [
-            f"- [{brand_name} sign-up guide](#) - use when explaining registration steps",
-            "- [how market contracts settle](#) - use when explaining outcome mechanics",
-            f"- [check your state's {brand_name} eligibility](#) - use when mentioning state-specific rules",
+            f"- Use anchor text like \"{brand_name} sign-up guide\" with a relevant URL from the list above.",
+            "- Use anchor text like \"how market contracts settle\" for mechanics explanations.",
+            f"- Use anchor text like \"check your state's {brand_name} eligibility\" for state-specific notes.",
         ]
     else:
         contextual_suggestions = [
-            f"- [{brand_name} sign-up guide](#) - use when explaining registration steps",
-            "- [how bonus bets work](#) - use when explaining bonus bet mechanics",
-            f"- [check your state's {brand_name} terms](#) - use when mentioning state-specific rules",
+            f"- Use anchor text like \"{brand_name} sign-up guide\" with a relevant URL from the list above.",
+            "- Use anchor text like \"how bonus bets work\" for bonus-bet mechanics.",
+            f"- Use anchor text like \"check your state's {brand_name} terms\" for state-specific notes.",
         ]
     lines.extend(contextual_suggestions)
+    lines.append("- Never use placeholder links such as href=\"#\".")
     return "\n".join(lines)

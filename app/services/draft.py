@@ -185,11 +185,11 @@ def _build_signup_list(
 ) -> str:
     """Build a deterministic 5-step signup list as HTML."""
     brand_label = brand or ("the operator" if prediction_market else "the sportsbook")
-    signup_link = f'<a href="#">{brand_label} sign-up guide</a>'
-    mechanics_link = (
-        '<a href="#">how market contracts settle</a>'
+    signup_guide_ref = f"{brand_label} sign-up guide"
+    mechanics_ref = (
+        "how market contracts settle"
         if prediction_market
-        else '<a href="#">how bonus bets work</a>'
+        else "how bonus bets work"
     )
 
     step_two = (
@@ -199,14 +199,14 @@ def _build_signup_list(
     )
 
     steps = [
-        f"Confirm you're eligible (21+ in your state) and open {signup_link}.",
+        f"Confirm you're eligible (21+ in your state) and open the {signup_guide_ref}.",
         step_two,
         "Complete verification and log in.",
         "Fund your account.",
         (
-            f"Place a qualifying market position and review {mechanics_link} for settlement details."
+            f"Place a qualifying market position and review {mechanics_ref} for settlement details."
             if prediction_market
-            else f"Place a qualifying bet and review {mechanics_link} for payout details."
+            else f"Place a qualifying bet and review {mechanics_ref} for payout details."
         ),
     ]
 
@@ -216,6 +216,18 @@ def _build_signup_list(
 def _steps_to_html(steps: list[str]) -> str:
     items = "\n".join(f"<li>{step}</li>" for step in steps)
     return f"<ol>\n{items}\n</ol>"
+
+
+def _strip_placeholder_hash_links(html: str) -> str:
+    """Remove placeholder anchor links like href=\"#\" from generated HTML."""
+    if not html:
+        return html
+    return re.sub(
+        r'<a\b[^>]*href\s*=\s*(["\'])#\1[^>]*>(.*?)</a>',
+        r"\2",
+        html,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
 
 
 def _offer_expiration_prompt_line(expiration_days: int | None) -> str:
@@ -430,7 +442,9 @@ State: {state}
 {code_line}
 {mechanics_line}
 
-Include at least one internal link using HTML <a href=\"#\">anchor text</a>.
+Include at least one internal link using a REAL URL from the list above,
+for example: <a href="https://example.com/page">anchor text</a>.
+Never use placeholder links such as href="#".
 Available internal links (use 1-2):
 {links_md}
 
@@ -730,6 +744,7 @@ async def generate_draft_from_outline(
 
     # Join and inject switchboard links
     html_output = "\n".join(parts)
+    html_output = _strip_placeholder_hash_links(html_output)
     html_output = _append_required_property_links(
         html_output,
         property_key=offer_property,
@@ -748,6 +763,7 @@ async def generate_draft_from_outline(
         state=state,
         max_links=2,
     )
+    html_output = _strip_placeholder_hash_links(html_output)
 
     if output_format == "markdown":
         # Convert back to markdown (basic)
@@ -1377,6 +1393,7 @@ async def generate_draft_from_outline_streaming(
 
     # Join and inject links
     html_output = "\n".join(parts)
+    html_output = _strip_placeholder_hash_links(html_output)
     html_output = _append_required_property_links(
         html_output,
         property_key=offer_property,
@@ -1394,6 +1411,7 @@ async def generate_draft_from_outline_streaming(
         state=state,
         max_links=2,
     )
+    html_output = _strip_placeholder_hash_links(html_output)
 
     if output_format == "markdown":
         html_output = _html_to_markdown(html_output)
