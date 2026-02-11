@@ -7,15 +7,20 @@
 
     <!-- Mode tabs -->
     <div class="bw-panel p-2 flex flex-wrap gap-2">
-        <button type="button" @click="activeTab = 'single'"
+        <button type="button" @click="switchTab('single')"
                 class="px-4 py-2 text-sm font-medium rounded-md"
                 :class="activeTab === 'single' ? 'bg-primary-600 text-white' : 'bg-white text-gray-600 border border-gray-200'">
             Single Draft
         </button>
-        <button type="button" @click="activeTab = 'batch'"
+        <button type="button" @click="switchTab('batch')"
                 class="px-4 py-2 text-sm font-medium rounded-md"
                 :class="activeTab === 'batch' ? 'bg-primary-600 text-white' : 'bg-white text-gray-600 border border-gray-200'">
             Batch Generator
+        </button>
+        <button type="button" @click="switchTab('tutorial')"
+                class="px-4 py-2 text-sm font-medium rounded-md"
+                :class="activeTab === 'tutorial' ? 'bg-primary-600 text-white' : 'bg-white text-gray-600 border border-gray-200'">
+            Tutorial
         </button>
     </div>
 
@@ -394,6 +399,85 @@
             </div>
         </div>
 
+        <!-- Tutorial Tab -->
+        <div x-show="activeTab === 'tutorial'" x-transition class="bw-panel p-6 space-y-6">
+            <div class="flex items-start justify-between gap-4">
+                <div>
+                    <h2 class="text-lg font-semibold text-gray-900">Generation Tutorial</h2>
+                    <p class="mt-1 text-sm text-gray-600">
+                        This tab explains the full workflow. Switching here does not clear your current setup, outline, or draft.
+                    </p>
+                </div>
+                <button type="button" @click="returnFromTutorial()"
+                        class="inline-flex items-center rounded-md bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50">
+                    Back to Work
+                </button>
+            </div>
+
+            <div class="bw-card p-4 space-y-2">
+                <h3 class="text-sm font-semibold text-gray-900">1. Quick Start</h3>
+                <ol class="list-decimal list-inside space-y-1 text-sm text-gray-700">
+                    <li>Pick `Property`, `Offer`, and `State` in `Single Draft`.</li>
+                    <li>Optionally add game context and generate a bet example.</li>
+                    <li>Set `Keyword` and `H1 Title`, then click `Generate Outline`.</li>
+                    <li>Edit the outline, then click `Generate Draft`.</li>
+                    <li>Validate compliance, preview content, and export or save.</li>
+                </ol>
+            </div>
+
+            <div class="bw-card p-4 space-y-2">
+                <h3 class="text-sm font-semibold text-gray-900">2. Setup Fields</h3>
+                <ul class="list-disc list-inside space-y-1 text-sm text-gray-700">
+                    <li>`Property`: decides BAM source and internal-link profile.</li>
+                    <li>`Select Offer`: picks the main promo card and operator context.</li>
+                    <li>`Alternative Offers`: include up to 2 extra cards from the same brand.</li>
+                    <li>`State`: used for offer filtering and state-specific language.</li>
+                    <li>`Competitor URLs`: optional extra context for structure/style.</li>
+                </ul>
+            </div>
+
+            <div class="bw-card p-4 space-y-2">
+                <h3 class="text-sm font-semibold text-gray-900">3. Game Context + Odds</h3>
+                <ul class="list-disc list-inside space-y-1 text-sm text-gray-700">
+                    <li>Select sport, date, and game to pull odds context.</li>
+                    <li>Book selection auto-matches the selected offer brand when possible.</li>
+                    <li>Odds panel shows away/home spread, moneyline, and total views.</li>
+                    <li>`Bet Example Builder` creates reusable math text for prompts.</li>
+                </ul>
+            </div>
+
+            <div class="bw-card p-4 space-y-2">
+                <h3 class="text-sm font-semibold text-gray-900">4. Outline Stage</h3>
+                <ul class="list-disc list-inside space-y-1 text-sm text-gray-700">
+                    <li>Generated outline includes section headings + talking points.</li>
+                    <li>You can edit sections before draft generation.</li>
+                    <li>Use `Regenerate Outline` if title/keyword/context changes.</li>
+                </ul>
+            </div>
+
+            <div class="bw-card p-4 space-y-2">
+                <h3 class="text-sm font-semibold text-gray-900">5. Draft Stage</h3>
+                <ul class="list-disc list-inside space-y-1 text-sm text-gray-700">
+                    <li>Draft uses your edited outline plus offer/game context.</li>
+                    <li>Switch between `Edit` and `Preview` modes.</li>
+                    <li>`Validate Content` checks compliance flags before export.</li>
+                </ul>
+            </div>
+
+            <div class="bw-card p-4 space-y-2">
+                <h3 class="text-sm font-semibold text-gray-900">6. Export + Batch</h3>
+                <ul class="list-disc list-inside space-y-1 text-sm text-gray-700">
+                    <li>Export as Markdown/HTML, copy to clipboard, or save article.</li>
+                    <li>`Batch Generator` runs multiple keywords/titles with the same setup context.</li>
+                    <li>Batch mode can output either outlines only or full drafts.</li>
+                </ul>
+            </div>
+
+            <div class="rounded-md border border-primary-200 bg-primary-50 p-3 text-xs text-primary-800">
+                Persistence note: switching between `Single Draft`, `Batch Generator`, and `Tutorial` keeps in-progress setup, outline, and draft in memory for this session.
+            </div>
+        </div>
+
         <!-- Step 2: Outline -->
         <div x-show="activeTab === 'single' && step === 2" x-transition class="bw-panel p-6 space-y-6">
             <div class="flex items-center justify-between">
@@ -638,6 +722,7 @@
 function articleWizard() {
     return {
         activeTab: 'single',
+        lastWorkTab: 'single',
         step: 1,
         generating: false,
         statusMessage: '',
@@ -823,6 +908,20 @@ function articleWizard() {
             console.log('ArticleWizard init called');
             this.loadProperties();
             this.loadOffers();
+        },
+        switchTab(tab) {
+            if (tab === 'tutorial') {
+                if (this.activeTab !== 'tutorial') {
+                    this.lastWorkTab = this.activeTab === 'batch' ? 'batch' : 'single';
+                }
+                this.activeTab = 'tutorial';
+                return;
+            }
+            this.activeTab = tab === 'batch' ? 'batch' : 'single';
+            this.lastWorkTab = this.activeTab;
+        },
+        returnFromTutorial() {
+            this.activeTab = this.lastWorkTab === 'batch' ? 'batch' : 'single';
         },
 
         async loadProperties() {
