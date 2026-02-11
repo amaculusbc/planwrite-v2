@@ -84,7 +84,7 @@
                 <div>
                     <label for="offer_id" class="block text-sm font-medium text-gray-700">Select Offer</label>
                     <select x-model="form.offer_id" id="offer_id" name="offer_id"
-                            @change="updateAltOffers()"
+                            @change="updateAltOffers(); syncSelectedBookToOffer()"
                             class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm">
                         <option value="">-- No offer (generic article) --</option>
                         <template x-for="offer in offers" :key="offer.id">
@@ -190,26 +190,22 @@
                               </select>
                           </div>
 
-                          <!-- Odds grid (selected book only) -->
-                          <div class="grid grid-cols-4 gap-2 text-xs" x-show="availableBooks.length">
-                              <div class="font-medium text-gray-500">Book</div>
+                          <!-- Odds grid (selected book; both teams) -->
+                          <div class="grid grid-cols-4 gap-2 text-xs" x-show="availableBooks.length && selectedBook">
+                              <div class="font-medium text-gray-500">Team</div>
                               <div class="font-medium text-gray-500">Spread</div>
                               <div class="font-medium text-gray-500">ML</div>
                               <div class="font-medium text-gray-500">Total</div>
 
-                              <div class="contents" x-show="selectedBook">
-                                  <div class="font-medium text-gray-700" x-text="selectedBook"></div>
-                                  <div class="text-gray-600">
-                                      <span x-text="odds.spreads && odds.spreads[selectedBook]?.away_line || '-'"></span>
-                                      <span class="text-gray-400" x-text="odds.spreads && odds.spreads[selectedBook]?.away_odds ? `(${odds.spreads[selectedBook].away_odds})` : ''"></span>
-                                  </div>
-                                  <div class="text-gray-600">
-                                      <span x-text="odds.moneylines && odds.moneylines[selectedBook]?.away_odds || '-'"></span>
-                                  </div>
-                                  <div class="text-gray-600">
-                                      <span x-text="odds.totals && odds.totals[selectedBook]?.total || '-'"></span>
-                                  </div>
-                              </div>
+                              <div class="font-medium text-gray-700" x-text="selectedGame?.away_team || 'Away'"></div>
+                              <div class="text-gray-600" x-text="formatSpreadDisplay(selectedBook, 'away')"></div>
+                              <div class="text-gray-600" x-text="formatMoneylineDisplay(selectedBook, 'away')"></div>
+                              <div class="text-gray-600" x-text="formatTotalDisplay(selectedBook, 'away')"></div>
+
+                              <div class="font-medium text-gray-700" x-text="selectedGame?.home_team || 'Home'"></div>
+                              <div class="text-gray-600" x-text="formatSpreadDisplay(selectedBook, 'home')"></div>
+                              <div class="text-gray-600" x-text="formatMoneylineDisplay(selectedBook, 'home')"></div>
+                              <div class="text-gray-600" x-text="formatTotalDisplay(selectedBook, 'home')"></div>
                           </div>
 
                           <p x-show="!availableBooks.length" class="text-sm text-gray-500">No odds available for this game</p>
@@ -683,6 +679,19 @@ function articleWizard() {
           selectedGame: null,
           odds: null,
           selectedBook: '',
+          sportsbookBrandMap: {
+              draftkings: 'draftkings',
+              fanduel: 'fanduel',
+              betmgm: 'betmgm',
+              bet365: 'bet365',
+              caesars: 'caesars',
+              fanatics: 'fanatics',
+              hardrock: 'hardrock',
+              'hard rock': 'hardrock',
+              'hard rock bet': 'hardrock',
+              espnbet: 'espnbet',
+              'espn bet': 'espnbet',
+          },
 
         // Bet builder
         betBuilder: {
@@ -738,6 +747,66 @@ function articleWizard() {
               (this.odds.available_sportsbooks || []).forEach(b => books.add(b));
               return Array.from(books);
           },
+        selectedOffer() {
+            if (!this.form.offer_id) return null;
+            return this.offersRaw.find(o => (o.id || o.offer_id) === this.form.offer_id) || null;
+        },
+        preferredSportsbookKey() {
+            const offer = this.selectedOffer();
+            if (!offer) return '';
+            const rawBrand = String(offer.brand || '').trim().toLowerCase();
+            if (!rawBrand) return '';
+            const normalized = rawBrand.replace(/[\s_-]+/g, ' ').trim();
+            return this.sportsbookBrandMap[normalized]
+                || this.sportsbookBrandMap[rawBrand]
+                || rawBrand.replace(/[^a-z0-9]/g, '');
+        },
+        resolvePreferredBook(books = []) {
+            const preferred = this.preferredSportsbookKey();
+            if (!preferred || !books.length) return '';
+            return books.find(b => String(b || '').toLowerCase() === preferred) || '';
+        },
+        syncSelectedBookToOffer() {
+            const preferredBook = this.resolvePreferredBook(this.availableBooks);
+            if (preferredBook) {
+                this.selectedBook = preferredBook;
+            }
+        },
+        formatAmericanOdds(value) {
+            if (value === null || value === undefined || value === '') return '-';
+            const n = Number(value);
+            if (!Number.isFinite(n)) return String(value);
+            return `${n > 0 ? '+' : ''}${Math.trunc(n)}`;
+        },
+        formatSpreadDisplay(book, side) {
+            const spread = this.odds?.spreads?.[book];
+            if (!spread) return '-';
+            const line = spread[`${side}_line`];
+            const odds = spread[`${side}_odds`];
+            if (!line && (odds === null || odds === undefined || odds === '')) return '-';
+            if (!line) return this.formatAmericanOdds(odds);
+            if (odds === null || odds === undefined || odds === '') return String(line);
+            return `${line} (${this.formatAmericanOdds(odds)})`;
+        },
+        formatMoneylineDisplay(book, side) {
+            const moneyline = this.odds?.moneylines?.[book];
+            if (!moneyline) return '-';
+            return this.formatAmericanOdds(moneyline[`${side}_odds`]);
+        },
+        formatTotalDisplay(book, side) {
+            const total = this.odds?.totals?.[book];
+            if (!total) return '-';
+            const isAway = side === 'away';
+            const label = isAway ? 'Over' : 'Under';
+            const line = total.total;
+            const odds = isAway ? total.over_odds : total.under_odds;
+            if ((line === null || line === undefined || line === '') && (odds === null || odds === undefined || odds === '')) {
+                return '-';
+            }
+            if (line === null || line === undefined || line === '') return `${label} (${this.formatAmericanOdds(odds)})`;
+            if (odds === null || odds === undefined || odds === '') return `${label} ${line}`;
+            return `${label} ${line} (${this.formatAmericanOdds(odds)})`;
+        },
         severityLabel(severity) {
             if (severity === 'error') return 'Error';
             if (severity === 'warning') return 'Warning';
@@ -827,6 +896,7 @@ function articleWizard() {
                     label: `${o.bonus_code ? o.bonus_code + ': ' : ''}${(o.offer_text || o.affiliate_offer || 'Offer').slice(0, 70)}`
                 }));
             this.form.alt_offer_ids = [];
+            this.syncSelectedBookToOffer();
         },
 
         toggleAltOffer(id, checked, evt) {
@@ -930,7 +1000,10 @@ function articleWizard() {
                   if (resp.ok) {
                       this.odds = await resp.json();
                       const books = this.availableBooks;
-                      if (!this.selectedBook || !books.includes(this.selectedBook)) {
+                      const preferredBook = this.resolvePreferredBook(books);
+                      if (preferredBook) {
+                          this.selectedBook = preferredBook;
+                      } else if (!this.selectedBook || !books.includes(this.selectedBook)) {
                           this.selectedBook = books[0] || '';
                       }
                   } else {
