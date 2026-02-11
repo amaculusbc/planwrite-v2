@@ -11,7 +11,11 @@ from typing import Any, Optional
 
 
 from app.config import get_settings
-from app.services.offer_parsing import enrich_offer_dict
+from app.services.offer_parsing import (
+    enrich_offer_dict,
+    extract_states_from_terms,
+    parse_states,
+)
 from app.services.http_utils import get_json
 
 settings = get_settings()
@@ -158,7 +162,11 @@ def _parse_promotion(promo: dict, property_config: dict, context: str) -> dict:
     internal_id = internal_ids.get("fbo") or next(iter(internal_ids.values()), "") or _select_internal_id(internal_identifiers)
 
     # Build shortcode
-    affiliate_type = affiliate.get("type", "sportsbook")
+    affiliate_type = str(
+        affiliate.get("affiliate_type")
+        or affiliate.get("type")
+        or "sportsbook"
+    ).strip().lower()
     shortcode = (
         f'[bam-inline-promotion placement-id="{property_config.get("placement_id", "2037")}" '
         f'property-id="{property_config.get("property_id", "1")}" '
@@ -166,8 +174,12 @@ def _parse_promotion(promo: dict, property_config: dict, context: str) -> dict:
         f'affiliate-type="{affiliate_type}" affiliate="{brand}"]'
     )
 
-    # Parse states (if available)
-    states = promo.get("states", [])
+    # Parse states from explicit payload first, then terms text.
+    states = parse_states(promo.get("states", []))
+    if not states:
+        states = extract_states_from_terms(terms)
+    if not states:
+        states = extract_states_from_terms(affiliate.get("terms", ""))
     if not states:
         states = ["ALL"]
 

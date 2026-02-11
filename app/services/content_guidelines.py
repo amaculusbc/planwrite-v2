@@ -85,7 +85,7 @@ FORBIDDEN PHRASES (never use):
 SECTION VARIETY (critical - avoid repetition):
 - Each section should ADD new information, not restate previous sections
 - If the intro mentioned the states, don't list them again in every section
-- If you explained the mechanic in Overview, don't re-explain it in Eligibility
+- If you explained the mechanic in Overview, don't re-explain it in Terms
 - Later sections should be SHORTER and more specific
 - Use varied sentence structures - not every section starts with "To..."
 - Do NOT repeat responsible gaming disclaimers in multiple sections
@@ -93,7 +93,7 @@ SECTION VARIETY (critical - avoid repetition):
 SECTION-SPECIFIC GUIDANCE:
 - Overview: Why this offer matters, what makes it valuable
 - How to Claim: Worked example with dollar amounts and outcomes
-- Eligibility: Who qualifies (brief) - skip restating the offer
+- Daily Promos: Placeholder list editors refresh with today's offers
 - Terms: Fine print only - odds requirements, expirations, restrictions
 - Responsible Gaming: 2-3 sentences max with helpline
 
@@ -168,11 +168,11 @@ SECTION_OBJECTIVES = {
         "avoid": "Restating what the offer is (already covered)",
         "length": "2-3 paragraphs with calculations",
     },
-    "key_details": {
-        "purpose": "Cover essential eligibility and requirements",
-        "focus": "21+, new users, eligible states, minimum odds, expiration",
-        "avoid": "Repeating the full offer explanation",
-        "length": "1-2 paragraphs",
+    "daily_promos": {
+        "purpose": "Provide a placeholder for editor-updated daily offers",
+        "focus": "Sportsbook, promo code, offer, eligible states, expiration window",
+        "avoid": "Hardcoding stale promos from prior days",
+        "length": "Short list placeholder",
     },
     "how_to_sign_up": {
         "purpose": "Step-by-step registration instructions",
@@ -183,7 +183,7 @@ SECTION_OBJECTIVES = {
     "terms": {
         "purpose": "Cover the fine print and legal requirements",
         "focus": "Wagering requirements, restrictions, disclaimers",
-        "avoid": "Repeating eligibility (covered in Key Details)",
+        "avoid": "Repeating full offer walkthrough and sign-up steps",
         "length": "1 paragraph + standard disclaimer",
     },
 }

@@ -290,6 +290,19 @@
                        class="text-sm font-medium {% if '/admin' in request.url.path %}text-primary-700{% else %}text-gray-500 hover:text-primary-700{% endif %}">
                         Admin
                     </a>
+                    {% if request.session.get('authenticated') %}
+                    <form method="post" action="/logout" class="inline">
+                        <button type="submit"
+                                class="text-sm font-medium text-gray-500 hover:text-primary-700">
+                            Logout
+                        </button>
+                    </form>
+                    {% else %}
+                    <a href="/login"
+                       class="text-sm font-medium {% if '/login' in request.url.path %}text-primary-700{% else %}text-gray-500 hover:text-primary-700{% endif %}">
+                        Login
+                    </a>
+                    {% endif %}
                     <span class="bw-pill">Better Collective</span>
                     <span class="htmx-indicator">
                         <svg class="animate-spin h-4 w-4 text-primary-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">

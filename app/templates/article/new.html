@@ -260,14 +260,14 @@
                 <div x-show="activeTab === 'single'" x-transition class="space-y-4">
                     <div>
                         <label for="keyword" class="block text-sm font-medium text-gray-700">Focus Keyword <span class="text-red-500">*</span></label>
-                        <input type="text" x-model="form.keyword" id="keyword" name="keyword" :required="activeTab === 'single'"
+                        <input type="text" x-model="form.keyword" @input="onKeywordInput()" id="keyword" name="keyword" :required="activeTab === 'single'"
                                placeholder="e.g., DraftKings promo code"
                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm">
                     </div>
 
                     <div>
                         <label for="title" class="block text-sm font-medium text-gray-700">H1 Title <span class="text-red-500">*</span></label>
-                        <input type="text" x-model="form.title" id="title" name="title" :required="activeTab === 'single'"
+                        <input type="text" x-model="form.title" @input="onTitleInput()" id="title" name="title" :required="activeTab === 'single'"
                                placeholder="e.g., DraftKings Promo Code: Get $150 Bonus Bets in January 2025"
                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm">
                     </div>
@@ -646,6 +646,8 @@ function articleWizard() {
         generating: false,
         statusMessage: '',
         statusType: 'info',
+        titleManuallyEdited: false,
+        lastSuggestedTitle: '',
 
         // Form data
         form: {
@@ -858,6 +860,7 @@ function articleWizard() {
                 this.games = [];
                 this.selectedGame = null;
                 this.odds = null;
+                this.refreshSuggestedTitle();
                 return;
             }
 
@@ -894,6 +897,7 @@ function articleWizard() {
             if (!this.form.game_id || !this.form.sport) {
                 this.selectedGame = null;
                 this.odds = null;
+                this.refreshSuggestedTitle();
                 return;
             }
 
@@ -904,6 +908,7 @@ function articleWizard() {
             // Add display info
             this.selectedGame.headline = `${this.selectedGame.away_team} @ ${this.selectedGame.home_team}`;
             this.selectedGame.time_display = this.formatGameTime(this.selectedGame.start_time);
+            this.refreshSuggestedTitle();
 
                 try {
                     const awayParam = [this.selectedGame.away_abbrev, this.selectedGame.away_team]
@@ -976,6 +981,35 @@ function articleWizard() {
                 navigator.clipboard.writeText(this.betExample);
                 this.showStatus('Bet example copied', 'info');
             }
+        },
+
+        onKeywordInput() {
+            this.refreshSuggestedTitle();
+        },
+
+        onTitleInput() {
+            const current = (this.form.title || '').trim();
+            this.titleManuallyEdited = !!current && current !== this.lastSuggestedTitle;
+        },
+
+        buildSuggestedTitle() {
+            const keyword = (this.form.keyword || '').trim();
+            if (!keyword) return '';
+            if (this.selectedGame && this.selectedGame.away_team && this.selectedGame.home_team) {
+                return `${keyword}: Get Bonus for ${this.selectedGame.away_team} vs. ${this.selectedGame.home_team}`;
+            }
+            return `${keyword}: Get Bonus for All Sports`;
+        },
+
+        refreshSuggestedTitle(force = false) {
+            const suggestion = this.buildSuggestedTitle();
+            if (!suggestion) return;
+            const current = (this.form.title || '').trim();
+            const canAutoFill = force || !current || current === this.lastSuggestedTitle || !this.titleManuallyEdited;
+            if (!canAutoFill) return;
+            this.form.title = suggestion;
+            this.lastSuggestedTitle = suggestion;
+            this.titleManuallyEdited = false;
         },
 
         // Batch helpers

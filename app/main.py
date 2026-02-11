@@ -16,6 +16,7 @@ from fastapi.templating import Jinja2Templates
 
 from app.config import get_settings
 from app.database import init_db
+from app.services.usage_tracking import record_usage_event
 
 # Ensure structlog has a sink in container/runtime logs.
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -94,11 +95,19 @@ def _authenticate_user(username: str, password: str) -> bool:
     return False
 
 
+def _request_meta(request: Request) -> tuple[str | None, str | None]:
+    """Extract request metadata for usage/audit events."""
+    ip_address = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+    return ip_address, user_agent
+
+
 class AuthenticationRequiredMiddleware(BaseHTTPMiddleware):
     """Gate app/API routes behind a simple session login."""
 
     async def dispatch(self, request: Request, call_next):
         started = time.perf_counter()
+        ip_address, user_agent = _request_meta(request)
         if not settings.auth_enabled:
             response = await call_next(request)
             if request.url.path.startswith("/api/"):
@@ -110,6 +119,16 @@ class AuthenticationRequiredMiddleware(BaseHTTPMiddleware):
                     path=request.url.path,
                     status_code=response.status_code,
                     duration_ms=elapsed_ms,
+                )
+                await record_usage_event(
+                    username="anonymous",
+                    event_type="api_request",
+                    method=request.method,
+                    path=request.url.path,
+                    status_code=response.status_code,
+                    duration_ms=elapsed_ms,
+                    ip_address=ip_address,
+                    user_agent=user_agent,
                 )
             return response
 
@@ -131,6 +150,16 @@ class AuthenticationRequiredMiddleware(BaseHTTPMiddleware):
                     status_code=response.status_code,
                     duration_ms=elapsed_ms,
                 )
+                await record_usage_event(
+                    username=session.get("username", "unknown"),
+                    event_type="api_request",
+                    method=request.method,
+                    path=path,
+                    status_code=response.status_code,
+                    duration_ms=elapsed_ms,
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                )
             return response
 
         if path.startswith("/api/"):
@@ -142,6 +171,16 @@ class AuthenticationRequiredMiddleware(BaseHTTPMiddleware):
                 path=path,
                 status_code=401,
                 duration_ms=elapsed_ms,
+            )
+            await record_usage_event(
+                username="anonymous",
+                event_type="api_request_blocked",
+                method=request.method,
+                path=path,
+                status_code=401,
+                duration_ms=elapsed_ms,
+                ip_address=ip_address,
+                user_agent=user_agent,
             )
             return JSONResponse({"detail": "Authentication required"}, status_code=401)
 
@@ -216,10 +255,30 @@ async def login_submit(
         request.session["authenticated"] = True
         request.session["username"] = username.strip()
         logger.info("login_success", username=username.strip())
+        ip_address, user_agent = _request_meta(request)
+        await record_usage_event(
+            username=username.strip(),
+            event_type="login_success",
+            method="POST",
+            path="/login",
+            status_code=303,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
         destination = next if next and next.startswith("/") else "/articles/new"
         return RedirectResponse(url=destination, status_code=303)
 
     logger.info("login_failed", username=username.strip())
+    ip_address, user_agent = _request_meta(request)
+    await record_usage_event(
+        username=username.strip() or "anonymous",
+        event_type="login_failed",
+        method="POST",
+        path="/login",
+        status_code=401,
+        ip_address=ip_address,
+        user_agent=user_agent,
+    )
     return templates.TemplateResponse(
         "auth/login.html",
         {
@@ -238,6 +297,16 @@ async def logout(request: Request):
     username = request.session.get("username") if isinstance(request.session, dict) else ""
     request.session.clear()
     logger.info("logout", username=username or "unknown")
+    ip_address, user_agent = _request_meta(request)
+    await record_usage_event(
+        username=username or "unknown",
+        event_type="logout",
+        method="POST",
+        path="/logout",
+        status_code=303,
+        ip_address=ip_address,
+        user_agent=user_agent,
+    )
     return RedirectResponse(url="/login", status_code=303)
 
 

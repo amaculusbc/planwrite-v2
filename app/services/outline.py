@@ -17,6 +17,7 @@ from app.services.llm import (
 )
 from app.services.rag import query_articles
 from app.services.content_guidelines import get_style_instructions, get_temperature_by_section
+from app.services.operator_profile import is_prediction_market_context
 
 
 OUTLINE_SCHEMA = {
@@ -52,6 +53,212 @@ def today_long(tz: str = "US/Eastern") -> str:
     except Exception:
         now = datetime.now()
     return f"{now.strftime('%A')}, {now.strftime('%B')} {now.day}, {now.year}"
+
+
+def _extract_matchup_from_event_context(event_context: str) -> str:
+    """Extract matchup text from event context string when available."""
+    if not event_context:
+        return ""
+
+    featured = re.search(r"Featured game:\s*([^\.]+)", event_context, flags=re.IGNORECASE)
+    if featured:
+        raw = featured.group(1).strip()
+    else:
+        direct = re.search(
+            r"([A-Za-z0-9 .'\-]+)\s+(?:vs\.?|@)\s+([A-Za-z0-9 .'\-]+)",
+            event_context,
+            flags=re.IGNORECASE,
+        )
+        if not direct:
+            return ""
+        raw = f"{direct.group(1).strip()} vs. {direct.group(2).strip()}"
+
+    if "@" in raw:
+        parts = [p.strip() for p in raw.split("@", 1)]
+        if len(parts) == 2 and parts[0] and parts[1]:
+            raw = f"{parts[0]} vs. {parts[1]}"
+
+    return re.sub(r"\s+", " ", raw).strip()
+
+
+def _headline_topic(keyword: str, brand: str, is_prediction_market: bool = False) -> str:
+    """Build normalized topic phrase for headings."""
+    if keyword and keyword.strip():
+        return keyword.strip()
+    if brand and brand.strip():
+        return f"{brand.strip()} promo code"
+    if is_prediction_market:
+        return "prediction market promo code"
+    return "sportsbook promo code"
+
+
+def _contextual_section_titles(
+    keyword: str,
+    brand: str,
+    event_context: str = "",
+    is_prediction_market: bool = False,
+) -> dict[str, str]:
+    """Build contextual section titles (game-specific when context is available)."""
+    topic = _headline_topic(keyword, brand, is_prediction_market=is_prediction_market)
+    matchup = _extract_matchup_from_event_context(event_context)
+    claim_title = (
+        f"How to Use {topic} for {matchup}"
+        if is_prediction_market and matchup
+        else f"How to Use {topic} for Any Market"
+        if is_prediction_market
+        else f"How to Claim {topic} for {matchup}"
+        if matchup
+        else f"How to Claim {topic} for Any Sport"
+    )
+    terms_title = "Terms & Eligibility" if is_prediction_market else "Terms & Conditions"
+    overview_no_matchup = (
+        f"{topic}: Promo for Top Markets Today"
+        if is_prediction_market
+        else f"{topic}: Get Bonus for All Sports Today"
+    )
+    if matchup:
+        return {
+            "overview": f"{topic} for {matchup}",
+            "claim": claim_title,
+            "signup": f"How to Sign Up Before {matchup}",
+            "daily_promos": "Daily Promos Today",
+            "terms": terms_title,
+        }
+    return {
+        "overview": overview_no_matchup,
+        "claim": claim_title,
+        "signup": f"How to Sign Up for {topic}",
+        "daily_promos": "Daily Promos Today",
+        "terms": terms_title,
+    }
+
+
+def _apply_editorial_section_rules(
+    outline: list[dict],
+    keyword: str,
+    brand: str,
+    event_context: str = "",
+    is_prediction_market: bool = False,
+) -> list[dict]:
+    """Apply house section rules: remove redundant key-details, enforce daily promos."""
+    if not outline:
+        return outline
+
+    titles = _contextual_section_titles(
+        keyword,
+        brand,
+        event_context,
+        is_prediction_market=is_prediction_market,
+    )
+    cleaned: list[dict] = []
+    has_daily_promos = False
+    has_claim = False
+    has_signup = False
+    has_terms = False
+    first_h2_idx = -1
+
+    for section in outline:
+        level = str(section.get("level", ""))
+        title = str(section.get("title", ""))
+        title_lower = title.lower()
+
+        if level == "h2" and ("key details" in title_lower or "eligibility" in title_lower):
+            # Redundant section: these details are covered in intro/claim/terms.
+            continue
+
+        normalized = dict(section)
+        if level == "h2":
+            if first_h2_idx == -1:
+                first_h2_idx = len(cleaned)
+            if "how to claim" in title_lower or "how to use" in title_lower:
+                normalized["title"] = titles["claim"]
+                has_claim = True
+            elif "daily promo" in title_lower or "promos today" in title_lower:
+                normalized["title"] = titles["daily_promos"]
+                has_daily_promos = True
+            elif "how to sign" in title_lower or "sign up" in title_lower or "register" in title_lower:
+                normalized["title"] = titles["signup"]
+                has_signup = True
+            elif "terms" in title_lower or "conditions" in title_lower or "fine print" in title_lower:
+                normalized["title"] = titles["terms"]
+                has_terms = True
+
+        cleaned.append(normalized)
+
+    if first_h2_idx >= 0:
+        first_h2 = dict(cleaned[first_h2_idx])
+        if str(first_h2.get("level", "")) == "h2":
+            first_h2["title"] = titles["overview"]
+            cleaned[first_h2_idx] = first_h2
+
+    if not has_claim:
+        cleaned.append({
+            "level": "h2",
+            "title": titles["claim"],
+            "talking_points": [
+                "Worked example with win/loss outcomes"
+                if not is_prediction_market
+                else "Worked example with contract settlement outcomes",
+                "How bonus credits are applied"
+                if not is_prediction_market
+                else "How promo credits apply to eligible market positions",
+            ],
+            "avoid": ["Rewriting legal terms"],
+        })
+
+    if not has_daily_promos:
+        daily_section = {
+            "level": "h2",
+            "title": titles["daily_promos"],
+            "talking_points": [
+                "Placeholder for today's rotating promos",
+                "List sportsbook, promo code, and eligible states"
+                if not is_prediction_market
+                else "List operator, promo code, and eligible states",
+                "Update this section daily before publishing",
+            ],
+            "avoid": ["Using stale promos from prior days"],
+        }
+        insert_idx = next(
+            (
+                idx for idx, sec in enumerate(cleaned)
+                if str(sec.get("level", "")) == "h2"
+                and ("sign up" in str(sec.get("title", "")).lower() or "terms" in str(sec.get("title", "")).lower())
+            ),
+            len(cleaned),
+        )
+        cleaned.insert(insert_idx, daily_section)
+
+    if not has_signup:
+        cleaned.append({
+            "level": "h2",
+            "title": titles["signup"],
+            "talking_points": [
+                "Five-step registration flow",
+                "Where to enter promo code",
+                "How to place first qualifying bet"
+                if not is_prediction_market
+                else "How to place first qualifying market position",
+            ],
+            "avoid": ["Deep legal terms"],
+        })
+
+    if not has_terms:
+        cleaned.append({
+            "level": "h2",
+            "title": titles["terms"],
+            "talking_points": [
+                "Reference official operator terms"
+                if not is_prediction_market
+                else "Reference official market terms",
+                "State restrictions and expiry windows"
+                if not is_prediction_market
+                else "State restrictions and settlement timelines",
+            ],
+            "avoid": ["Repeating claim walkthrough"],
+        })
+
+    return cleaned
 
 
 # ============================================================================
@@ -90,7 +297,14 @@ async def generate_structured_outline(
     offer_text = offer.get("offer_text", "")
     bonus_code = offer.get("bonus_code", "")
     terms = offer.get("terms", "")
+    is_prediction_market = is_prediction_market_context(keyword, title, brand, offer_text)
     style_guide = get_style_instructions()
+    section_titles = _contextual_section_titles(
+        keyword,
+        brand,
+        event_context,
+        is_prediction_market=is_prediction_market,
+    )
 
     # Get RAG snippets for style reference
     try:
@@ -99,7 +313,7 @@ async def generate_structured_outline(
     except Exception:
         rag_context = ""
 
-    system_prompt = """You are a senior content strategist for a sports betting publication.
+    system_prompt = f"""You are a senior content strategist for a {'prediction market' if is_prediction_market else 'sports betting'} publication.
 Your job is to create a DETAILED CONTENT PLAN for a promo code article.
 
 CRITICAL: Each section must have UNIQUE talking points. Never repeat information across sections.
@@ -120,7 +334,37 @@ RULES:
 - H3 subsections: Only when genuinely helpful, 1-2 talking points
 - "avoid" lists what other sections cover (to prevent repetition)
 - Maximum 5 H2 sections total
-- Include keyword in first H2 title"""
+- Include keyword in first H2 title
+- {'Use prediction-market language (trade, market, position, contract) and avoid sportsbook/bet/wager terms' if is_prediction_market else 'Use natural sportsbook language with clear, factual mechanics'}"""
+
+    claim_point = (
+        f"Use this worked example: {bet_example}"
+        if bet_example
+        else "Create a hypothetical worked example using a $50-100 market position"
+        if is_prediction_market
+        else "Create hypothetical bet example with $50-100 wager"
+    )
+    signup_step_five = "5. Place first qualifying market position" if is_prediction_market else "5. Place bet"
+    terms_point = (
+        "Reference official terms, eligibility, and settlement notes"
+        if is_prediction_market
+        else "Full T&C reference, responsible gaming, state helpline"
+    )
+    overview_point = (
+        "Why it's valuable, market timing angle, who benefits (NOT claiming steps)"
+        if is_prediction_market
+        else "Why it's valuable, timing advantage, who benefits (NOT claiming steps)"
+    )
+    intro_point = (
+        "Should mention date, offer value, and explicit eligible states (not generic \"nationwide\")"
+        if is_prediction_market
+        else "Should mention date, offer value, that code is needed, and explicit eligible states (not generic \"nationwide\")"
+    )
+    daily_promos_point = (
+        "Use placeholder bullets for editor updates (operator, code, offer, states)"
+        if is_prediction_market
+        else "Use placeholder bullets for editor updates (book, code, offer, states)"
+    )
 
     user_prompt = f"""Create a detailed content plan for this article:
 
@@ -149,21 +393,21 @@ STYLE EXAMPLES (match this tone):
 REQUIRED STRUCTURE:
 1. [INTRO] - Hook with date, offer value, promo code mention
 2. [SHORTCODE] - Promo card
-3. [H2: {keyword} Overview] - Why this offer matters (NOT how to claim)
+3. [H2: {section_titles["overview"]}] - Why this offer matters (NOT how to claim)
 4. [SHORTCODE]
-5. [H2: How to Claim the {keyword}] - Worked example with calculations
+5. [H2: {section_titles["claim"]}] - Worked example with calculations
 6. [SHORTCODE]
-7. [H2: Key Details & Eligibility] - Requirements, restrictions
-8. [H2: How to Sign Up for {keyword}] - Step-by-step numbered list
-9. [H2: Terms & Conditions] - Fine print summary
+7. [H2: {section_titles["daily_promos"]}] - Placeholder section for daily promo updates
+8. [H2: {section_titles["signup"]}] - Step-by-step numbered list
+9. [H2: {section_titles["terms"]}] - Fine print summary
 
 TALKING POINTS GUIDANCE:
-- INTRO: Should mention date, offer value, that code is needed, available states
-- OVERVIEW: Why it's valuable, timing advantage, who benefits (NOT claiming steps)
-- HOW TO CLAIM: {"Use this bet example: " + bet_example if bet_example else "Create hypothetical bet example with $50-100 wager"}
-- KEY DETAILS: 21+, new users, minimum odds, bonus expiration, wagering rules
-- SIGN UP: Numbered steps (1. Go to site 2. Register 3. Enter code 4. Deposit 5. Place bet)
-- TERMS: Full T&C reference, responsible gaming, state helpline
+- INTRO: {intro_point}
+- OVERVIEW: {overview_point}
+- HOW TO CLAIM: {claim_point}
+- DAILY PROMOS: {daily_promos_point}
+- SIGN UP: Numbered steps (1. Go to site 2. Register 3. Enter code 4. Deposit {signup_step_five})
+- TERMS: {terms_point}
 
 Output ONLY the JSON array, no other text:"""
 
@@ -178,12 +422,25 @@ Output ONLY the JSON array, no other text:"""
             max_tokens=2000,
         )
         outline = _ensure_shortcodes(outline)
+        outline = _apply_editorial_section_rules(
+            outline,
+            keyword=keyword,
+            brand=brand,
+            event_context=event_context,
+            is_prediction_market=is_prediction_market,
+        )
         return outline
     except Exception as e:
         print(f"Failed to generate structured outline: {e}")
 
     # Fallback to default structure
-    return _get_default_outline(keyword, brand, event_context, bet_example)
+    return _get_default_outline(
+        keyword,
+        brand,
+        event_context,
+        bet_example,
+        is_prediction_market=is_prediction_market,
+    )
 
 
 def _ensure_shortcodes(outline: list[dict]) -> list[dict]:
@@ -240,8 +497,20 @@ def _get_default_outline(
     brand: str,
     event_context: str = "",
     bet_example: str = "",
+    is_prediction_market: bool = False,
 ) -> list[dict]:
     """Return default outline structure if AI generation fails."""
+    titles = _contextual_section_titles(
+        keyword,
+        brand,
+        event_context,
+        is_prediction_market=is_prediction_market,
+    )
+    default_example_point = (
+        "Worked example with a $50 market position"
+        if is_prediction_market
+        else "Worked example with $50 bet"
+    )
     return [
         {
             "level": "intro",
@@ -249,7 +518,7 @@ def _get_default_outline(
             "talking_points": [
                 f"Hook with today's date and {brand} offer value",
                 f"Mention the promo code twice naturally",
-                "State eligibility (21+, new users, available states)",
+                "State eligibility (21+, new users, explicit eligible states)",
             ],
             "avoid": [],
         },
@@ -261,9 +530,11 @@ def _get_default_outline(
         },
         {
             "level": "h2",
-            "title": f"{keyword} Overview",
+            "title": titles["overview"],
             "talking_points": [
-                "Why this offer is valuable for bettors",
+                "Why this offer is valuable for bettors"
+                if not is_prediction_market
+                else "Why this offer is valuable for prediction-market users",
                 "Timing advantage (sign up now)",
                 "What makes it stand out from other promos",
             ],
@@ -277,11 +548,15 @@ def _get_default_outline(
         },
         {
             "level": "h2",
-            "title": f"How to Claim the {keyword}",
+            "title": titles["claim"],
             "talking_points": [
-                bet_example if bet_example else "Worked example with $50 bet",
-                "Show win scenario with profit calculation",
-                "Show loss scenario with bonus bet receipt",
+                bet_example if bet_example else default_example_point,
+                "Show win scenario with profit calculation"
+                if not is_prediction_market
+                else "Show settlement scenario with payout calculation",
+                "Show loss scenario with bonus bet receipt"
+                if not is_prediction_market
+                else "Show loss scenario and how promo credits can be used",
             ],
             "avoid": ["Restating what the offer is", "Eligibility requirements"],
         },
@@ -293,34 +568,39 @@ def _get_default_outline(
         },
         {
             "level": "h2",
-            "title": "Key Details & Eligibility",
+            "title": titles["daily_promos"],
             "talking_points": [
-                "21+ and new customers only",
-                "Minimum odds requirement (e.g., -500 or longer)",
-                "Bonus bet expiration timeline",
-                "List of eligible states",
+                "Placeholder for today's rotating promos (editor updates daily)",
+                "List sportsbook, offer, promo code, and state availability"
+                if not is_prediction_market
+                else "List operator, offer, promo code, and state availability",
+                "Note expiration window for today's promos",
             ],
-            "avoid": ["Full offer explanation", "Sign-up steps"],
+            "avoid": ["Using stale promos from previous days"],
         },
         {
             "level": "h2",
-            "title": f"How to Sign Up for {keyword}",
+            "title": titles["signup"],
             "talking_points": [
                 "Step 1: Visit site/app",
                 "Step 2: Click Join/Register",
                 "Step 3: Enter promo code",
                 "Step 4: Complete verification",
-                "Step 5: Make deposit and place first bet",
+                "Step 5: Make deposit and place first bet"
+                if not is_prediction_market
+                else "Step 5: Fund account and place first market position",
             ],
             "avoid": ["Offer details", "Terms explanation"],
         },
         {
             "level": "h2",
-            "title": "Terms & Conditions",
+            "title": titles["terms"],
             "talking_points": [
                 "Reference to full terms on operator site",
                 "Key restrictions summary",
-                "Responsible gaming reminder with helpline",
+                "Responsible gaming reminder with helpline"
+                if not is_prediction_market
+                else "Eligibility and settlement notes",
             ],
             "avoid": ["Eligibility (covered above)", "Claiming steps"],
         },
@@ -517,13 +797,12 @@ def validate_outline(outline: list[dict], keyword: str) -> list[str]:
 DEFAULT_TOKENS = [
     "[INTRO]",
     "[SHORTCODE]",
-    "[H2: What is the Offer?]",
-    "[H2: How to Claim]",
-    "[H3: Step 1: Sign Up]",
-    "[H3: Step 2: Make a Deposit]",
-    "[H3: Step 3: Place Your Bet]",
-    "[H2: Tips and Strategies]",
-    "[H2: Frequently Asked Questions]",
+    "[H2: Promo Code Overview]",
+    "[SHORTCODE]",
+    "[H2: How to Claim the Promo Code]",
+    "[H2: Daily Promos Today]",
+    "[H2: How to Sign Up]",
+    "[H2: Terms & Conditions]",
 ]
 
 
@@ -543,8 +822,9 @@ def _default_tokens_multi(num_offers: int = 1, keyword: str = "Offer") -> list[s
     tokens.extend([
         f"[H2: How to Claim the {keyword}]",
         main_shortcode,
-        "[H2: Key Details & Eligibility]",
+        "[H2: Daily Promos Today]",
         f"[H2: How to Sign Up for {keyword}]",
+        "[H2: Terms & Conditions]",
     ])
     return tokens
 
@@ -658,9 +938,16 @@ async def generate_outline(
         f"[{s['source']}]: {s['snippet']}"
         for s in rag_snippets
     ]) or "(No relevant articles found)"
+    is_prediction_market = is_prediction_market_context(keyword, title, brand, offer_text)
+    section_titles = _contextual_section_titles(
+        keyword,
+        brand,
+        game_context,
+        is_prediction_market=is_prediction_market,
+    )
 
     # Build prompt - keep it tight to avoid bloated outlines
-    system_prompt = """You are an SEO content planner for short, timely Top Stories promo articles.
+    system_prompt = f"""You are an SEO content planner for short, timely Top Stories promo articles.
 Output a lean outline using bracket tokens. One item per line.
 
 Format:
@@ -676,7 +963,8 @@ CRITICAL RULES:
 - Insert [SHORTCODE_MAIN] 2-3 times total throughout (after intro, mid-article)
 - Keep headings SHORT (under 8 words)
 - NO "Benefits" or "Features" sections - focus on the offer
-- Output ONLY tokens, no explanations"""
+- Output ONLY tokens, no explanations
+- {"Use prediction-market language and avoid sportsbook/betting terms" if is_prediction_market else "Use clear sportsbook language"}"""
 
     user_prompt = f"""Create an outline for:
 
@@ -689,14 +977,14 @@ OFFER: {offer_text or "(none)"}
 REQUIRED STRUCTURE (follow this pattern):
 [INTRO]
 [SHORTCODE_MAIN]
-[H2: {brand} Promo Code Overview]
-[H2: How to Claim the {brand} Promo Code]
+[H2: {section_titles['overview']}]
+[H2: {section_titles['claim']}]
 [H3: Example: (offer summary)]
 [SHORTCODE_MAIN]
-[H2: Key Details & Eligibility]
-[H2: How to Sign Up]
+[H2: {section_titles['daily_promos']}]
+[H2: {section_titles['signup']}]
 [SHORTCODE_MAIN]
-[H2: Terms & Conditions]
+[H2: {section_titles['terms']}]
 
 If multiple offers are selected, also include:
 - [SHORTCODE_1] for the first alternative offer
@@ -741,11 +1029,17 @@ async def generate_outline_streaming(
         f"[{s['source']}]: {s['snippet']}"
         for s in rag_snippets
     ]) or "(No relevant articles found)"
+    is_prediction_market = is_prediction_market_context(keyword, title, brand, offer_text)
+    section_titles = _contextual_section_titles(
+        keyword,
+        brand,
+        is_prediction_market=is_prediction_market,
+    )
 
     yield {"type": "status", "message": f"Found {len(rag_snippets)} relevant articles"}
 
     # Build prompt (same as non-streaming)
-    system_prompt = """You are an SEO content planner specializing in sports betting promotional content.
+    system_prompt = f"""You are an SEO content planner specializing in {'prediction-market' if is_prediction_market else 'sports betting'} promotional content.
 Your task is to create a structured article outline using bracket tokens.
 
 Output format (one token per line):
@@ -756,11 +1050,12 @@ Output format (one token per line):
 
 Rules:
 - Start with [INTRO] then [SHORTCODE]
-- Use 3-5 H2 sections
+- Use 4-5 H2 sections
 - Use H3 subsections sparingly (0-3 per H2)
-- Keep titles concise and keyword-relevant
-- Include an FAQ section at the end
-- Output ONLY the tokens, no explanations"""
+- Keep titles concise, contextual, and keyword-relevant
+- Include a Daily Promos section placeholder
+- Output ONLY the tokens, no explanations
+- {"Avoid sportsbook/betting terminology for this operator" if is_prediction_market else "Use natural sportsbook terminology"}"""
 
     user_prompt = f"""Create an article outline for:
 
@@ -770,6 +1065,16 @@ BRAND: {brand or "(none)"}
 OFFER: {offer_text or "(none)"}
 STATE: {state}
 STYLE: {style_profile}
+
+REQUIRED STRUCTURE (follow this pattern):
+[INTRO]
+[SHORTCODE_MAIN]
+[H2: {section_titles['overview']}]
+[H2: {section_titles['claim']}]
+[SHORTCODE_MAIN]
+[H2: {section_titles['daily_promos']}]
+[H2: {section_titles['signup']}]
+[H2: {section_titles['terms']}]
 
 STRUCTURE EXAMPLES (use for outline format inspiration, NOT content):
 These show how we typically structure similar articles.

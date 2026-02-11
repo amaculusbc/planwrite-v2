@@ -4,8 +4,13 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 
-from app.main import app
+from app.main import app, settings as app_settings
 from app.database import Base, get_db
+from app.services import usage_tracking
+
+
+# Keep API tests focused on endpoint behavior, not auth flow.
+app_settings.auth_enabled = False
 
 
 # Test database
@@ -34,8 +39,11 @@ async def client(db_session):
         yield db_session
 
     app.dependency_overrides[get_db] = override_get_db
+    original_usage_session_maker = usage_tracking.async_session_maker
+    usage_tracking.async_session_maker = test_session_maker
 
     async with AsyncClient(app=app, base_url="http://test") as ac:
         yield ac
 
+    usage_tracking.async_session_maker = original_usage_session_maker
     app.dependency_overrides.clear()

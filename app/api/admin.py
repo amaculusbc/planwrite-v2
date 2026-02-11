@@ -4,13 +4,16 @@ import hashlib
 import json
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
+from app.database import get_db
 from app.services.bam_offers import DEFAULT_PROPERTY, PROPERTIES
 from app.services.internal_links import get_links_store
 from app.services.rag_builder import build_rag_index
+from app.services.usage_tracking import list_usage_events, usage_events_csv, usage_summary
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 settings = get_settings()
@@ -273,3 +276,58 @@ async def rebuild_rag():
     """Rebuild FAISS RAG index from data/articles."""
     count = await build_rag_index()
     return {"status": "success", "chunks": count}
+
+
+@router.get("/usage/events")
+async def get_usage_events(
+    days: int = Query(30, ge=1, le=3650),
+    limit: int = Query(200, ge=1, le=5000),
+    username: str | None = Query(None),
+    event_type: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),  # noqa: ARG001
+):
+    """List persisted usage events."""
+    events = await list_usage_events(
+        days=days,
+        limit=limit,
+        username=username,
+        event_type=event_type,
+    )
+    return {
+        "status": "success",
+        "days": days,
+        "count": len(events),
+        "events": events,
+    }
+
+
+@router.get("/usage/summary")
+async def get_usage_summary(
+    days: int = Query(30, ge=1, le=3650),
+    db: AsyncSession = Depends(get_db),  # noqa: ARG001
+):
+    """Return aggregated persisted usage metrics."""
+    summary = await usage_summary(days=days)
+    return {"status": "success", **summary}
+
+
+@router.get("/usage/export")
+async def export_usage_events(
+    days: int = Query(30, ge=1, le=3650),
+    limit: int = Query(5000, ge=1, le=20000),
+    username: str | None = Query(None),
+    event_type: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),  # noqa: ARG001
+):
+    """Export persisted usage events as CSV."""
+    csv_text = await usage_events_csv(
+        days=days,
+        limit=limit,
+        username=username,
+        event_type=event_type,
+    )
+    return Response(
+        content=csv_text,
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=usage-events.csv"},
+    )
