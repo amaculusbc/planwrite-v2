@@ -9,7 +9,11 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - ODDS_API_KEY=${ODDS_API_KEY}
       - DATABASE_URL=sqlite+aiosqlite:///./storage/planwrite.db
-      - DEBUG=false
+      - DEBUG=${DEBUG:-true}
+      - AUTH_ENABLED=${AUTH_ENABLED:-true}
+      - AUTH_USERNAME=${AUTH_USERNAME:-admin}
+      - AUTH_PASSWORD=${AUTH_PASSWORD:-change-me}
+      - AUTH_SESSION_SECRET=${AUTH_SESSION_SECRET:-change-session-secret}
     volumes:
       - ./storage:/app/storage
       - ./data:/app/data
