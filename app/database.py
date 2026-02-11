@@ -63,12 +63,14 @@ async def init_db() -> None:
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        # Lightweight column backfill for existing SQLite DBs (no Alembic here)
-        try:
-            result = await conn.execute(text("PRAGMA table_info(articles)"))
-            cols = {row[1] for row in result.fetchall()}
-            if "offer_property" not in cols:
-                await conn.execute(text("ALTER TABLE articles ADD COLUMN offer_property VARCHAR(50)"))
-        except Exception:
-            # Ignore if PRAGMA/ALTER fails (e.g., non-SQLite)
-            pass
+
+        # Lightweight column backfill for existing SQLite DBs (no Alembic here).
+        if _normalize_database_url(settings.database_url).startswith("sqlite"):
+            try:
+                result = await conn.execute(text("PRAGMA table_info(articles)"))
+                cols = {row[1] for row in result.fetchall()}
+                if "offer_property" not in cols:
+                    await conn.execute(text("ALTER TABLE articles ADD COLUMN offer_property VARCHAR(50)"))
+            except Exception:
+                # Ignore if PRAGMA/ALTER fails unexpectedly.
+                pass
