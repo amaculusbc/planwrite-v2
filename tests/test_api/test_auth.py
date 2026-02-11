@@ -46,3 +46,23 @@ async def test_login_accepts_secondary_user_from_auth_users_json():
         app_settings.auth_users_json = prev_users_json
         app_settings.auth_username = prev_username
         app_settings.auth_password = prev_password
+
+
+@pytest.mark.asyncio
+async def test_login_accepts_secondary_user_from_relaxed_auth_users_json():
+    prev_enabled = app_settings.auth_enabled
+    prev_users_json = app_settings.auth_users_json
+    app_settings.auth_enabled = True
+    app_settings.auth_users_json = "{admin:admin-pass,usteam:usteam-pass}"
+    try:
+        async with AsyncClient(app=app, base_url="http://test") as client:
+            login = await client.post(
+                "/login",
+                data={"username": "usteam", "password": "usteam-pass", "next": "/admin"},
+                follow_redirects=False,
+            )
+            assert login.status_code == 303
+            assert login.headers.get("location") == "/admin"
+    finally:
+        app_settings.auth_enabled = prev_enabled
+        app_settings.auth_users_json = prev_users_json

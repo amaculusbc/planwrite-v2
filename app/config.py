@@ -82,8 +82,19 @@ class Settings(BaseSettings):
                         if user and secret:
                             parsed[user] = secret
             except Exception:
-                # Fallback to single-user auth settings below.
-                parsed = {}
+                # Accept relaxed format: user:pass,user2:pass2
+                # and brace-wrapped variants: {user:pass,user2:pass2}
+                relaxed = raw.strip().strip("{}").strip()
+                if relaxed:
+                    pairs = [p.strip() for p in relaxed.split(",") if p.strip()]
+                    for pair in pairs:
+                        if ":" not in pair:
+                            continue
+                        user_raw, pass_raw = pair.split(":", 1)
+                        user = user_raw.strip().strip('"').strip("'")
+                        secret = pass_raw.strip().strip('"').strip("'")
+                        if user and secret:
+                            parsed[user] = secret
 
         if parsed:
             return parsed
