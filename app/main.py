@@ -2,6 +2,7 @@
 
 import secrets
 import time
+import logging
 import structlog
 from contextlib import asynccontextmanager
 from urllib.parse import quote
@@ -15,6 +16,9 @@ from fastapi.templating import Jinja2Templates
 
 from app.config import get_settings
 from app.database import init_db
+
+# Ensure structlog has a sink in container/runtime logs.
+logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 # Configure structured logging
 structlog.configure(
