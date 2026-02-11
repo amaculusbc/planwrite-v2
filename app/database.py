@@ -10,9 +10,21 @@ from app.config import get_settings
 
 settings = get_settings()
 
+
+def _normalize_database_url(url: str) -> str:
+    """Normalize DATABASE_URL for SQLAlchemy async engines."""
+    if url.startswith("postgresql+asyncpg://"):
+        return url
+    if url.startswith("postgresql://"):
+        return "postgresql+asyncpg://" + url[len("postgresql://"):]
+    if url.startswith("postgres://"):
+        return "postgresql+asyncpg://" + url[len("postgres://"):]
+    return url
+
+
 # Create async engine
 engine = create_async_engine(
-    settings.database_url,
+    _normalize_database_url(settings.database_url),
     echo=settings.debug,
     future=True,
 )
