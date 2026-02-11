@@ -22,7 +22,9 @@ dist/
 # Storage (runtime files)
 storage/*.db
 storage/*.pkl
-storage/faiss_index/
+storage/faiss_index/*
+!storage/faiss_index/index.faiss
+!storage/faiss_index/metadata.jsonl
 storage/exports/
 
 # IDE
