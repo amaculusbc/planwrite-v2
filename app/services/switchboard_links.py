@@ -44,7 +44,7 @@ def inject_switchboard_links(
     """Inject clickable switchboard links into text with natural anchor control.
 
     Preference order:
-    1) Wrap existing <strong> anchors that mention the brand or promo language.
+    1) Wrap existing <strong> anchors that mention the brand or exact code.
     2) If no links were injected, wrap the first plain brand mention.
     """
     if not (brand and switchboard_url):
@@ -68,7 +68,10 @@ def inject_switchboard_links(
             return match.group(0)
         inner = match.group(1)
         inner_lower = inner.lower()
-        if brand_lower not in inner_lower and "promo code" not in inner_lower and "bonus code" not in inner_lower and (code_lower and code_lower not in inner_lower):
+        brand_match = bool(brand_lower) and brand_lower in inner_lower
+        code_match = bool(code_lower) and code_lower in inner_lower
+        # Do not wrap generic anchors like "<strong>promo code</strong>" for every offer.
+        if not (brand_match or code_match):
             return match.group(0)
         links_injected += 1
         return (

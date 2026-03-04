@@ -123,10 +123,15 @@ async def build_bet_example_post(request: BetExampleRequest):
     bet_type = request.bet_type
     team = request.team
     book = request.sportsbook
+    book_used = book
 
     # Find the first available book with data
     if bet_type == "spread" and odds_data.get("spreads"):
-        book_odds = odds_data["spreads"].get(book) or next(iter(odds_data["spreads"].values()), None)
+        if odds_data["spreads"].get(book):
+            book_used = book
+            book_odds = odds_data["spreads"].get(book)
+        else:
+            book_used, book_odds = next(iter(odds_data["spreads"].items()), (book, None))
         if book_odds:
             line = book_odds.get(f"{team}_line", "")
             american_odds = book_odds.get(f"{team}_odds", -110)
@@ -135,7 +140,11 @@ async def build_bet_example_post(request: BetExampleRequest):
         else:
             return {"error": "No spread odds available", "example_text": ""}
     elif bet_type == "moneyline" and odds_data.get("moneylines"):
-        book_odds = odds_data["moneylines"].get(book) or next(iter(odds_data["moneylines"].values()), None)
+        if odds_data["moneylines"].get(book):
+            book_used = book
+            book_odds = odds_data["moneylines"].get(book)
+        else:
+            book_used, book_odds = next(iter(odds_data["moneylines"].items()), (book, None))
         if book_odds:
             american_odds = book_odds.get(f"{team}_odds", -110)
             team_name = game.get(f"{team}_team", team.title())
@@ -143,7 +152,11 @@ async def build_bet_example_post(request: BetExampleRequest):
         else:
             return {"error": "No moneyline odds available", "example_text": ""}
     elif bet_type == "total" and odds_data.get("totals"):
-        book_odds = odds_data["totals"].get(book) or next(iter(odds_data["totals"].values()), None)
+        if odds_data["totals"].get(book):
+            book_used = book
+            book_odds = odds_data["totals"].get(book)
+        else:
+            book_used, book_odds = next(iter(odds_data["totals"].items()), (book, None))
         if book_odds:
             total = book_odds.get("total", "")
             american_odds = book_odds.get("over_odds", -110) if team == "away" else book_odds.get("under_odds", -110)
@@ -170,6 +183,11 @@ async def build_bet_example_post(request: BetExampleRequest):
         "selection": selection,
         "odds": american_odds,
         "potential_profit": round(profit, 2),
+        "sportsbook_requested": book,
+        "sportsbook_used": book_used,
+        "bet_type": bet_type,
+        "team": team,
+        "event_context": event_context,
     }
 
 

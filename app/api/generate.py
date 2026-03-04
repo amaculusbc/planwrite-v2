@@ -54,13 +54,19 @@ def _normalize_game_time(start_time: str | None) -> str:
     )
 
 
-def _build_game_context(game_context) -> tuple[str, str]:
-    """Build game context and bet example strings from request payload."""
+def _build_game_context(game_context) -> tuple[str, str, dict]:
+    """Build game context text, bet example text, and structured bet-example data."""
     if not game_context:
-        return "", ""
+        return "", "", {}
 
     parts: list[str] = []
-    if game_context.headline:
+    event_type = str(getattr(game_context, "event_type", "") or "").strip().lower()
+    custom_event = str(getattr(game_context, "custom_event", "") or "").strip()
+    if custom_event:
+        parts.append(f"Featured event: {custom_event}")
+    elif game_context.headline and event_type in {"fight", "race", "tournament", "custom", "event"}:
+        parts.append(f"Featured event: {game_context.headline}")
+    elif game_context.headline:
         parts.append(f"Featured game: {game_context.headline}")
     elif game_context.away_team and game_context.home_team:
         parts.append(f"Featured game: {game_context.away_team} vs {game_context.home_team}")
@@ -69,7 +75,7 @@ def _build_game_context(game_context) -> tuple[str, str]:
     if game_context.network:
         parts.append(f"Network: {game_context.network}")
 
-    return ". ".join(parts), game_context.bet_example or ""
+    return ". ".join(parts), game_context.bet_example or "", dict(game_context.bet_example_data or {})
 
 
 def _inject_alt_shortcodes(outline: list[dict], alt_offer_count: int) -> list[dict]:
@@ -145,7 +151,7 @@ async def _stream_outline(request: OutlineRequest, db: AsyncSession) -> AsyncGen
     competitor_context = ""
     if request.competitor_urls:
         competitor_context = await scrape_competitors(request.competitor_urls, max_chars_per_url=1500)
-    game_context_str, bet_example_str = _build_game_context(request.game_context)
+    game_context_str, bet_example_str, _ = _build_game_context(request.game_context)
 
     try:
         yield f"data: {json.dumps({'type': 'status', 'message': 'Generating structured outline...'})}\n\n"
@@ -181,7 +187,7 @@ async def _stream_draft(request: DraftRequest, db: AsyncSession) -> AsyncGenerat
             alt_offers.append(alt)
 
     outline = _resolve_outline_from_request(request)
-    game_context_str, bet_example_str = _build_game_context(request.game_context)
+    game_context_str, bet_example_str, bet_example_data = _build_game_context(request.game_context)
 
     try:
         async for update in generate_draft_from_outline_streaming(
@@ -194,6 +200,7 @@ async def _stream_draft(request: DraftRequest, db: AsyncSession) -> AsyncGenerat
             offer_property=request.offer_property or "action_network",
             event_context=game_context_str,
             bet_example=bet_example_str,
+            bet_example_data=bet_example_data,
             output_format="markdown",
         ):
             yield f"data: {json.dumps(update)}\n\n"
@@ -236,7 +243,7 @@ async def generate_outline_sync(
     competitor_context = ""
     if request.competitor_urls:
         competitor_context = await scrape_competitors(request.competitor_urls, max_chars_per_url=1500)
-    game_context_str, bet_example_str = _build_game_context(request.game_context)
+    game_context_str, bet_example_str, _ = _build_game_context(request.game_context)
 
     outline_structured = await generate_structured_outline(
         keyword=request.keyword,
@@ -290,7 +297,7 @@ async def generate_draft_sync(
             alt_offers.append(alt)
 
     outline = _resolve_outline_from_request(request)
-    game_context_str, bet_example_str = _build_game_context(request.game_context)
+    game_context_str, bet_example_str, bet_example_data = _build_game_context(request.game_context)
 
     draft = await generate_draft_from_outline(
         outline=outline,
@@ -302,6 +309,7 @@ async def generate_draft_sync(
         offer_property=request.offer_property or "action_network",
         event_context=game_context_str,
         bet_example=bet_example_str,
+        bet_example_data=bet_example_data,
         output_format="html",
     )
 

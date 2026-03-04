@@ -14,6 +14,7 @@ from app.services.llm import generate_completion, generate_completion_structured
 from app.services.rag import query_articles
 from app.services.internal_links import (
     format_links_markdown,
+    get_operator_evergreen_link,
     get_required_links_for_property,
     suggest_links_for_section,
 )
@@ -22,11 +23,17 @@ from app.services.bam_offers import render_bam_offer_block
 from app.services.content_guidelines import get_style_instructions, get_temperature_by_section
 from app.services.style import get_rag_usage_guidance
 from app.services.switchboard_links import inject_switchboard_links, build_switchboard_url
-from app.services.operator_profile import is_prediction_market_offer
+from app.services.operator_profile import (
+    CONTENT_MODE_DFS,
+    CONTENT_MODE_PREDICTION_MARKET,
+    CONTENT_MODE_SPORTSBOOK,
+    get_content_mode_offer,
+)
 from app.services.offer_parsing import (
     extract_bonus_amount,
     extract_bonus_expiration_days,
     extract_minimum_odds,
+    extract_offer_amount_details,
     extract_states_from_terms,
     extract_wagering_requirement,
     parse_states,
@@ -104,21 +111,24 @@ def _is_claim_heading(title_lower: str, is_signup: bool) -> bool:
     ))
 
 
-def _is_prediction_market_mode(
+def _get_content_mode(
     *,
     offer: dict[str, Any] | None = None,
     offers: list[dict[str, Any]] | None = None,
     keyword: str = "",
     title: str = "",
-) -> bool:
-    """Return True when article context is Kalshi/Polymarket."""
-    if offer and is_prediction_market_offer(offer, keyword=keyword, title=title):
-        return True
+) -> str:
+    """Return content mode for the article context."""
+    if offer:
+        mode = get_content_mode_offer(offer, keyword=keyword, title=title)
+        if mode != CONTENT_MODE_SPORTSBOOK:
+            return mode
     for candidate in offers or []:
-        if is_prediction_market_offer(candidate, keyword=keyword, title=title):
-            return True
+        mode = get_content_mode_offer(candidate, keyword=keyword, title=title)
+        if mode != CONTENT_MODE_SPORTSBOOK:
+            return mode
     # Fallback for cases where offer payload is unavailable.
-    return is_prediction_market_offer(None, keyword=keyword, title=title)
+    return get_content_mode_offer(None, keyword=keyword, title=title)
 
 
 def _prediction_market_safe_text(text: str) -> str:
@@ -137,11 +147,66 @@ def _prediction_market_safe_text(text: str) -> str:
     return result
 
 
+def _dfs_safe_text(text: str) -> str:
+    """Replace sportsbook-heavy wording with DFS language."""
+    if not text:
+        return text
+    replacements = [
+        (r"\bbetting\b", "daily fantasy"),
+        (r"\bbets\b", "entries"),
+        (r"\bbet\b", "entry"),
+        (r"\bwager(?:ing)?\b", "entry"),
+        (r"\bbonus bets?\b", "bonus entries"),
+        (r"\bsportsbooks?\b", "DFS apps"),
+        (r"\bplace a bet\b", "enter a contest"),
+        (r"\bfirst bet\b", "first entry"),
+        (r"\bbet responsibly\b", "play responsibly"),
+    ]
+    result = text
+    for pattern, repl in replacements:
+        result = re.sub(pattern, repl, result, flags=re.IGNORECASE)
+    return result
+
+
+def _apply_content_mode_language_guardrails(html: str, content_mode: str) -> str:
+    """Deterministically clean up sportsbook wording for non-sportsbook operators."""
+    if not html:
+        return html
+    if content_mode == CONTENT_MODE_SPORTSBOOK:
+        return html
+
+    replacer = (
+        _prediction_market_safe_text
+        if content_mode == CONTENT_MODE_PREDICTION_MARKET
+        else _dfs_safe_text
+        if content_mode == CONTENT_MODE_DFS
+        else None
+    )
+    if replacer is None:
+        return html
+
+    # Only rewrite visible text nodes so href/src attributes and URLs remain intact.
+    tokens = re.findall(r"<[^>]+>|[^<]+", html, flags=re.DOTALL)
+    out: list[str] = []
+    for token in tokens:
+        out.append(token if token.startswith("<") else replacer(token))
+    return "".join(out)
+
+
 def _adapt_disclaimer_for_prediction_market(disclaimer: str) -> str:
     """Tone down sportsbook wording for prediction-market pages."""
     if not disclaimer:
         return disclaimer
     out = re.sub(r"please bet responsibly\.?", "Please participate responsibly.", disclaimer, flags=re.IGNORECASE)
+    return out
+
+
+def _adapt_disclaimer_for_dfs(disclaimer: str) -> str:
+    """Tone down sportsbook wording for DFS pages."""
+    if not disclaimer:
+        return disclaimer
+    out = re.sub(r"gambling problem\?", "Need help?", disclaimer, flags=re.IGNORECASE)
+    out = re.sub(r"please bet responsibly\.?", "Please play responsibly.", out, flags=re.IGNORECASE)
     return out
 
 
@@ -151,11 +216,13 @@ def _inject_switchboard_links_for_offers(
     state: str,
     max_links: int = 12,
 ) -> str:
-    """Inject switchboard links for each offer (brand + bonus code)."""
+    """Inject switchboard links for offers with a GLOBAL cap across the article."""
     if not html_output or not offers:
         return html_output
 
     for offer in offers:
+        if _count_switchboard_links(html_output) >= max_links:
+            break
         brand = offer.get("brand", "")
         bonus_code = offer.get("bonus_code", "")
         switchboard_url = offer.get("switchboard_link", "")
@@ -167,12 +234,15 @@ def _inject_switchboard_links_for_offers(
             )
         if not (brand and switchboard_url):
             continue
+        remaining = max(0, max_links - _count_switchboard_links(html_output))
+        if remaining <= 0:
+            break
         html_output = inject_switchboard_links(
             html_output,
             brand=brand,
             bonus_code=bonus_code,
             switchboard_url=switchboard_url,
-            max_links=max_links,
+            max_links=remaining,
         )
     return html_output
 
@@ -182,13 +252,16 @@ def _build_signup_list(
     has_code: bool,
     code_strong: str,
     prediction_market: bool = False,
+    dfs_mode: bool = False,
 ) -> str:
     """Build a deterministic 5-step signup list as HTML."""
-    brand_label = brand or ("the operator" if prediction_market else "the sportsbook")
+    brand_label = brand or ("the operator" if prediction_market else "the DFS app" if dfs_mode else "the sportsbook")
     signup_guide_ref = f"{brand_label} sign-up guide"
     mechanics_ref = (
         "how market contracts settle"
         if prediction_market
+        else "how pick'em entries work"
+        if dfs_mode
         else "how bonus bets work"
     )
 
@@ -206,6 +279,8 @@ def _build_signup_list(
         (
             f"Place a qualifying market position and review {mechanics_ref} for settlement details."
             if prediction_market
+            else f"Place a qualifying fantasy entry and review {mechanics_ref} for contest rules."
+            if dfs_mode
             else f"Place a qualifying bet and review {mechanics_ref} for payout details."
         ),
     ]
@@ -230,6 +305,85 @@ def _strip_placeholder_hash_links(html: str) -> str:
     )
 
 
+def _count_switchboard_links(html: str) -> int:
+    """Count injected switchboard tracking links in HTML."""
+    if not html:
+        return 0
+    return len(re.findall(r'data-id\s*=\s*(["\'])switchboard_tracking\1', html, flags=re.IGNORECASE))
+
+
+def _link_first_keyword_internal(
+    html: str,
+    keyword: str,
+    url: str,
+) -> str:
+    """Link the first exact keyword mention in body text to an internal evergreen URL.
+
+    Skips headings and existing anchors so it does not break CTA/link injection logic.
+    """
+    if not html or not keyword or not url:
+        return html
+
+    tokens = re.findall(r"<[^>]+>|[^<]+", html, flags=re.DOTALL)
+    pattern = re.compile(re.escape(keyword), flags=re.IGNORECASE)
+
+    inside_anchor = 0
+    inside_heading = 0
+    inserted = False
+    out: list[str] = []
+
+    for token in tokens:
+        if token.startswith("<"):
+            tag = token.strip().lower()
+            if re.match(r"<a\b", tag):
+                inside_anchor += 1
+            elif re.match(r"</a\b", tag):
+                inside_anchor = max(0, inside_anchor - 1)
+            elif re.match(r"<h[1-6]\b", tag):
+                inside_heading += 1
+            elif re.match(r"</h[1-6]\b", tag):
+                inside_heading = max(0, inside_heading - 1)
+            out.append(token)
+            continue
+
+        if not inserted and not inside_anchor and not inside_heading and pattern.search(token):
+            token = pattern.sub(lambda m: f'<a href="{url}">{m.group(0)}</a>', token, count=1)
+            inserted = True
+        out.append(token)
+
+    return "".join(out)
+
+
+def _dedupe_non_switchboard_links_by_url(html: str) -> str:
+    """Unwrap duplicate non-switchboard links after the first occurrence."""
+    if not html:
+        return html
+
+    seen_urls: set[str] = set()
+    anchor_pattern = re.compile(
+        r'<a\b([^>]*)href\s*=\s*(["\'])(https?://[^"\']+)\2([^>]*)>(.*?)</a>',
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+    def _replace(match: re.Match[str]) -> str:
+        before_attrs = match.group(1) or ""
+        url = match.group(3) or ""
+        after_attrs = match.group(4) or ""
+        inner = match.group(5) or ""
+        attrs_text = f"{before_attrs} {after_attrs}".lower()
+        if "switchboard_tracking" in attrs_text:
+            return match.group(0)
+        url_key = url.strip().lower()
+        if not url_key:
+            return match.group(0)
+        if url_key in seen_urls:
+            return inner
+        seen_urls.add(url_key)
+        return match.group(0)
+
+    return anchor_pattern.sub(_replace, html)
+
+
 def _offer_expiration_prompt_line(expiration_days: int | None) -> str:
     """Build a safe expiration prompt line for source-of-truth sections."""
     if expiration_days is None:
@@ -241,6 +395,7 @@ def _format_offer_for_prompt(
     offer: dict[str, Any],
     state: str,
     prediction_market: bool = False,
+    dfs_mode: bool = False,
 ) -> str:
     """Format one offer as a compact source-of-truth row for prompts."""
     brand = str(offer.get("brand") or "[not provided]")
@@ -250,23 +405,51 @@ def _format_offer_for_prompt(
     expiration_days = offer.get("bonus_expiration_days")
     if expiration_days is None:
         expiration_days = extract_bonus_expiration_days(terms)
-    bonus_amount = offer.get("bonus_amount") or extract_bonus_amount(offer_text)
+    amount_details = extract_offer_amount_details(offer_text)
+    bonus_amount = (
+        offer.get("bonus_amount")
+        or offer.get("reward_amount")
+        or amount_details.get("reward_amount")
+        or extract_bonus_amount(offer_text)
+    )
+    reward_label = str(offer.get("reward_label") or amount_details.get("reward_label") or "").strip()
+    qualifying_action = str(offer.get("qualifying_action") or amount_details.get("qualifying_action") or "").strip()
+    qualifying_amount = str(offer.get("qualifying_amount") or amount_details.get("qualifying_amount") or "").strip()
     states_text = _offer_states_text(offer, state)
     expiration_text = (
         f"{expiration_days} days"
         if expiration_days is not None
         else "Not provided (use \"see full terms\")"
     )
+    bonus_amount_display = str(bonus_amount or "[not provided]")
+    if reward_label and bonus_amount and reward_label.lower() not in bonus_amount_display.lower():
+        bonus_amount_display = f"{bonus_amount_display} ({reward_label})"
+    qualifying_action_line = (
+        f"{qualifying_action.title()} {qualifying_amount} to unlock {bonus_amount or '[listed reward]'}"
+        + (f" in {reward_label}" if reward_label else "")
+        if qualifying_action and qualifying_amount
+        else "[see terms - do not guess]"
+    )
 
     if prediction_market:
         return (
             f"- Brand: {brand}\n"
             f"  Offer: {offer_text}\n"
-            f"  Bonus Amount: {bonus_amount or '[not provided]'}\n"
+            f"  Bonus Amount: {bonus_amount_display}\n"
             f"  Bonus Code: {code}\n"
             f"  Available in: {states_text}\n"
             f"  Credit Expiration: {expiration_text}\n"
-            "  Qualifying Action: [see terms - do not guess]"
+            f"  Qualifying Action: {qualifying_action_line}"
+        )
+    if dfs_mode:
+        return (
+            f"- Brand: {brand}\n"
+            f"  Offer: {offer_text}\n"
+            f"  Bonus Amount: {bonus_amount_display}\n"
+            f"  Bonus Code: {code}\n"
+            f"  Available in: {states_text}\n"
+            f"  Bonus Entry Expiration: {expiration_text}\n"
+            f"  Contest/Entry Requirements: {qualifying_action_line if qualifying_action_line != '[see terms - do not guess]' else '[see terms - do not guess]'}"
         )
 
     min_odds = offer.get("minimum_odds") or extract_minimum_odds(terms)
@@ -274,10 +457,11 @@ def _format_offer_for_prompt(
     return (
         f"- Brand: {brand}\n"
         f"  Offer: {offer_text}\n"
-        f"  Bonus Amount: {bonus_amount or '[not provided]'}\n"
+        f"  Bonus Amount: {bonus_amount_display}\n"
         f"  Bonus Code: {code}\n"
         f"  Available in: {states_text}\n"
         f"  Expiration: {expiration_text}\n"
+        f"  Qualifying Action: {qualifying_action_line}\n"
         f"  Minimum Odds: {min_odds if min_odds else '[see terms - do not guess]'}\n"
         f"  Wagering: {wagering if wagering else '[see terms - do not guess]'}"
     )
@@ -286,13 +470,19 @@ def _build_multi_offer_prompt_context(
     offers: list[dict[str, Any]],
     state: str,
     prediction_market: bool = False,
+    dfs_mode: bool = False,
 ) -> str:
     """Build source-of-truth prompt context for one or more offers."""
     normalized = [o for o in offers if o]
     if not normalized:
         return ""
     rows = [
-        _format_offer_for_prompt(offer, state, prediction_market=prediction_market)
+        _format_offer_for_prompt(
+            offer,
+            state,
+            prediction_market=prediction_market,
+            dfs_mode=dfs_mode,
+        )
         for offer in normalized[:3]
     ]
     return "\n".join(rows)
@@ -324,6 +514,7 @@ def _render_daily_promos_placeholder(
     offers: list[dict[str, Any]],
     state: str,
     prediction_market: bool = False,
+    dfs_mode: bool = False,
 ) -> str:
     """Render a deterministic daily-promos section for manual daily updates."""
     lines = [
@@ -332,7 +523,7 @@ def _render_daily_promos_placeholder(
 
     items: list[str] = []
     for offer in offers[:4]:
-        brand = offer.get("brand") or ("Operator" if prediction_market else "Sportsbook")
+        brand = offer.get("brand") or ("Operator" if prediction_market else "DFS App" if dfs_mode else "Sportsbook")
         offer_text = offer.get("offer_text") or offer.get("affiliate_offer") or "Promo details"
         bonus_code = offer.get("bonus_code") or ""
         states_text = _offer_states_text(offer, state)
@@ -347,6 +538,12 @@ def _render_daily_promos_placeholder(
                 "<li><strong>[Operator 1]:</strong> [Promo details]. Code: [CODE]. States Available: [state list].</li>",
                 "<li><strong>[Operator 2]:</strong> [Promo details]. Code: [CODE]. States Available: [state list].</li>",
                 "<li><strong>[Operator 3]:</strong> [Promo details]. Code: [CODE]. States Available: [state list].</li>",
+            ]
+        elif dfs_mode:
+            items = [
+                "<li><strong>[DFS App 1]:</strong> [Promo details]. Code: [CODE]. States Available: [state list].</li>",
+                "<li><strong>[DFS App 2]:</strong> [Promo details]. Code: [CODE]. States Available: [state list].</li>",
+                "<li><strong>[DFS App 3]:</strong> [Promo details]. Code: [CODE]. States Available: [state list].</li>",
             ]
         else:
             items = [
@@ -367,6 +564,7 @@ def _render_terms_section_html(
     min_odds: str,
     wagering: str,
     prediction_market: bool = False,
+    dfs_mode: bool = False,
 ) -> str:
     """Render a deterministic terms section to avoid legal hallucinations."""
     if terms:
@@ -380,16 +578,20 @@ def _render_terms_section_html(
         points.append(
             f"Promotional credits expire in {expiration_days} days."
             if prediction_market
+            else f"Bonus entries expire in {expiration_days} days."
+            if dfs_mode
             else f"Bonus bets expire in {expiration_days} days."
         )
-    if not prediction_market:
+    if not prediction_market and not dfs_mode:
         if min_odds:
             points.append(f"Minimum odds requirement: {min_odds}.")
         if wagering:
             points.append(f"Wagering requirement: {wagering}.")
     points.append(
         "See full terms at the operator site for complete eligibility and restrictions."
-        if not prediction_market
+        if not prediction_market and not dfs_mode
+        else "See full terms at the operator site for complete eligibility and contest rules."
+        if dfs_mode
         else "See full terms at the operator site for complete eligibility, market rules, and settlement details."
     )
     return f"<p>{' '.join(points)}</p>"
@@ -404,6 +606,7 @@ async def _generate_signup_steps_structured(
     style_guide: str,
     links_md: str,
     prediction_market: bool = False,
+    dfs_mode: bool = False,
 ) -> list[str] | None:
     """Generate a structured 5-step sign-up list."""
     schema = {
@@ -429,6 +632,8 @@ async def _generate_signup_steps_structured(
     mechanics_line = (
         "Step 5 must describe the first qualifying market position and settlement mechanics."
         if prediction_market
+        else "Step 5 must describe the first qualifying fantasy entry and contest mechanics."
+        if dfs_mode
         else "Step 5 must describe the first qualifying bet and bonus payout mechanics."
     )
 
@@ -449,7 +654,7 @@ Available internal links (use 1-2):
 {links_md}
 
 Do NOT include responsible gaming disclaimers here.
-{'Use prediction-market language (trade, market, position, contract). Avoid sportsbook/betting/wager terms.' if prediction_market else ''}
+{'Use prediction-market language (trade, market, position, contract). Avoid sportsbook/betting/wager terms.' if prediction_market else 'Use DFS language (entry, contest, picks, lineup) and avoid sportsbook/betting/wager terms.' if dfs_mode else ''}
 
 STYLE GUIDE:
 {style_guide}
@@ -461,6 +666,8 @@ STYLE GUIDE:
             system_prompt=(
                 "You are a concise prediction-market editor. Output only valid JSON."
                 if prediction_market
+                else "You are a concise DFS editor. Output only valid JSON."
+                if dfs_mode
                 else "You are a concise sports betting editor. Output only valid JSON."
             ),
             schema=schema,
@@ -551,6 +758,95 @@ def _ensure_intro_state_specificity(html: str, states_text: str) -> str:
     return f"<p>{html.strip()}{addition}</p>"
 
 
+def _rewrite_html_text_nodes(html: str, transform: callable) -> str:
+    """Apply a text transform to visible text nodes only, preserving tags/attributes."""
+    if not html:
+        return html
+    tokens = re.findall(r"<[^>]+>|[^<]+", html, flags=re.DOTALL)
+    out: list[str] = []
+    for token in tokens:
+        out.append(token if token.startswith("<") else transform(token))
+    return "".join(out)
+
+
+def _soften_repetitive_intro_opener(html: str) -> str:
+    """Reduce repeated 'Put the X to work' intros with a neutral rewrite."""
+    if not html:
+        return html
+    paragraphs = re.findall(r"<p>.*?</p>", html, flags=re.IGNORECASE | re.DOTALL)
+    if not paragraphs:
+        return html
+    first = paragraphs[0]
+    inner = re.sub(r"^<p>|</p>$", "", first.strip(), flags=re.IGNORECASE | re.DOTALL)
+    if not re.match(r"\s*put the\b", inner, flags=re.IGNORECASE):
+        return html
+    updated = re.sub(r"^\s*put the\s+", "The ", inner, count=1, flags=re.IGNORECASE)
+    updated = re.sub(r"\s+to work\b", " is live", updated, count=1, flags=re.IGNORECASE)
+    updated_para = f"<p>{updated}</p>"
+    return html.replace(first, updated_para, 1)
+
+
+def _ensure_keyword_in_first_paragraph(html: str, keyword: str) -> str:
+    """Ensure the exact keyword appears in the first paragraph (sentence 1 or 2 coverage)."""
+    if not html or not keyword:
+        return html
+    match = re.search(r"<p>(.*?)</p>", html, flags=re.IGNORECASE | re.DOTALL)
+    if not match:
+        return html
+    first_para = match.group(0)
+    first_inner = match.group(1)
+    plain = re.sub(r"<[^>]+>", " ", first_inner)
+    if re.search(re.escape(keyword), plain, flags=re.IGNORECASE):
+        return html
+    prefix = f"The {keyword} is live today. "
+    updated_para = f"<p>{prefix}{first_inner.strip()}</p>"
+    return html.replace(first_para, updated_para, 1)
+
+
+def _normalize_matchup_vs_notation(html: str) -> str:
+    """Replace visible-text matchup '@' notation with 'vs.'."""
+    if not html:
+        return html
+    return _rewrite_html_text_nodes(
+        html,
+        lambda text: re.sub(r"\s@\s", " vs. ", text),
+    )
+
+
+def _trim_repeated_phrase_in_html(html: str, phrase: str, max_occurrences: int, replacement: str) -> str:
+    """Replace repeated phrase occurrences in visible text after a max count."""
+    if not html or not phrase or max_occurrences < 0:
+        return html
+
+    count = 0
+    pattern = re.compile(re.escape(phrase), flags=re.IGNORECASE)
+
+    def _transform(text: str) -> str:
+        nonlocal count
+
+        def _repl(match: re.Match[str]) -> str:
+            nonlocal count
+            count += 1
+            if count <= max_occurrences:
+                return match.group(0)
+            return replacement
+
+        return pattern.sub(_repl, text)
+
+    return _rewrite_html_text_nodes(html, _transform)
+
+
+def _apply_generation_quality_postprocess(html: str, keyword: str) -> str:
+    """Final article cleanup for intro consistency, keyword placement, and repetition."""
+    if not html:
+        return html
+    html = _soften_repetitive_intro_opener(html)
+    html = _ensure_keyword_in_first_paragraph(html, keyword)
+    html = _normalize_matchup_vs_notation(html)
+    html = _trim_repeated_phrase_in_html(html, "see full terms", max_occurrences=2, replacement="see terms")
+    return html
+
+
 def _ensure_single_disclaimer(html: str, disclaimer: str) -> str:
     """Ensure the disclaimer appears only once at the end of the article."""
     if not disclaimer:
@@ -564,6 +860,7 @@ def _append_required_property_links(
     html: str,
     property_key: str,
     prediction_market: bool = False,
+    dfs_mode: bool = False,
 ) -> str:
     """Ensure property-mandated evergreen links are present in every generation."""
     if not html:
@@ -582,6 +879,8 @@ def _append_required_property_links(
         anchor = (link.recommended_anchors[0] if link.recommended_anchors else link.title).strip()
         if prediction_market:
             anchor = _prediction_market_safe_text(anchor)
+        elif dfs_mode:
+            anchor = _dfs_safe_text(anchor)
         if not anchor:
             continue
         pair = (anchor, link.url)
@@ -598,8 +897,105 @@ def _append_required_property_links(
         return html
 
     links_html = ", ".join(f'<a href="{url}">{anchor}</a>' for anchor, url in additions)
-    resources_label = "More resources" if prediction_market else "More betting resources"
+    if prediction_market:
+        resources_label = "More resources"
+    elif dfs_mode:
+        resources_label = "More DFS resources"
+    else:
+        resources_label = "More betting resources"
     return html.rstrip() + f"\n<p>{resources_label}: {links_html}.</p>"
+
+
+_SPORTSBOOK_DISPLAY_NAMES = {
+    "draftkings": "DraftKings",
+    "fanduel": "FanDuel",
+    "betmgm": "BetMGM",
+    "caesars": "Caesars",
+    "bet365": "bet365",
+    "fanatics": "Fanatics Sportsbook",
+    "hardrock": "Hard Rock Bet",
+    "hard_rock": "Hard Rock Bet",
+    "espnbet": "ESPN BET",
+}
+
+
+def _sportsbook_display_name(book: str) -> str:
+    key = re.sub(r"[^a-z0-9]+", "", str(book or "").lower())
+    if key in _SPORTSBOOK_DISPLAY_NAMES:
+        return _SPORTSBOOK_DISPLAY_NAMES[key]
+    raw = str(book or "").strip()
+    return raw.title() if raw else "the selected sportsbook"
+
+
+def _extract_matchup_from_event_context_text(event_context: str) -> str:
+    if not event_context:
+        return ""
+    match = re.search(r"Featured game:\s*([^\.]+)", event_context, flags=re.IGNORECASE)
+    if not match:
+        return ""
+    matchup = match.group(1).strip()
+    return re.sub(r"\s@\s", " vs. ", matchup)
+
+
+def _render_bet_example_section_deterministic(
+    *,
+    offer: dict[str, Any],
+    bet_example_data: dict[str, Any] | None,
+    event_context: str = "",
+) -> str | None:
+    """Render a sportsbook worked-example section from structured UI selections."""
+    data = dict(bet_example_data or {})
+    if not data:
+        return None
+
+    try:
+        bet_amount = float(data.get("bet_amount"))
+        odds = int(data.get("odds"))
+    except (TypeError, ValueError):
+        return None
+
+    selection = str(data.get("selection") or "").strip()
+    if not selection:
+        return None
+
+    profit_raw = data.get("potential_profit")
+    try:
+        profit = float(profit_raw)
+    except (TypeError, ValueError):
+        if odds > 0:
+            profit = (bet_amount * odds) / 100.0
+        else:
+            profit = (bet_amount * 100.0) / abs(odds) if odds != 0 else 0.0
+    total_return = bet_amount + profit
+
+    book = str(data.get("sportsbook_used") or data.get("sportsbook_requested") or "").strip()
+    book_label = _sportsbook_display_name(book)
+    event_label = _extract_matchup_from_event_context_text(event_context) or str(data.get("event_context") or "").strip()
+    event_clause = f" for {event_label}" if event_label else ""
+    odds_display = f"{odds:+d}"
+
+    bonus_code = str(offer.get("bonus_code") or "").strip()
+    offer_text = str(offer.get("offer_text") or offer.get("affiliate_offer") or "").strip()
+    brand = str(offer.get("brand") or "").strip()
+
+    if bonus_code:
+        code_clause = f"with code <strong>{bonus_code}</strong>"
+    else:
+        code_clause = "with no promo code required"
+
+    offer_clause = (
+        f"{brand} is offering {offer_text}"
+        if brand and offer_text
+        else offer_text
+        if offer_text
+        else "follow the exact offer terms for the promo details"
+    )
+
+    return (
+        f"<p>Here is a worked example using {book_label}. If I place a ${bet_amount:.0f} bet on {selection} at {odds_display}{event_clause}, "
+        f"I profit ${profit:.2f} if it wins and get back ${total_return:.2f} total (including stake).</p>"
+        f"<p>If the bet loses, I am down ${bet_amount:.0f} on the wager. Then {code_clause}, {offer_clause}. Keep the bonus mechanics tied to the exact offer terms listed in this article.</p>"
+    )
 
 
 # ============================================================================
@@ -616,6 +1012,7 @@ async def generate_draft_from_outline(
     offer_property: str = "action_network",
     event_context: str = "",
     bet_example: str = "",
+    bet_example_data: dict[str, Any] | None = None,
     output_format: str = "html",
 ) -> str:
     """Generate full article draft from structured outline (Execute stage).
@@ -646,12 +1043,14 @@ async def generate_draft_from_outline(
 
     # Multi-offer support
     all_offers = [offer] + (alt_offers or []) if offer else (alt_offers or [])
-    is_prediction_market = _is_prediction_market_mode(
+    content_mode = _get_content_mode(
         offer=offer,
         offers=all_offers,
         keyword=keyword,
         title=title,
     )
+    is_prediction_market = content_mode == CONTENT_MODE_PREDICTION_MARKET
+    is_dfs_mode = content_mode == CONTENT_MODE_DFS
 
     def select_offer_for_shortcode(level: str) -> dict[str, Any] | None:
         if not all_offers:
@@ -699,6 +1098,7 @@ async def generate_draft_from_outline(
                 talking_points=talking_points,
                 event_context=event_context,
                 prediction_market=is_prediction_market,
+                dfs_mode=is_dfs_mode,
             )
             parts.append(content)
             previous_content += content
@@ -734,7 +1134,9 @@ async def generate_draft_from_outline(
                 target_keyword_total=target_keyword_total,
                 event_context=event_context,
                 bet_example=bet_example,
+                bet_example_data=bet_example_data,
                 prediction_market=is_prediction_market,
+                dfs_mode=is_dfs_mode,
             )
             tag = "h2" if level == "h2" else "h3"
             parts.append(f"<{tag}>{section_title}</{tag}>")
@@ -749,12 +1151,19 @@ async def generate_draft_from_outline(
         html_output,
         property_key=offer_property,
         prediction_market=is_prediction_market,
+        dfs_mode=is_dfs_mode,
     )
+    html_output = _apply_generation_quality_postprocess(html_output, keyword)
+    primary_evergreen_link = get_operator_evergreen_link(property_key=offer_property, brand=brand)
+    if primary_evergreen_link and primary_evergreen_link.url:
+        html_output = _link_first_keyword_internal(html_output, keyword, primary_evergreen_link.url)
 
     # Ensure single disclaimer at the end
     disclaimer = get_disclaimer_for_state(state)
     if is_prediction_market:
         disclaimer = _adapt_disclaimer_for_prediction_market(disclaimer)
+    elif is_dfs_mode:
+        disclaimer = _adapt_disclaimer_for_dfs(disclaimer)
     html_output = _ensure_single_disclaimer(html_output, disclaimer)
 
     html_output = _inject_switchboard_links_for_offers(
@@ -764,6 +1173,8 @@ async def generate_draft_from_outline(
         max_links=2,
     )
     html_output = _strip_placeholder_hash_links(html_output)
+    html_output = _dedupe_non_switchboard_links_by_url(html_output)
+    html_output = _apply_content_mode_language_guardrails(html_output, content_mode)
 
     if output_format == "markdown":
         # Convert back to markdown (basic)
@@ -781,6 +1192,7 @@ async def _generate_intro_section(
     talking_points: list[str],
     event_context: str = "",
     prediction_market: bool = False,
+    dfs_mode: bool = False,
 ) -> str:
     """Generate the intro/lede section.
 
@@ -808,6 +1220,7 @@ async def _generate_intro_section(
         prompt_offers,
         state,
         prediction_market=prediction_market,
+        dfs_mode=dfs_mode,
     )
     states_text = _offer_states_text(offer, state)
 
@@ -824,11 +1237,21 @@ TONE: Direct, confident, conversational.
 
 Output clean HTML only - use <p>, <a>, <strong> tags. No markdown. No exclamation points."""
         if prediction_market
+        else """You are a PUNCHY DFS writer for Action Network.
+Write a 2-paragraph intro (lede) that sits between the H1 and H2.
+
+TONE: Direct, confident, conversational.
+- Use DFS language (entries, contests, picks, lineup, fantasy app).
+- Do NOT use sportsbook/betting/wager language.
+
+Output clean HTML only - use <p>, <a>, <strong> tags. No markdown. No exclamation points."""
+        if dfs_mode
         else """You are a PUNCHY sports betting writer for Action Network.
 Write a 2-paragraph intro (lede) that sits between the H1 and H2.
 
 TONE: Direct, confident, conversational. Like you're telling a friend about a deal.
-- "Put the bet365 promo code to work for Seahawks vs Patriots tonight..."
+- "The bet365 promo code is live for Seahawks vs. Patriots tonight..."
+- "Use the bet365 promo code for Seahawks vs. Patriots tonight..."
 - NOT "If you are looking for a valuable offer, consider bet365..."
 
 Output clean HTML only - use <p>, <a>, <strong> tags. No markdown. No exclamation points."""
@@ -840,7 +1263,7 @@ Output clean HTML only - use <p>, <a>, <strong> tags. No markdown. No exclamatio
         game_hook = f"GAME HOOK (use this to open):\n{event_context}\n\n"
 
     requirements = [
-        f'If there is a game hook, START with it: "Put the {brand} Promo Code to work for [Game] tonight at [time] on [network], because..."',
+        "If there is a game hook, open sentence one with the matchup/time/network context and the offer value (do not reuse the same stock opener).",
         "If no game hook, start with a direct offer statement; avoid generic openers like \"If you are looking for a valuable offer...\"",
         "Use explicit eligible states from source data. Do not say 'nationwide states'.",
         "When listing state eligibility, use this exact label format: 'States Available: AZ, CO, ...'.",
@@ -849,6 +1272,11 @@ Output clean HTML only - use <p>, <a>, <strong> tags. No markdown. No exclamatio
     if prediction_market:
         requirements.append(
             "Use prediction-market terms only (market, position, contract, trade). "
+            "Do not use sportsbook, betting, wager, or bonus bets."
+        )
+    elif dfs_mode:
+        requirements.append(
+            "Use DFS terms only (entries, contests, picks, lineup, fantasy app). "
             "Do not use sportsbook, betting, wager, or bonus bets."
         )
     if has_multiple_offers:
@@ -871,19 +1299,23 @@ Output clean HTML only - use <p>, <a>, <strong> tags. No markdown. No exclamatio
 
     if has_code:
         example_output = (
-            f"<p>Put the {link_anchor} to work for [Game] tonight at [time] on [network], because {brand} is offering {offer_text} ahead of {date_str}.</p>"
+            f"<p>The {link_anchor} is live for [Game] tonight at [time] on [network], and {brand} is offering {offer_text} ahead of {date_str}.</p>"
             + (
                 f"<p>Sign up, enter the promo code {bonus_code}, complete the qualifying action in the offer, and unlock the listed promotional credit.</p>"
                 if prediction_market
+                else f"<p>Sign up, enter the promo code {bonus_code}, make your first qualifying DFS entry, and unlock the listed bonus entries or promo credits from the app.</p>"
+                if dfs_mode
                 else f"<p>Sign up, enter the promo code {bonus_code}, place your $5 bet, and you will get $200 in bonus bets whether your pick wins or loses.</p>"
             )
         )
     else:
         example_output = (
-            f"<p>Put the {brand} offer to work for [Game] tonight at [time] on [network], because {brand} is offering {offer_text} ahead of {date_str}.</p>"
+            f"<p>The {brand} offer is live for [Game] tonight at [time] on [network], and {brand} is offering {offer_text} ahead of {date_str}.</p>"
             + (
                 "<p>No promo code is required; complete the qualifying action described in the offer to unlock the listed promotional credit.</p>"
                 if prediction_market
+                else "<p>No promo code is required; complete the qualifying DFS entry described in the offer to unlock the listed bonus entries or promo credits.</p>"
+                if dfs_mode
                 else "<p>No promo code is required to claim it; just sign up and place your first bet.</p>"
             )
         )
@@ -948,7 +1380,9 @@ async def _generate_body_section(
     target_keyword_total: int = 9,
     event_context: str = "",
     bet_example: str = "",
+    bet_example_data: dict[str, Any] | None = None,
     prediction_market: bool = False,
+    dfs_mode: bool = False,
 ) -> str:
     """Generate a body section (H2 or H3)."""
     prompt_offers = [o for o in (all_offers or []) if o] or ([offer] if offer else [])
@@ -967,6 +1401,7 @@ async def _generate_body_section(
         prompt_offers,
         state,
         prediction_market=prediction_market,
+        dfs_mode=dfs_mode,
     )
     primary_states_text = _offer_states_text(primary_offer, state)
 
@@ -990,12 +1425,14 @@ async def _generate_body_section(
     )
 
     if has_multiple_offers:
+        entity_label = "operators" if prediction_market else "DFS apps" if dfs_mode else "sportsbooks"
+        entity_label_singular = "operator" if prediction_market else "DFS app" if dfs_mode else "sportsbook"
         code_requirement = (
             "When mentioning promo codes, use the correct brand/code pairing for each offer. "
-            f"Do not mix codes across {'operators' if prediction_market else 'sportsbooks'}."
+            f"Do not mix codes across {entity_label}."
         )
         code_relevance = (
-            f"If you reference multiple offers, keep each bonus code tied to the correct {'operator' if prediction_market else 'sportsbook'}."
+            f"If you reference multiple offers, keep each bonus code tied to the correct {entity_label_singular}."
         )
 
     step_two = (
@@ -1009,6 +1446,12 @@ async def _generate_body_section(
             f'- "If I open a $50 position on [Market] at [price], I start by signing up and entering the {code_strong}."'
             if has_code
             else '- "If I open a $50 position on [Market] at [price], I start by signing up (no promo code required)."'
+        )
+    elif dfs_mode:
+        claim_intro = (
+            f"- \"If I enter a $50 pick'em contest on [Game/Slate], I start by signing up and entering the {code_strong}.\""
+            if has_code
+            else "- \"If I enter a $50 pick'em contest on [Game/Slate], I start by signing up (no promo code required).\""
         )
     else:
         claim_intro = (
@@ -1035,6 +1478,7 @@ async def _generate_body_section(
             links,
             brand=brand,
             prediction_market=prediction_market,
+            dfs_mode=dfs_mode,
         )
     except Exception:
         links_md = "(no links available)"
@@ -1061,6 +1505,7 @@ async def _generate_body_section(
             prompt_offers,
             state,
             prediction_market=prediction_market,
+            dfs_mode=dfs_mode,
         )
 
     if is_terms:
@@ -1070,6 +1515,7 @@ async def _generate_body_section(
             min_odds=min_odds,
             wagering=wagering,
             prediction_market=prediction_market,
+            dfs_mode=dfs_mode,
         )
 
     if is_numbered_list:
@@ -1082,6 +1528,7 @@ async def _generate_body_section(
             style_guide=style_guide,
             links_md=links_md,
             prediction_market=prediction_market,
+            dfs_mode=dfs_mode,
         )
         if steps:
             return _steps_to_html(steps)
@@ -1090,7 +1537,17 @@ async def _generate_body_section(
             has_code,
             code_strong,
             prediction_market=prediction_market,
+            dfs_mode=dfs_mode,
         )
+
+    if is_how_to_claim and not prediction_market and not dfs_mode and bet_example_data:
+        deterministic_claim = _render_bet_example_section_deterministic(
+            offer=primary_offer,
+            bet_example_data=bet_example_data,
+            event_context=event_context,
+        )
+        if deterministic_claim:
+            return deterministic_claim
 
     system_prompt = (
         """You are a PUNCHY prediction-market editor for Action Network's Top Stories.
@@ -1104,6 +1561,17 @@ Output well-structured HTML paragraphs. Be compliant but NOT boring.
 NO markdown syntax. NO exclamation points. NO corporate-speak.
 Follow the STYLE GUIDE provided in the prompt."""
         if prediction_market
+        else """You are a PUNCHY DFS editor for Action Network's Top Stories.
+
+TONE: Direct, confident, conversational.
+- Explain contest mechanics in plain language.
+- Use DFS wording (entries, picks, lineup, contest, fantasy app).
+- Avoid sportsbook/betting/wager terms.
+
+Output well-structured HTML paragraphs. Be compliant but NOT boring.
+NO markdown syntax. NO exclamation points. NO corporate-speak.
+Follow the STYLE GUIDE provided in the prompt."""
+        if dfs_mode
         else """You are a PUNCHY sports betting editor for Action Network's Top Stories.
 
 TONE: Direct, confident, conversational. Like explaining to a friend.
@@ -1126,6 +1594,16 @@ CRITICAL: This section must include a first-person market example with math:
 - Then show how promo credits can be applied on a separate eligible market.
 
 Use the worked example provided if available, or create one using the event context."""
+        elif dfs_mode:
+            section_objective = f"""SECTION OBJECTIVE: Provide a WORKED EXAMPLE with actual dollar amounts.
+
+CRITICAL: This section must include a first-person DFS entry example with math:
+{claim_intro}
+- \"If my $50 entry returns 2x on the contest payout structure, I receive $100 back total (including stake).\"
+- \"If it does not cash, I lose the entry fee, then explain the exact bonus entries/credits listed in the offer (do not guess).\"
+- Then show how bonus entries or promo credits can be used on a separate eligible contest.
+
+Use the worked example provided if available, or create one using the event context."""
         else:
             section_objective = f"""SECTION OBJECTIVE: Provide a WORKED EXAMPLE with actual dollar amounts.
 
@@ -1137,11 +1615,18 @@ CRITICAL: This section must include a first-person bet example with math:
 
 Use the bet example provided if available, or create one using the event context."""
     elif is_overview:
+        audience_label = (
+            "users who prefer prediction markets"
+            if prediction_market
+            else "users who prefer DFS pick'em or fantasy contests"
+            if dfs_mode
+            else "bettors who want low-commitment entry"
+        )
         section_objective = f"""SECTION OBJECTIVE: Explain why this offer matters and what makes it valuable.
 
 Focus on:
-- WHO this offer is good for ({'users who prefer prediction markets' if prediction_market else 'bettors who want low-commitment entry'}, etc.)
-- WHEN to use it (timing - {'promo credits' if prediction_market else 'bonus bets'} expire in X days, packed schedule, etc.)
+- WHO this offer is good for ({audience_label}, etc.)
+- WHEN to use it (timing - {'promo credits' if prediction_market else 'bonus entries or promo credits' if dfs_mode else 'bonus bets'} expire in X days, packed schedule, etc.)
 - {code_requirement}
 
 Do NOT include step-by-step instructions (that's in How to Claim)."""
@@ -1152,7 +1637,7 @@ Focus on:
 - 21+ and new customer requirement
 - Exact eligible states from source data
 - If states are listed, render as: "States Available: AZ, CO, ..."
-- {'Promo-credit expiration and market-specific eligibility notes when provided' if prediction_market else 'Minimum odds and expiration when provided'}
+- {'Promo-credit expiration and market-specific eligibility notes when provided' if prediction_market else 'Bonus-entry expiration and contest eligibility notes when provided' if dfs_mode else 'Minimum odds and expiration when provided'}
 
 {code_requirement}
 Keep it SHORT - avoid repeating full offer mechanics."""
@@ -1162,13 +1647,24 @@ Keep it SHORT - avoid repeating full offer mechanics."""
 {code_relevance}
 Do NOT repeat information from previous sections."""
 
-    event_label = "EVENT CONTEXT (use for worked examples):" if prediction_market else "EVENT CONTEXT (use for bet examples):"
-    language_guardrail = (
-        "- Use prediction-market language only (trade, market, position, contract)."
-        " Do not use sportsbook, betting, wager, or bonus-bet wording."
-        if prediction_market
-        else ""
-    )
+    if prediction_market:
+        event_label = "EVENT CONTEXT (use for worked examples):"
+    elif dfs_mode:
+        event_label = "EVENT CONTEXT (use for DFS entry examples):"
+    else:
+        event_label = "EVENT CONTEXT (use for bet examples):"
+    if prediction_market:
+        language_guardrail = (
+            "- Use prediction-market language only (trade, market, position, contract)."
+            " Do not use sportsbook, betting, wager, or bonus-bet wording."
+        )
+    elif dfs_mode:
+        language_guardrail = (
+            "- Use DFS language only (entries, contests, picks, lineup, fantasy app)."
+            " Do not use sportsbook, betting, wager, or bonus-bet wording."
+        )
+    else:
+        language_guardrail = ""
 
     user_prompt = f"""Write the content for this section:
 
@@ -1212,8 +1708,10 @@ STYLE EXAMPLES (match tone only):
 KEYWORD USAGE:
 Primary keyword: "{keyword}"
 Current usage: {current_keyword_count}/{target_keyword_total}
-- {"MUST" if current_keyword_count < target_keyword_total else "SHOULD"} include the exact phrase "{keyword}" at least once in this section.
-- Use it naturally; avoid repetition.
+- {"SHOULD" if current_keyword_count < target_keyword_total else "MAY"} include the exact phrase "{keyword}" if it fits naturally.
+- Do not force the exact keyword more than once in this section.
+- Prefer brand references/pronouns after the first exact mention in this section.
+- Target ~5-9 exact keyword uses across the full article, not every section.
 
 PREVIOUSLY WRITTEN (do NOT repeat this content):
 {previous_content[-1500:] if previous_content else "(first section)"}
@@ -1276,6 +1774,7 @@ async def generate_draft_from_outline_streaming(
     offer_property: str = "action_network",
     event_context: str = "",
     bet_example: str = "",
+    bet_example_data: dict[str, Any] | None = None,
     output_format: str = "html",
 ) -> AsyncGenerator[dict, None]:
     """Generate draft with streaming updates.
@@ -1287,12 +1786,14 @@ async def generate_draft_from_outline_streaming(
     switchboard_url = offer.get("switchboard_link", "")
 
     all_offers = [offer] + (alt_offers or []) if offer else (alt_offers or [])
-    is_prediction_market = _is_prediction_market_mode(
+    content_mode = _get_content_mode(
         offer=offer,
         offers=all_offers,
         keyword=keyword,
         title=title,
     )
+    is_prediction_market = content_mode == CONTENT_MODE_PREDICTION_MARKET
+    is_dfs_mode = content_mode == CONTENT_MODE_DFS
 
     def select_offer_for_shortcode(level: str) -> dict[str, Any] | None:
         if not all_offers:
@@ -1346,6 +1847,7 @@ async def generate_draft_from_outline_streaming(
                 talking_points=talking_points,
                 event_context=event_context,
                 prediction_market=is_prediction_market,
+                dfs_mode=is_dfs_mode,
             )
             parts.append(content)
             previous_content += content
@@ -1381,7 +1883,9 @@ async def generate_draft_from_outline_streaming(
                 target_keyword_total=target_keyword_total,
                 event_context=event_context,
                 bet_example=bet_example,
+                bet_example_data=bet_example_data,
                 prediction_market=is_prediction_market,
+                dfs_mode=is_dfs_mode,
             )
             tag = "h2" if level == "h2" else "h3"
             heading = f"<{tag}>{section_title}</{tag}>"
@@ -1398,10 +1902,17 @@ async def generate_draft_from_outline_streaming(
         html_output,
         property_key=offer_property,
         prediction_market=is_prediction_market,
+        dfs_mode=is_dfs_mode,
     )
+    html_output = _apply_generation_quality_postprocess(html_output, keyword)
+    primary_evergreen_link = get_operator_evergreen_link(property_key=offer_property, brand=brand)
+    if primary_evergreen_link and primary_evergreen_link.url:
+        html_output = _link_first_keyword_internal(html_output, keyword, primary_evergreen_link.url)
     disclaimer = get_disclaimer_for_state(state)
     if is_prediction_market:
         disclaimer = _adapt_disclaimer_for_prediction_market(disclaimer)
+    elif is_dfs_mode:
+        disclaimer = _adapt_disclaimer_for_dfs(disclaimer)
     html_output = _ensure_single_disclaimer(html_output, disclaimer)
     yield {"type": "content", "section": "footer", "content": f"<p><em>{disclaimer}</em></p>"}
     all_offers = [offer] + (alt_offers or []) if offer else (alt_offers or [])
@@ -1412,6 +1923,8 @@ async def generate_draft_from_outline_streaming(
         max_links=2,
     )
     html_output = _strip_placeholder_hash_links(html_output)
+    html_output = _dedupe_non_switchboard_links_by_url(html_output)
+    html_output = _apply_content_mode_language_guardrails(html_output, content_mode)
 
     if output_format == "markdown":
         html_output = _html_to_markdown(html_output)

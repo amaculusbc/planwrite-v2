@@ -17,7 +17,11 @@ from app.services.llm import (
 )
 from app.services.rag import query_articles
 from app.services.content_guidelines import get_style_instructions, get_temperature_by_section
-from app.services.operator_profile import is_prediction_market_context
+from app.services.operator_profile import (
+    CONTENT_MODE_DFS,
+    CONTENT_MODE_PREDICTION_MARKET,
+    get_content_mode_context,
+)
 
 
 OUTLINE_SCHEMA = {
@@ -64,6 +68,9 @@ def _extract_matchup_from_event_context(event_context: str) -> str:
     if featured:
         raw = featured.group(1).strip()
     else:
+        featured_event = re.search(r"Featured event:\s*([^\.]+)", event_context, flags=re.IGNORECASE)
+        if featured_event:
+            return re.sub(r"\s+", " ", featured_event.group(1).strip()).strip()
         direct = re.search(
             r"([A-Za-z0-9 .'\-]+)\s+(?:vs\.?|@)\s+([A-Za-z0-9 .'\-]+)",
             event_context,
@@ -81,7 +88,12 @@ def _extract_matchup_from_event_context(event_context: str) -> str:
     return re.sub(r"\s+", " ", raw).strip()
 
 
-def _headline_topic(keyword: str, brand: str, is_prediction_market: bool = False) -> str:
+def _headline_topic(
+    keyword: str,
+    brand: str,
+    is_prediction_market: bool = False,
+    is_dfs: bool = False,
+) -> str:
     """Build normalized topic phrase for headings."""
     if keyword and keyword.strip():
         return keyword.strip()
@@ -89,6 +101,8 @@ def _headline_topic(keyword: str, brand: str, is_prediction_market: bool = False
         return f"{brand.strip()} promo code"
     if is_prediction_market:
         return "prediction market promo code"
+    if is_dfs:
+        return "DFS promo code"
     return "sportsbook promo code"
 
 
@@ -97,23 +111,30 @@ def _contextual_section_titles(
     brand: str,
     event_context: str = "",
     is_prediction_market: bool = False,
+    is_dfs: bool = False,
 ) -> dict[str, str]:
     """Build contextual section titles (game-specific when context is available)."""
-    topic = _headline_topic(keyword, brand, is_prediction_market=is_prediction_market)
+    topic = _headline_topic(keyword, brand, is_prediction_market=is_prediction_market, is_dfs=is_dfs)
     matchup = _extract_matchup_from_event_context(event_context)
     claim_title = (
         f"How to Use {topic} for {matchup}"
         if is_prediction_market and matchup
         else f"How to Use {topic} for Any Market"
         if is_prediction_market
+        else f"How to Use {topic} for {matchup}"
+        if is_dfs and matchup
+        else f"How to Use {topic} for Any Slate"
+        if is_dfs
         else f"How to Claim {topic} for {matchup}"
         if matchup
         else f"How to Claim {topic} for Any Sport"
     )
-    terms_title = "Terms & Eligibility" if is_prediction_market else "Terms & Conditions"
+    terms_title = "Terms & Eligibility" if (is_prediction_market or is_dfs) else "Terms & Conditions"
     overview_no_matchup = (
         f"{topic}: Promo for Top Markets Today"
         if is_prediction_market
+        else f"{topic}: Best Offers for Today's Slates"
+        if is_dfs
         else f"{topic}: Get Bonus for All Sports Today"
     )
     if matchup:
@@ -139,6 +160,7 @@ def _apply_editorial_section_rules(
     brand: str,
     event_context: str = "",
     is_prediction_market: bool = False,
+    is_dfs: bool = False,
 ) -> list[dict]:
     """Apply house section rules: remove redundant key-details, enforce daily promos."""
     if not outline:
@@ -149,6 +171,7 @@ def _apply_editorial_section_rules(
         brand,
         event_context,
         is_prediction_market=is_prediction_market,
+        is_dfs=is_dfs,
     )
     cleaned: list[dict] = []
     has_daily_promos = False
@@ -196,12 +219,16 @@ def _apply_editorial_section_rules(
             "level": "h2",
             "title": titles["claim"],
             "talking_points": [
-                "Worked example with win/loss outcomes"
-                if not is_prediction_market
-                else "Worked example with contract settlement outcomes",
-                "How bonus credits are applied"
-                if not is_prediction_market
-                else "How promo credits apply to eligible market positions",
+                "Worked example with contract settlement outcomes"
+                if is_prediction_market
+                else "Worked example with contest entry outcomes"
+                if is_dfs
+                else "Worked example with win/loss outcomes",
+                "How promo credits apply to eligible market positions"
+                if is_prediction_market
+                else "How bonus entries or contest credits are applied"
+                if is_dfs
+                else "How bonus credits are applied",
             ],
             "avoid": ["Rewriting legal terms"],
         })
@@ -212,9 +239,11 @@ def _apply_editorial_section_rules(
             "title": titles["daily_promos"],
             "talking_points": [
                 "Placeholder for today's rotating promos",
-                "List sportsbook, promo code, and eligible states"
-                if not is_prediction_market
-                else "List operator, promo code, and eligible states",
+                "List operator, promo code, and eligible states"
+                if is_prediction_market
+                else "List DFS app, promo code, and eligible states"
+                if is_dfs
+                else "List sportsbook, promo code, and eligible states",
                 "Update this section daily before publishing",
             ],
             "avoid": ["Using stale promos from prior days"],
@@ -236,9 +265,11 @@ def _apply_editorial_section_rules(
             "talking_points": [
                 "Five-step registration flow",
                 "Where to enter promo code",
-                "How to place first qualifying bet"
-                if not is_prediction_market
-                else "How to place first qualifying market position",
+                "How to place first qualifying market position"
+                if is_prediction_market
+                else "How to enter the first qualifying contest"
+                if is_dfs
+                else "How to place first qualifying bet",
             ],
             "avoid": ["Deep legal terms"],
         })
@@ -249,11 +280,15 @@ def _apply_editorial_section_rules(
             "title": titles["terms"],
             "talking_points": [
                 "Reference official operator terms"
-                if not is_prediction_market
-                else "Reference official market terms",
-                "State restrictions and expiry windows"
-                if not is_prediction_market
-                else "State restrictions and settlement timelines",
+                if not is_prediction_market and not is_dfs
+                else "Reference official market terms"
+                if is_prediction_market
+                else "Reference official contest rules and app terms",
+                "State restrictions and settlement timelines"
+                if is_prediction_market
+                else "State restrictions and contest/entry expiry windows"
+                if is_dfs
+                else "State restrictions and expiry windows",
             ],
             "avoid": ["Repeating claim walkthrough"],
         })
@@ -297,13 +332,16 @@ async def generate_structured_outline(
     offer_text = offer.get("offer_text", "")
     bonus_code = offer.get("bonus_code", "")
     terms = offer.get("terms", "")
-    is_prediction_market = is_prediction_market_context(keyword, title, brand, offer_text)
+    content_mode = get_content_mode_context(keyword, title, brand, offer_text)
+    is_prediction_market = content_mode == CONTENT_MODE_PREDICTION_MARKET
+    is_dfs = content_mode == CONTENT_MODE_DFS
     style_guide = get_style_instructions()
     section_titles = _contextual_section_titles(
         keyword,
         brand,
         event_context,
         is_prediction_market=is_prediction_market,
+        is_dfs=is_dfs,
     )
 
     # Get RAG snippets for style reference
@@ -313,7 +351,22 @@ async def generate_structured_outline(
     except Exception:
         rag_context = ""
 
-    system_prompt = f"""You are a senior content strategist for a {'prediction market' if is_prediction_market else 'sports betting'} publication.
+    publication_label = (
+        "prediction market"
+        if is_prediction_market
+        else "daily fantasy"
+        if is_dfs
+        else "sports betting"
+    )
+    language_rule = (
+        "Use prediction-market language (trade, market, position, contract) and avoid sportsbook/bet/wager terms"
+        if is_prediction_market
+        else "Use DFS language (entries, contests, picks, fantasy app) and avoid sportsbook/bet/wager terms"
+        if is_dfs
+        else "Use natural sportsbook language with clear, factual mechanics"
+    )
+
+    system_prompt = f"""You are a senior content strategist for a {publication_label} publication.
 Your job is to create a DETAILED CONTENT PLAN for a promo code article.
 
 CRITICAL: Each section must have UNIQUE talking points. Never repeat information across sections.
@@ -335,34 +388,50 @@ RULES:
 - "avoid" lists what other sections cover (to prevent repetition)
 - Maximum 5 H2 sections total
 - Include keyword in first H2 title
-- {'Use prediction-market language (trade, market, position, contract) and avoid sportsbook/bet/wager terms' if is_prediction_market else 'Use natural sportsbook language with clear, factual mechanics'}"""
+- {language_rule}"""
 
     claim_point = (
         f"Use this worked example: {bet_example}"
         if bet_example
         else "Create a hypothetical worked example using a $50-100 market position"
         if is_prediction_market
+        else "Create a hypothetical worked example using a $50-100 DFS contest entry"
+        if is_dfs
         else "Create hypothetical bet example with $50-100 wager"
     )
-    signup_step_five = "5. Place first qualifying market position" if is_prediction_market else "5. Place bet"
+    signup_step_five = (
+        "5. Place first qualifying market position"
+        if is_prediction_market
+        else "5. Enter first qualifying contest"
+        if is_dfs
+        else "5. Place bet"
+    )
     terms_point = (
         "Reference official terms, eligibility, and settlement notes"
         if is_prediction_market
+        else "Reference official app terms, contest rules, and eligibility notes"
+        if is_dfs
         else "Full T&C reference, responsible gaming, state helpline"
     )
     overview_point = (
         "Why it's valuable, market timing angle, who benefits (NOT claiming steps)"
         if is_prediction_market
+        else "Why it's valuable for DFS players, contest flexibility, who benefits (NOT sign-up steps)"
+        if is_dfs
         else "Why it's valuable, timing advantage, who benefits (NOT claiming steps)"
     )
     intro_point = (
         "Should mention date, offer value, and explicit eligible states (not generic \"nationwide\")"
         if is_prediction_market
+        else "Should mention date, offer value, promo code if required, and explicit eligible states (not generic \"nationwide\")"
+        if is_dfs
         else "Should mention date, offer value, that code is needed, and explicit eligible states (not generic \"nationwide\")"
     )
     daily_promos_point = (
         "Use placeholder bullets for editor updates (operator, code, offer, states)"
         if is_prediction_market
+        else "Use placeholder bullets for editor updates (DFS app, code, offer, states)"
+        if is_dfs
         else "Use placeholder bullets for editor updates (book, code, offer, states)"
     )
 
@@ -428,6 +497,7 @@ Output ONLY the JSON array, no other text:"""
             brand=brand,
             event_context=event_context,
             is_prediction_market=is_prediction_market,
+            is_dfs=is_dfs,
         )
         return outline
     except Exception as e:
@@ -440,6 +510,7 @@ Output ONLY the JSON array, no other text:"""
         event_context,
         bet_example,
         is_prediction_market=is_prediction_market,
+        is_dfs=is_dfs,
     )
 
 
@@ -498,6 +569,7 @@ def _get_default_outline(
     event_context: str = "",
     bet_example: str = "",
     is_prediction_market: bool = False,
+    is_dfs: bool = False,
 ) -> list[dict]:
     """Return default outline structure if AI generation fails."""
     titles = _contextual_section_titles(
@@ -505,10 +577,13 @@ def _get_default_outline(
         brand,
         event_context,
         is_prediction_market=is_prediction_market,
+        is_dfs=is_dfs,
     )
     default_example_point = (
         "Worked example with a $50 market position"
         if is_prediction_market
+        else "Worked example with a $50 DFS contest entry"
+        if is_dfs
         else "Worked example with $50 bet"
     )
     return [
@@ -533,8 +608,10 @@ def _get_default_outline(
             "title": titles["overview"],
             "talking_points": [
                 "Why this offer is valuable for bettors"
-                if not is_prediction_market
-                else "Why this offer is valuable for prediction-market users",
+                if not is_prediction_market and not is_dfs
+                else "Why this offer is valuable for prediction-market users"
+                if is_prediction_market
+                else "Why this offer is valuable for DFS players",
                 "Timing advantage (sign up now)",
                 "What makes it stand out from other promos",
             ],
@@ -552,11 +629,15 @@ def _get_default_outline(
             "talking_points": [
                 bet_example if bet_example else default_example_point,
                 "Show win scenario with profit calculation"
-                if not is_prediction_market
-                else "Show settlement scenario with payout calculation",
+                if not is_prediction_market and not is_dfs
+                else "Show settlement scenario with payout calculation"
+                if is_prediction_market
+                else "Show contest outcome example and payout logic",
                 "Show loss scenario with bonus bet receipt"
-                if not is_prediction_market
-                else "Show loss scenario and how promo credits can be used",
+                if not is_prediction_market and not is_dfs
+                else "Show loss scenario and how promo credits can be used"
+                if is_prediction_market
+                else "Show non-cash outcome and how bonus entries/credits apply",
             ],
             "avoid": ["Restating what the offer is", "Eligibility requirements"],
         },
@@ -572,8 +653,10 @@ def _get_default_outline(
             "talking_points": [
                 "Placeholder for today's rotating promos (editor updates daily)",
                 "List sportsbook, offer, promo code, and state availability"
-                if not is_prediction_market
-                else "List operator, offer, promo code, and state availability",
+                if not is_prediction_market and not is_dfs
+                else "List operator, offer, promo code, and state availability"
+                if is_prediction_market
+                else "List DFS app, offer, promo code, and state availability",
                 "Note expiration window for today's promos",
             ],
             "avoid": ["Using stale promos from previous days"],
@@ -587,8 +670,10 @@ def _get_default_outline(
                 "Step 3: Enter promo code",
                 "Step 4: Complete verification",
                 "Step 5: Make deposit and place first bet"
-                if not is_prediction_market
-                else "Step 5: Fund account and place first market position",
+                if not is_prediction_market and not is_dfs
+                else "Step 5: Fund account and place first market position"
+                if is_prediction_market
+                else "Step 5: Fund account and enter first contest",
             ],
             "avoid": ["Offer details", "Terms explanation"],
         },
@@ -599,8 +684,10 @@ def _get_default_outline(
                 "Reference to full terms on operator site",
                 "Key restrictions summary",
                 "Responsible gaming reminder with helpline"
-                if not is_prediction_market
-                else "Eligibility and settlement notes",
+                if not is_prediction_market and not is_dfs
+                else "Eligibility and settlement notes"
+                if is_prediction_market
+                else "Eligibility, contest rules, and expiration notes",
             ],
             "avoid": ["Eligibility (covered above)", "Claiming steps"],
         },
@@ -938,15 +1025,25 @@ async def generate_outline(
         f"[{s['source']}]: {s['snippet']}"
         for s in rag_snippets
     ]) or "(No relevant articles found)"
-    is_prediction_market = is_prediction_market_context(keyword, title, brand, offer_text)
+    content_mode = get_content_mode_context(keyword, title, brand, offer_text)
+    is_prediction_market = content_mode == CONTENT_MODE_PREDICTION_MARKET
+    is_dfs = content_mode == CONTENT_MODE_DFS
     section_titles = _contextual_section_titles(
         keyword,
         brand,
         game_context,
         is_prediction_market=is_prediction_market,
+        is_dfs=is_dfs,
     )
 
     # Build prompt - keep it tight to avoid bloated outlines
+    language_rule = (
+        "Use prediction-market language and avoid sportsbook/betting terms"
+        if is_prediction_market
+        else "Use DFS language and avoid sportsbook/betting terms"
+        if is_dfs
+        else "Use clear sportsbook language"
+    )
     system_prompt = f"""You are an SEO content planner for short, timely Top Stories promo articles.
 Output a lean outline using bracket tokens. One item per line.
 
@@ -964,7 +1061,7 @@ CRITICAL RULES:
 - Keep headings SHORT (under 8 words)
 - NO "Benefits" or "Features" sections - focus on the offer
 - Output ONLY tokens, no explanations
-- {"Use prediction-market language and avoid sportsbook/betting terms" if is_prediction_market else "Use clear sportsbook language"}"""
+- {language_rule}"""
 
     user_prompt = f"""Create an outline for:
 
@@ -1029,17 +1126,32 @@ async def generate_outline_streaming(
         f"[{s['source']}]: {s['snippet']}"
         for s in rag_snippets
     ]) or "(No relevant articles found)"
-    is_prediction_market = is_prediction_market_context(keyword, title, brand, offer_text)
+    content_mode = get_content_mode_context(keyword, title, brand, offer_text)
+    is_prediction_market = content_mode == CONTENT_MODE_PREDICTION_MARKET
+    is_dfs = content_mode == CONTENT_MODE_DFS
     section_titles = _contextual_section_titles(
         keyword,
         brand,
         is_prediction_market=is_prediction_market,
+        is_dfs=is_dfs,
     )
 
     yield {"type": "status", "message": f"Found {len(rag_snippets)} relevant articles"}
 
     # Build prompt (same as non-streaming)
-    system_prompt = f"""You are an SEO content planner specializing in {'prediction-market' if is_prediction_market else 'sports betting'} promotional content.
+    publication_label = (
+        "prediction-market"
+        if is_prediction_market
+        else "DFS"
+        if is_dfs
+        else "sports betting"
+    )
+    language_rule = (
+        "Avoid sportsbook/betting terminology for this operator"
+        if is_prediction_market or is_dfs
+        else "Use natural sportsbook terminology"
+    )
+    system_prompt = f"""You are an SEO content planner specializing in {publication_label} promotional content.
 Your task is to create a structured article outline using bracket tokens.
 
 Output format (one token per line):
@@ -1055,7 +1167,7 @@ Rules:
 - Keep titles concise, contextual, and keyword-relevant
 - Include a Daily Promos section placeholder
 - Output ONLY the tokens, no explanations
-- {"Avoid sportsbook/betting terminology for this operator" if is_prediction_market else "Use natural sportsbook terminology"}"""
+- {language_rule}"""
 
     user_prompt = f"""Create an article outline for:
 

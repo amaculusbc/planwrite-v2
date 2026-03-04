@@ -9,6 +9,12 @@ from typing import Any
 from dataclasses import dataclass, field
 from enum import Enum
 
+from app.services.operator_profile import (
+    CONTENT_MODE_DFS,
+    CONTENT_MODE_PREDICTION_MARKET,
+    get_content_mode_offer,
+    normalize_operator,
+)
 
 class IssueSeverity(str, Enum):
     ERROR = "error"
@@ -162,17 +168,17 @@ def check_offer_facts(
 
     if keyword:
         keyword_count = len(re.findall(re.escape(keyword), content, flags=re.IGNORECASE))
-        if keyword_count < 6:
+        if keyword_count < 5:
             issues.append(ComplianceIssue(
                 type="keyword_density_low",
-                message=f"Low keyword density: '{keyword}' appears {keyword_count} times (target 6-9)",
+                message=f"Low keyword density: '{keyword}' appears {keyword_count} times (target 5-9)",
                 severity=IssueSeverity.WARNING,
                 suggestion="Include the exact keyword a few more times naturally",
             ))
         elif keyword_count > 9:
             issues.append(ComplianceIssue(
                 type="keyword_density_high",
-                message=f"High keyword density: '{keyword}' appears {keyword_count} times (target 6-9)",
+                message=f"High keyword density: '{keyword}' appears {keyword_count} times (target 5-9)",
                 severity=IssueSeverity.WARNING,
                 suggestion="Reduce exact keyword repetitions to avoid stuffing",
             ))
@@ -296,6 +302,133 @@ def check_link_quality(content: str, allowed_domains: list[str] | None = None) -
     return issues
 
 
+def _strip_html_tags(text: str) -> str:
+    return re.sub(r"<[^>]+>", " ", text or "")
+
+
+def _first_paragraph_text(content: str) -> str:
+    match = re.search(r"<p>(.*?)</p>", content or "", flags=re.IGNORECASE | re.DOTALL)
+    if match:
+        return _strip_html_tags(match.group(1))
+    return (content or "").split("\n\n", 1)[0]
+
+
+def _extract_html_links(content: str) -> list[tuple[str, str, str]]:
+    """Return list of (url, anchor_html, anchor_text) for HTML anchors."""
+    pattern = re.compile(
+        r"<a\b([^>]*)href\s*=\s*(['\"])(?P<url>https?://[^'\"]+)\2[^>]*>(?P<inner>.*?)</a>",
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    links: list[tuple[str, str, str]] = []
+    for match in pattern.finditer(content or ""):
+        url = match.group("url")
+        inner = match.group("inner") or ""
+        anchor_text = _strip_html_tags(inner)
+        links.append((url, inner, anchor_text))
+    return links
+
+
+def check_editorial_regressions(
+    content: str,
+    *,
+    keyword: str | None = None,
+    offer: dict[str, Any] | None = None,
+) -> list[ComplianceIssue]:
+    """Catch high-value editorial regressions seen in V2 feedback."""
+    issues: list[ComplianceIssue] = []
+    if not content:
+        return issues
+
+    offer = offer or {}
+    brand = str(offer.get("brand") or "").strip()
+    brand_operator = normalize_operator(brand)
+
+    # Main keyword should appear in first paragraph (ideally sentence 1-2).
+    if keyword:
+        first_para = _first_paragraph_text(content)
+        if not re.search(re.escape(keyword), first_para, flags=re.IGNORECASE):
+            issues.append(ComplianceIssue(
+                type="main_keyword_missing_early",
+                message=f"Primary keyword '{keyword}' not found in the first paragraph",
+                severity=IssueSeverity.WARNING,
+                suggestion="Include the exact keyword in sentence 1 or 2 of the intro",
+            ))
+
+    links = _extract_html_links(content)
+
+    # Excessive in-body switchboard links create CTA overuse and poor UX.
+    switchboard_links = [
+        (url, inner, text)
+        for url, inner, text in links
+        if "switchboard.actionnetwork.com/offers" in url.lower()
+    ]
+    if len(switchboard_links) > 2:
+        issues.append(ComplianceIssue(
+            type="switchboard_link_overuse",
+            message=f"Too many switchboard links: {len(switchboard_links)} found (target <= 2 in body)",
+            severity=IssueSeverity.WARNING,
+            suggestion="Keep switchboard links to primary CTA placements and use internal links elsewhere",
+        ))
+
+    # Duplicate internal links by URL (excluding switchboard).
+    duplicate_urls: set[str] = set()
+    seen_internal: set[str] = set()
+    for url, _, _ in links:
+        url_lc = url.lower()
+        if "switchboard.actionnetwork.com/offers" in url_lc:
+            continue
+        if url_lc in seen_internal:
+            duplicate_urls.add(url)
+        else:
+            seen_internal.add(url_lc)
+    for dup in sorted(duplicate_urls):
+        issues.append(ComplianceIssue(
+            type="duplicate_internal_link",
+            message=f"Internal link URL repeated: {dup}",
+            severity=IssueSeverity.WARNING,
+            suggestion="Use each internal link URL once per article unless repetition is necessary",
+        ))
+
+    # CTA/brand mismatch: switchboard anchor text should not reference a competitor brand.
+    if brand_operator:
+        for url, _, anchor_text in switchboard_links:
+            anchor_operator = normalize_operator(anchor_text)
+            if anchor_operator and anchor_operator != brand_operator:
+                issues.append(ComplianceIssue(
+                    type="cta_brand_mismatch",
+                    message=f"Switchboard CTA anchor references '{anchor_operator}' on a '{brand_operator}' article",
+                    severity=IssueSeverity.ERROR,
+                    location=url,
+                    suggestion="Use the correct operator brand in the CTA anchor text",
+                ))
+                break
+
+    # Mode-language mismatch (Novig/Kalshi/Polymarket and DFS apps).
+    mode = get_content_mode_offer(offer, keyword=keyword or "")
+    plain = _strip_html_tags(content)
+    plain = re.sub(r"https?://\S+", " ", plain)
+    if mode in {CONTENT_MODE_PREDICTION_MARKET, CONTENT_MODE_DFS}:
+        mismatches = []
+        if re.search(r"\bbonus bets?\b", plain, flags=re.IGNORECASE):
+            mismatches.append("bonus bets")
+        if re.search(r"\bsportsbooks?\b", plain, flags=re.IGNORECASE):
+            mismatches.append("sportsbook")
+        if re.search(r"\bwager(?:ing)?\b", plain, flags=re.IGNORECASE):
+            mismatches.append("wager/wagering")
+        if re.search(r"\bbet(?:ting)?\b", plain, flags=re.IGNORECASE):
+            mismatches.append("bet/betting")
+        if mismatches:
+            label = "prediction-market" if mode == CONTENT_MODE_PREDICTION_MARKET else "DFS"
+            issues.append(ComplianceIssue(
+                type="mode_language_mismatch",
+                message=f"{label.title()} article contains sportsbook language ({', '.join(sorted(set(mismatches)))})",
+                severity=IssueSeverity.WARNING,
+                suggestion="Use operator-appropriate language (prediction market or DFS terms) throughout the article",
+            ))
+
+    return issues
+
+
 def check_seo(content: str) -> list[ComplianceIssue]:
     """Check SEO best practices."""
     issues = []
@@ -361,6 +494,7 @@ def validate_content(
     issues.extend(check_cta_links(content))
     issues.extend(check_seo(content))
     issues.extend(check_offer_facts(content, offer=offer, keyword=keyword))
+    issues.extend(check_editorial_regressions(content, keyword=keyword, offer=offer))
 
     if check_links:
         issues.extend(check_link_quality(content, allowed_domains))

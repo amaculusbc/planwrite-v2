@@ -822,6 +822,7 @@ function articleWizard() {
             team: 'away'
         },
         betExample: '',
+        betExampleData: null,
 
         // Batch generation
         batch: {
@@ -1066,6 +1067,8 @@ function articleWizard() {
                 this.games = [];
                 this.selectedGame = null;
                 this.odds = null;
+                this.betExample = '';
+                this.betExampleData = null;
                 this.refreshSuggestedTitle();
                 return;
             }
@@ -1075,6 +1078,8 @@ function articleWizard() {
               this.form.game_id = '';
               this.selectedGame = null;
               this.odds = null;
+              this.betExample = '';
+              this.betExampleData = null;
               this.selectedBook = '';
 
             try {
@@ -1103,6 +1108,8 @@ function articleWizard() {
             if (!this.form.game_id || !this.form.sport) {
                 this.selectedGame = null;
                 this.odds = null;
+                this.betExample = '';
+                this.betExampleData = null;
                 this.refreshSuggestedTitle();
                 return;
             }
@@ -1135,6 +1142,8 @@ function articleWizard() {
                   const resp = await fetch(`/api/odds/game?${params}`);
                   if (resp.ok) {
                       this.odds = await resp.json();
+                      this.betExample = '';
+                      this.betExampleData = null;
                       const books = this.availableBooks;
                       const preferredBook = this.resolvePreferredBook(books);
                       if (preferredBook) {
@@ -1144,11 +1153,15 @@ function articleWizard() {
                       }
                   } else {
                       this.odds = null;
+                      this.betExample = '';
+                      this.betExampleData = null;
                       this.selectedBook = '';
                   }
               } catch (e) {
                   console.error('Failed to load odds:', e);
                   this.odds = null;
+                  this.betExample = '';
+                  this.betExampleData = null;
                   this.selectedBook = '';
               }
           },
@@ -1157,6 +1170,7 @@ function articleWizard() {
         async generateBetExample() {
             if (!this.selectedGame || !this.odds) {
                 this.betExample = '';
+                this.betExampleData = null;
                 return;
             }
 
@@ -1179,9 +1193,11 @@ function articleWizard() {
                 if (resp.ok) {
                     const data = await resp.json();
                     this.betExample = data.example_text;
+                    this.betExampleData = data;
                 }
             } catch (e) {
                 console.error('Failed to generate bet example:', e);
+                this.betExampleData = null;
             }
         },
 
@@ -1234,6 +1250,7 @@ function articleWizard() {
             };
             if (this.odds) gameContext.odds = this.odds;
             if (this.betExample) gameContext.bet_example = this.betExample;
+            if (this.betExampleData) gameContext.bet_example_data = this.betExampleData;
             return gameContext;
         },
 
@@ -1429,6 +1446,9 @@ function articleWizard() {
                 if (this.betExample) {
                     gameContext.bet_example = this.betExample;
                 }
+                if (this.betExampleData) {
+                    gameContext.bet_example_data = this.betExampleData;
+                }
             }
 
             try {
@@ -1494,6 +1514,9 @@ function articleWizard() {
                 }
                 if (this.betExample) {
                     gameContext.bet_example = this.betExample;
+                }
+                if (this.betExampleData) {
+                    gameContext.bet_example_data = this.betExampleData;
                 }
             }
 

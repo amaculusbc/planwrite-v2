@@ -216,6 +216,10 @@ def extract_bonus_amount(offer_text: str | None) -> str:
     """Extract bonus amount from offer text."""
     if not offer_text:
         return ""
+    paired = extract_offer_amount_details(offer_text)
+    reward_amount = str(paired.get("reward_amount") or "").strip()
+    if reward_amount:
+        return reward_amount
     patterns = [
         r"\$(\d+(?:,\d+)?(?:\.\d+)?)",
         r"(\d+(?:,\d+)?)\s+(?:dollars?|bucks)",
@@ -226,6 +230,103 @@ def extract_bonus_amount(offer_text: str | None) -> str:
             amount = match.group(1).replace(",", "")
             return f"${amount}"
     return ""
+
+
+def extract_offer_amount_details(offer_text: str | None) -> dict[str, str]:
+    """Extract qualifying/reward amounts for paired promos like 'Bet $5, Get $150'.
+
+    Returns an empty dict when no reliable paired pattern is detected.
+    """
+    if not offer_text:
+        return {}
+
+    text = re.sub(r"\s+", " ", str(offer_text)).strip()
+    if not text:
+        return {}
+
+    # Forward order: "Spend/Bet/Play $X ... Get/Unlock $Y ..."
+    forward_patterns = [
+        r"(?P<action>bet|wager|spend|play|deposit|purchase|buy)\s*\$?(?P<qual>\d+(?:,\d+)?(?:\.\d+)?)\b"
+        r".{0,100}?"
+        r"(?:get|unlock|receive|earn|claim|snag|net|secure|use)\s*\$?(?P<reward>\d+(?:,\d+)?(?:\.\d+)?)"
+        r"(?:\s+in\s+(?P<label>[A-Za-z][A-Za-z ]{1,60}))?",
+        r"(?P<action>make(?:\s+a)?\s+purchase(?:\s+of)?)\s*\$?(?P<qual>\d+(?:,\d+)?(?:\.\d+)?)\b"
+        r".{0,100}?"
+        r"(?:get|unlock|receive|earn|claim|snag|net|secure|use)\s*\$?(?P<reward>\d+(?:,\d+)?(?:\.\d+)?)"
+        r"(?:\s+in\s+(?P<label>[A-Za-z][A-Za-z ]{1,60}))?",
+        r"make(?:\s+a)?\s+\$?(?P<qual>\d+(?:,\d+)?(?:\.\d+)?)\s+purchase\b"
+        r".{0,100}?"
+        r"(?:get|unlock|receive|earn|claim|snag|net|secure|use)\s*\$?(?P<reward>\d+(?:,\d+)?(?:\.\d+)?)"
+        r"(?:\s+in\s+(?P<label>[A-Za-z][A-Za-z ]{1,60}))?",
+    ]
+    for pattern in forward_patterns:
+        forward = re.search(pattern, text, flags=re.IGNORECASE)
+        if not forward:
+            continue
+        details = {
+            "qualifying_action": _normalize_qualifying_action(forward.groupdict().get("action")),
+            "qualifying_amount": _fmt_money(forward.group("qual")),
+            "reward_amount": _fmt_money(forward.group("reward")),
+        }
+        label = _clean_reward_label(forward.groupdict().get("label"))
+        if label:
+            details["reward_label"] = label
+        return details
+
+    # Reverse order: "Get $Y ... when you spend/bet $X"
+    reverse_patterns = [
+        r"(?:get|unlock|receive|earn|claim|snag|net|secure|use)\s*\$?(?P<reward>\d+(?:,\d+)?(?:\.\d+)?)"
+        r"(?:\s+in\s+(?P<label>[A-Za-z][A-Za-z ]{1,60}))?"
+        r".{0,140}?"
+        r"(?:when you|after you|if you)?\s*"
+        r"(?P<action>bet|wager|spend|play|deposit|purchase|buy)\s*\$?(?P<qual>\d+(?:,\d+)?(?:\.\d+)?)",
+        r"(?:get|unlock|receive|earn|claim|snag|net|secure|use)\s*\$?(?P<reward>\d+(?:,\d+)?(?:\.\d+)?)"
+        r"(?:\s+in\s+(?P<label>[A-Za-z][A-Za-z ]{1,60}))?"
+        r".{0,140}?"
+        r"(?:when you|after you|if you)?\s*"
+        r"make(?:\s+a)?\s+\$?(?P<qual>\d+(?:,\d+)?(?:\.\d+)?)\s+purchase\b",
+    ]
+    for pattern in reverse_patterns:
+        reverse = re.search(pattern, text, flags=re.IGNORECASE)
+        if not reverse:
+            continue
+        details = {
+            "qualifying_action": _normalize_qualifying_action(reverse.groupdict().get("action") or "purchase"),
+            "qualifying_amount": _fmt_money(reverse.group("qual")),
+            "reward_amount": _fmt_money(reverse.group("reward")),
+        }
+        label = _clean_reward_label(reverse.groupdict().get("label"))
+        if label:
+            details["reward_label"] = label
+        return details
+
+    return {}
+
+
+def _fmt_money(raw: str | None) -> str:
+    if not raw:
+        return ""
+    return f"${str(raw).replace(',', '').strip()}"
+
+
+def _normalize_qualifying_action(raw: str | None) -> str:
+    value = (raw or "").strip().lower()
+    if value.startswith("make"):
+        return "purchase"
+    if value == "buy":
+        return "purchase"
+    return value
+
+
+def _clean_reward_label(raw: str | None) -> str:
+    if not raw:
+        return ""
+    label = re.sub(r"\s+", " ", raw).strip(" .,:;")
+    label = re.split(r"\b(?:for|on|today|tonight|this|during|via|with|when)\b", label, maxsplit=1, flags=re.IGNORECASE)[0].strip(" .,:;")
+    # Keep short, noun-like labels only (e.g., "Novig Coins", "bonus bets").
+    if len(label.split()) > 5:
+        return ""
+    return label
 
 
 def parse_states(states: Any) -> list[str]:
@@ -283,5 +384,15 @@ def enrich_offer_dict(offer: dict) -> dict:
     enriched["bonus_expiration_days"] = offer.get("bonus_expiration_days") or extract_bonus_expiration_days(terms)
     enriched["minimum_odds"] = offer.get("minimum_odds") or extract_minimum_odds(terms)
     enriched["wagering_requirement"] = offer.get("wagering_requirement") or extract_wagering_requirement(terms)
-    enriched["bonus_amount"] = offer.get("bonus_amount") or extract_bonus_amount(offer_text)
+    amount_details = extract_offer_amount_details(offer_text)
+    if amount_details:
+        if amount_details.get("qualifying_action") and not enriched.get("qualifying_action"):
+            enriched["qualifying_action"] = amount_details["qualifying_action"]
+        if amount_details.get("qualifying_amount") and not enriched.get("qualifying_amount"):
+            enriched["qualifying_amount"] = amount_details["qualifying_amount"]
+        if amount_details.get("reward_amount") and not enriched.get("reward_amount"):
+            enriched["reward_amount"] = amount_details["reward_amount"]
+        if amount_details.get("reward_label") and not enriched.get("reward_label"):
+            enriched["reward_label"] = amount_details["reward_label"]
+    enriched["bonus_amount"] = offer.get("bonus_amount") or amount_details.get("reward_amount") or extract_bonus_amount(offer_text)
     return enriched

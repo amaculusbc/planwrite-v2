@@ -15,7 +15,7 @@ import numpy as np
 from app.config import get_settings
 from app.services.bam_offers import DEFAULT_PROPERTY, PROPERTIES
 from app.services.llm import get_embedding
-from app.services.operator_profile import is_prediction_market_context
+from app.services.operator_profile import is_dfs_context, is_prediction_market_context
 
 settings = get_settings()
 
@@ -450,6 +450,63 @@ class InternalLinksStore:
         """Public accessor for required links by property."""
         return self._required_links()
 
+    def get_operator_evergreen_link(self, brand: str) -> InternalLinkSpec | None:
+        """Return a deterministic operator-specific evergreen link for a brand.
+
+        This avoids embeddings and is used for deterministic first-keyword linking.
+        """
+        target_operator = _normalize_operator(brand)
+        if not target_operator:
+            return None
+
+        items: list[dict]
+        if self._items:
+            items = self._items
+        else:
+            items = self._read_index_items()
+            if not items:
+                items = self._read_source_items()
+
+        candidates: list[InternalLinkSpec] = []
+        for item in items:
+            if _link_operator(item) != target_operator:
+                continue
+            title = str(item.get("title") or "").strip()
+            url = str(item.get("url") or "").strip()
+            if not title or not url:
+                continue
+            anchors = item.get("recommended_anchors") or item.get("anchors") or [title]
+            anchors = [str(a).strip() for a in anchors if str(a).strip()] or [title]
+            candidates.append(
+                InternalLinkSpec(
+                    title=title,
+                    url=url,
+                    recommended_anchors=anchors,
+                    description=str(item.get("summary") or item.get("description") or "").strip(),
+                    score=1.0,
+                    operator=target_operator,
+                    always_include=bool(item.get("always_include", False)),
+                )
+            )
+
+        if not candidates:
+            return None
+
+        brand_lc = (brand or "").strip().lower()
+
+        def _rank(link: InternalLinkSpec) -> tuple[int, int, int, str]:
+            text = " ".join([link.title, link.url, " ".join(link.recommended_anchors[:3])]).lower()
+            url_lc = (link.url or "").lower()
+            has_brand = 0 if (brand_lc and brand_lc in text) else 1
+            looks_like_operator_promo_page = 0 if any(
+                token in text for token in ("promo", "bonus", "referral")
+            ) else 1
+            canonical_path = 0 if target_operator.replace("_", "-") in url_lc or target_operator in url_lc else 1
+            return (has_brand, looks_like_operator_promo_page, canonical_path, url_lc)
+
+        candidates.sort(key=_rank)
+        return candidates[0]
+
     async def suggest_links(
         self,
         title: str,
@@ -546,6 +603,12 @@ def get_required_links_for_property(property_key: str | None = None) -> list[Int
     return store.get_required_links()
 
 
+def get_operator_evergreen_link(property_key: str | None = None, brand: str = "") -> InternalLinkSpec | None:
+    """Return deterministic operator-specific evergreen link for the current property."""
+    store = get_links_store(property_key=property_key)
+    return store.get_operator_evergreen_link(brand)
+
+
 def _prediction_market_safe_text(text: str) -> str:
     """Replace sportsbook-heavy phrasing with prediction-market wording."""
     if not text:
@@ -562,14 +625,36 @@ def _prediction_market_safe_text(text: str) -> str:
     return result
 
 
+def _dfs_safe_text(text: str) -> str:
+    """Replace sportsbook-heavy phrasing with DFS wording."""
+    if not text:
+        return text
+    replacements = [
+        (r"\bbetting\b", "DFS"),
+        (r"\bbet\b", "pick"),
+        (r"\bsportsbooks?\b", "DFS apps"),
+        (r"\bbonus bets?\b", "bonus entries"),
+        (r"\bwager\b", "entry"),
+    ]
+    result = text
+    for pattern, repl in replacements:
+        result = re.sub(pattern, repl, result, flags=re.IGNORECASE)
+    return result
+
+
 def format_links_markdown(
     links: list[InternalLinkSpec],
     brand: str = "",
     prediction_market: bool | None = None,
+    dfs_mode: bool | None = None,
 ) -> str:
     """Format link suggestions as markdown bullets for prompts."""
     if prediction_market is None:
         prediction_market = is_prediction_market_context(brand)
+    if dfs_mode is None:
+        dfs_mode = is_dfs_context(brand)
+    if prediction_market:
+        dfs_mode = False
 
     lines: list[str] = []
     has_guaranteed = any(bool(link.url) and link.always_include for link in links)
@@ -583,9 +668,13 @@ def format_links_markdown(
                 anchors = link.recommended_anchors[:3]
                 if prediction_market:
                     anchors = [_prediction_market_safe_text(a) for a in anchors]
+                elif dfs_mode:
+                    anchors = [_dfs_safe_text(a) for a in anchors]
                 anchor_hint = f" - anchors: {', '.join(anchors)}"
             if prediction_market:
                 title = _prediction_market_safe_text(title)
+            elif dfs_mode:
+                title = _dfs_safe_text(title)
             display = f"[{title}]({link.url})"
             prefix = "GUARANTEED: " if link.always_include else ""
             lines.append(f"- {prefix}{display}{anchor_hint}")
@@ -599,6 +688,12 @@ def format_links_markdown(
             f"- Use anchor text like \"{brand_name} sign-up guide\" with a relevant URL from the list above.",
             "- Use anchor text like \"how market contracts settle\" for mechanics explanations.",
             f"- Use anchor text like \"check your state's {brand_name} eligibility\" for state-specific notes.",
+        ]
+    elif dfs_mode:
+        contextual_suggestions = [
+            f"- Use anchor text like \"{brand_name} sign-up guide\" with a relevant URL from the list above.",
+            "- Use anchor text like \"how pick'em entries work\" for DFS mechanics.",
+            f"- Use anchor text like \"check {brand_name} contest rules\" for eligibility and contest details.",
         ]
     else:
         contextual_suggestions = [

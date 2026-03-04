@@ -8,6 +8,8 @@ from pydantic import BaseModel
 class GameContext(BaseModel):
     """Game context for content generation."""
 
+    event_type: Optional[str] = None
+    custom_event: Optional[str] = None
     sport: Optional[str] = None
     away_team: Optional[str] = None
     home_team: Optional[str] = None
@@ -16,6 +18,7 @@ class GameContext(BaseModel):
     headline: Optional[str] = None
     odds: Optional[dict] = None
     bet_example: Optional[str] = None
+    bet_example_data: Optional[dict[str, Any]] = None
 
 
 class OutlineRequest(BaseModel):
