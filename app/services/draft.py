@@ -177,6 +177,23 @@ def _is_claim_heading(title_lower: str, is_signup: bool) -> bool:
     ))
 
 
+def _is_daily_promos_heading(title_lower: str) -> bool:
+    """Return True for any daily-promo placeholder heading variant."""
+    if not title_lower:
+        return False
+    return any(
+        phrase in title_lower
+        for phrase in (
+            "daily promo",
+            "promos today",
+            "promo update placeholder",
+            "daily promos placeholder",
+            "today's promo placeholder",
+            "promo placeholder",
+        )
+    )
+
+
 def _get_content_mode(
     *,
     offer: dict[str, Any] | None = None,
@@ -336,18 +353,21 @@ def _build_signup_list(
     brand: str,
     has_code: bool,
     code_strong: str,
+    state: str = "",
+    event_context: str = "",
     prediction_market: bool = False,
     dfs_mode: bool = False,
 ) -> str:
     """Build a deterministic 5-step signup list as HTML."""
     brand_label = brand or ("the operator" if prediction_market else "the DFS app" if dfs_mode else "the sportsbook")
-    signup_guide_ref = f"{brand_label} sign-up guide"
+    event_label = _extract_featured_label_from_event_context(event_context)
+    location_label = state if state and state != "ALL" else "your state"
     mechanics_ref = (
         "how market contracts settle"
         if prediction_market
         else "how pick'em entries work"
         if dfs_mode
-        else "how bonus bets work"
+        else ""
     )
 
     step_two = (
@@ -357,16 +377,16 @@ def _build_signup_list(
     )
 
     steps = [
-        f"Confirm you're eligible in your state and open the {signup_guide_ref}.",
+        f"Open {brand_label} in {location_label} and start registration.",
         step_two,
-        "Complete verification and log in.",
-        "Fund your account.",
+        "Complete identity verification and log in.",
+        "Fund your account with the required minimum.",
         (
-            f"Place a qualifying market position and review {mechanics_ref} for settlement details."
+            f"Place your first qualifying market position on {event_label or 'the featured market'} and review {mechanics_ref} before it settles."
             if prediction_market
-            else f"Place a qualifying fantasy entry and review {mechanics_ref} for contest rules."
+            else f"Enter your first qualifying fantasy entry for {event_label or 'the featured slate'} and review {mechanics_ref} before the result posts."
             if dfs_mode
-            else f"Place a qualifying bet and review {mechanics_ref} for payout details."
+            else f"Place your first qualifying bet on {event_label or 'the featured event'} or any market you prefer, then wait for it to settle."
         ),
     ]
 
@@ -479,6 +499,31 @@ def _dedupe_non_switchboard_links_by_url(html: str) -> str:
             return inner
         seen_urls.add(url_key)
         return match.group(0)
+
+    return anchor_pattern.sub(_replace, html)
+
+
+def _strip_invalid_non_switchboard_links(html: str) -> str:
+    """Unwrap model-invented relative or non-http links while preserving switchboard CTAs."""
+    if not html:
+        return html
+
+    anchor_pattern = re.compile(
+        r'<a\b([^>]*)href\s*=\s*(["\'])([^"\']+)\2([^>]*)>(.*?)</a>',
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+    def _replace(match: re.Match[str]) -> str:
+        before_attrs = match.group(1) or ""
+        url = (match.group(3) or "").strip()
+        after_attrs = match.group(4) or ""
+        inner = match.group(5) or ""
+        attrs_text = f"{before_attrs} {after_attrs}".lower()
+        if "switchboard_tracking" in attrs_text:
+            return match.group(0)
+        if re.match(r"^https?://", url, flags=re.IGNORECASE):
+            return match.group(0)
+        return inner
 
     return anchor_pattern.sub(_replace, html)
 
@@ -826,11 +871,32 @@ STYLE GUIDE:
         )
         steps = data.get("steps", []) if isinstance(data, dict) else []
         steps = [s.strip() for s in steps if isinstance(s, str) and s.strip()]
-        if len(steps) == 5:
+        if len(steps) == 5 and not any(re.search(r"https?://", step, flags=re.IGNORECASE) for step in steps):
             return steps
     except Exception:
         pass
     return None
+
+
+def _remove_inline_compliance_fragments(html: str) -> str:
+    """Remove standalone compliance fragments from body copy before final disclaimer append."""
+    if not html:
+        return html
+
+    cleaned = html
+    patterns = [
+        r"\s*21\+\s+only\.?",
+        r"\s*please\s+bet\s+responsibly\.?",
+        r"\s*gambling\s+problem\?\s+call\s+1-800-gambler\.?",
+        r"\s*full\s+operator\s+terms\s+apply\.?",
+        r"\s*see\s+terms\s+for\s+full\s+details\.?",
+    ]
+    for pattern in patterns:
+        cleaned = _rewrite_html_text_nodes(
+            cleaned,
+            lambda text, pattern=pattern: re.sub(pattern, "", text, flags=re.IGNORECASE),
+        )
+    return cleaned
 
 def _ensure_two_paragraphs(
     html: str,
@@ -993,6 +1059,7 @@ def _apply_generation_quality_postprocess(html: str, keyword: str) -> str:
     html = _ensure_keyword_in_first_paragraph(html, keyword)
     html = _normalize_matchup_vs_notation(html)
     html = _trim_repeated_phrase_in_html(html, "see full terms", max_occurrences=2, replacement="see terms")
+    html = _remove_inline_compliance_fragments(html)
     return html
 
 
@@ -1037,13 +1104,95 @@ def _sportsbook_display_name(book: str) -> str:
 
 
 def _extract_matchup_from_event_context_text(event_context: str) -> str:
+    return _extract_featured_label_from_event_context(event_context, games_only=True)
+
+
+def _extract_featured_label_from_event_context(event_context: str, games_only: bool = False) -> str:
+    """Extract the featured game/event label from context when available."""
     if not event_context:
         return ""
-    match = re.search(r"Featured game:\s*([^\.]+)", event_context, flags=re.IGNORECASE)
+    patterns = [r"Featured game:\s*([^\.]+)"]
+    if not games_only:
+        patterns.append(r"Featured event:\s*([^\.]+)")
+    for pattern in patterns:
+        match = re.search(pattern, event_context, flags=re.IGNORECASE)
+        if match:
+            label = match.group(1).strip()
+            label = re.sub(r"\s@\s", " vs. ", label)
+            return re.sub(r"\s+", " ", label)
+    return ""
+
+
+def _parse_money_value(value: Any) -> float | None:
+    """Parse a simple currency string like '$50' into a float."""
+    if value is None:
+        return None
+    match = re.search(r"(\d+(?:\.\d+)?)", str(value))
     if not match:
-        return ""
-    matchup = match.group(1).strip()
-    return re.sub(r"\s@\s", " vs. ", matchup)
+        return None
+    try:
+        return float(match.group(1))
+    except (TypeError, ValueError):
+        return None
+
+
+def _offer_reward_phrase(offer: dict[str, Any]) -> str:
+    """Return a concise reward phrase like '$50 in bonus bets'."""
+    offer = offer or {}
+    offer_text = str(offer.get("offer_text") or offer.get("affiliate_offer") or "").strip()
+    details = extract_offer_amount_details(offer_text)
+    reward_amount = (
+        offer.get("bonus_amount")
+        or offer.get("reward_amount")
+        or details.get("reward_amount")
+        or extract_bonus_amount(offer_text)
+    )
+    reward_label = str(offer.get("reward_label") or details.get("reward_label") or "").strip().lower()
+    if not reward_label:
+        reward_label = "bonus bets"
+    if reward_amount:
+        return f"{reward_amount} in {reward_label}"
+    return reward_label
+
+
+def _default_selection_for_event(event_label: str) -> str:
+    """Build a generic but event-anchored selection for fallback examples."""
+    clean = re.sub(r"\s+", " ", str(event_label or "").strip())
+    if not clean:
+        return "the featured market"
+
+    matchup_parts = re.split(r"\s+(?:vs\.?|@)\s+", clean, maxsplit=1, flags=re.IGNORECASE)
+    if len(matchup_parts) == 2 and matchup_parts[0].strip():
+        return f"{matchup_parts[0].strip()} moneyline"
+
+    label_lower = clean.lower()
+    if any(token in label_lower for token in ("ufc", "mma", "boxing", "wbc", "fight night")):
+        return "a main-card moneyline"
+    if any(token in label_lower for token in ("nascar", "indycar", "formula 1", "f1")):
+        return "a head-to-head matchup"
+    if any(token in label_lower for token in ("golf", "masters", "pga", "open championship", "u.s. open", "ryder cup")):
+        return "a round matchup"
+    return f"a featured market tied to {clean}"
+
+
+def _build_fallback_bet_example_data(
+    offer: dict[str, Any],
+    event_context: str,
+) -> dict[str, Any] | None:
+    """Construct a deterministic sportsbook example when the UI did not provide one."""
+    event_label = _extract_featured_label_from_event_context(event_context)
+    if not event_label:
+        return None
+
+    label_lower = event_label.lower()
+    odds = 120 if any(token in label_lower for token in ("ufc", "mma", "boxing", "wbc", "fight night")) else -110
+    return {
+        "bet_amount": 50,
+        "selection": _default_selection_for_event(event_label),
+        "odds": odds,
+        "sportsbook_used": str(offer.get("brand") or "").strip().lower(),
+        "event_context": event_label,
+    }
 
 
 def _render_bet_example_section_deterministic(
@@ -1054,6 +1203,10 @@ def _render_bet_example_section_deterministic(
 ) -> str | None:
     """Render a sportsbook worked-example section from structured UI selections."""
     data = dict(bet_example_data or {})
+    if not data:
+        fallback_data = _build_fallback_bet_example_data(offer, event_context)
+        if fallback_data:
+            data = fallback_data
     if not data:
         return None
 
@@ -1079,31 +1232,28 @@ def _render_bet_example_section_deterministic(
 
     book = str(data.get("sportsbook_used") or data.get("sportsbook_requested") or "").strip()
     book_label = _sportsbook_display_name(book)
-    event_label = _extract_matchup_from_event_context_text(event_context) or str(data.get("event_context") or "").strip()
+    event_label = (
+        _extract_featured_label_from_event_context(event_context)
+        or str(data.get("event_context") or "").strip()
+    )
     event_clause = f" for {event_label}" if event_label else ""
     odds_display = f"{odds:+d}"
 
     bonus_code = str(offer.get("bonus_code") or "").strip()
-    offer_text = str(offer.get("offer_text") or offer.get("affiliate_offer") or "").strip()
-    brand = str(offer.get("brand") or "").strip()
-
-    if bonus_code:
-        code_clause = f"with code <strong>{bonus_code}</strong>"
-    else:
-        code_clause = "with no promo code required"
-
-    offer_clause = (
-        f"{brand} is offering {offer_text}"
-        if brand and offer_text
-        else offer_text
-        if offer_text
-        else "follow the exact offer terms for the promo details"
+    reward_phrase = _offer_reward_phrase(offer)
+    reward_amount_value = _parse_money_value(offer.get("bonus_amount")) or _parse_money_value(reward_phrase)
+    bonus_usage_sentence = (
+        f"A practical next step is splitting that into five ${reward_amount_value / 5:.0f} bonus bets for later markets."
+        if reward_amount_value and reward_amount_value >= 25
+        else "A practical next step is saving those bonus bets for later markets tied to the same slate."
     )
+    code_sentence = f" Because I used <strong>{bonus_code}</strong> at sign-up," if bonus_code else ""
 
     return (
         f"<p>Here is a worked example using {book_label}. If I place a ${bet_amount:.0f} bet on {selection} at {odds_display}{event_clause}, "
         f"I profit ${profit:.2f} if it wins and get back ${total_return:.2f} total (including stake).</p>"
-        f"<p>If the bet loses, I am down ${bet_amount:.0f} on the wager. Then {code_clause}, {offer_clause}. Keep the bonus mechanics tied to the exact offer terms listed in this article.</p>"
+        f"<p>If the bet loses, I am down ${bet_amount:.0f} on the wager.{code_sentence} once it settles I still receive {reward_phrase}. "
+        f"{bonus_usage_sentence} Bonus bet stake is not returned with winnings, so think of it as a profit-only payout.</p>"
     )
 
 
@@ -1280,6 +1430,7 @@ async def generate_draft_from_outline(
         max_links=1,
     )
     html_output = _strip_placeholder_hash_links(html_output)
+    html_output = _strip_invalid_non_switchboard_links(html_output)
     html_output = _dedupe_non_switchboard_links_by_url(html_output)
     html_output = _limit_non_switchboard_links(html_output, max_links=1)
     html_output = _apply_content_mode_language_guardrails(html_output, content_mode)
@@ -1621,7 +1772,7 @@ async def _generate_body_section(
     is_numbered_list = is_signup
     is_overview = any(x in title_lower for x in ["overview", "what is", "about"])
     is_eligibility = any(x in title_lower for x in ["eligibility", "key details", "requirements"])
-    is_daily_promos = "daily promo" in title_lower or "promos today" in title_lower
+    is_daily_promos = _is_daily_promos_heading(title_lower)
     is_terms = any(x in title_lower for x in ["terms", "conditions", "fine print"])
 
     if not is_how_to_claim:
@@ -1664,11 +1815,13 @@ async def _generate_body_section(
             brand,
             has_code,
             code_strong,
+            state=state,
+            event_context=event_context,
             prediction_market=prediction_market,
             dfs_mode=dfs_mode,
         )
 
-    if is_how_to_claim and not prediction_market and not dfs_mode and bet_example_data:
+    if is_how_to_claim and not prediction_market and not dfs_mode and (bet_example_data or event_context):
         deterministic_claim = _render_bet_example_section_deterministic(
             offer=primary_offer,
             bet_example_data=bet_example_data,
@@ -2116,7 +2269,7 @@ def _hydrate_outline_guidance(outline: list[dict], keyword: str) -> list[dict]:
             is_terms = any(x in title_lower for x in ["terms", "conditions", "fine print"])
             is_eligibility = any(x in title_lower for x in ["eligibility", "key details", "requirements"])
             is_overview = any(x in title_lower for x in ["overview", "what is", "about"])
-            is_daily_promos = "daily promo" in title_lower or "promos today" in title_lower
+            is_daily_promos = _is_daily_promos_heading(title_lower)
 
             if is_signup:
                 points = [

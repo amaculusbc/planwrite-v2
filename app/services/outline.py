@@ -25,29 +25,39 @@ from app.services.operator_profile import (
 )
 
 
-OUTLINE_SCHEMA = {
-    "type": "array",
-    "items": {
-        "type": "object",
-        "properties": {
-            "level": {
-                "type": "string",
-                "enum": ["intro", "shortcode", "h2", "h3"],
-            },
-            "title": {"type": "string"},
-            "talking_points": {
-                "type": "array",
-                "items": {"type": "string"},
-            },
-            "avoid": {
-                "type": "array",
-                "items": {"type": "string"},
-            },
+OUTLINE_SECTION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "level": {
+            "type": "string",
+            "enum": ["intro", "shortcode", "h2", "h3"],
         },
-        "required": ["level", "title", "talking_points", "avoid"],
-        "additionalProperties": False,
+        "title": {"type": "string"},
+        "talking_points": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+        "avoid": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
     },
-    "minItems": 3,
+    "required": ["level", "title", "talking_points", "avoid"],
+    "additionalProperties": False,
+}
+
+
+OUTLINE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "outline": {
+            "type": "array",
+            "items": OUTLINE_SECTION_SCHEMA,
+            "minItems": 3,
+        }
+    },
+    "required": ["outline"],
+    "additionalProperties": False,
 }
 
 
@@ -110,6 +120,97 @@ def _headline_topic(
     return "sportsbook promo code"
 
 
+_MULTI_WORD_TEAM_ENDINGS = {
+    "red sox",
+    "white sox",
+    "blue jays",
+    "trail blazers",
+    "tar heels",
+    "fighting irish",
+    "golden eagles",
+    "mean green",
+    "hilltoppers",
+    "mountain hawks",
+    "ragin cajuns",
+    "sun devils",
+}
+
+
+def _short_team_label(name: str) -> str:
+    """Condense full team names for editorial headings."""
+    clean = re.sub(r"\s+", " ", str(name or "").strip())
+    if not clean:
+        return ""
+    parts = clean.split(" ")
+    if len(parts) == 1:
+        return clean
+    last_two = " ".join(parts[-2:]).lower()
+    if last_two in _MULTI_WORD_TEAM_ENDINGS:
+        return " ".join(parts[-2:])
+    return parts[-1]
+
+
+def _compact_matchup_label(matchup: str) -> str:
+    """Shorten team matchups while preserving non-team events."""
+    raw = re.sub(r"\s+", " ", str(matchup or "").strip())
+    if not raw:
+        return ""
+    if not re.search(r"\s+(?:vs\.?|@)\s+", raw, flags=re.IGNORECASE):
+        return raw
+    parts = re.split(r"\s+(?:vs\.?|@)\s+", raw, maxsplit=1, flags=re.IGNORECASE)
+    if len(parts) != 2:
+        return raw
+    left, right = [part.strip() for part in parts]
+    if not left or not right:
+        return raw
+    short_left = _short_team_label(left)
+    short_right = _short_team_label(right)
+    if short_left and short_right:
+        return f"{short_left} vs. {short_right}"
+    return raw
+
+
+def _is_claim_title(title_lower: str) -> bool:
+    """Return True if the heading already functions as the claim/example section."""
+    if not title_lower:
+        return False
+    return bool(re.search(
+        r"(^using\b.*\b(code|offer|bonus)\b)|\b(how to claim|claim|how to use|worked example|bet example|quick example|example)\b",
+        title_lower,
+    ))
+
+
+def _is_signup_title(title_lower: str) -> bool:
+    """Return True if the heading already functions as the sign-up section."""
+    if not title_lower:
+        return False
+    return bool(re.search(
+        r"\b(sign ?up|sign-up|signup|register|registration|create an? account|open an? account|"
+        r"get started|how to sign|how to register|how to join)\b",
+        title_lower,
+    ))
+
+
+def _is_terms_title(title_lower: str) -> bool:
+    """Return True if the heading already functions as the terms/fine print section."""
+    if not title_lower:
+        return False
+    return bool(re.search(r"\b(terms|conditions|fine print|house rules)\b", title_lower))
+
+
+def _classify_h2_section(title_lower: str) -> str:
+    """Classify editorial H2s so duplicate semantic sections can be removed."""
+    if _is_daily_promos_title(title_lower):
+        return "daily_promos"
+    if _is_signup_title(title_lower):
+        return "signup"
+    if _is_terms_title(title_lower):
+        return "terms"
+    if _is_claim_title(title_lower):
+        return "claim"
+    return "other"
+
+
 def _contextual_section_titles(
     keyword: str,
     brand: str,
@@ -120,10 +221,11 @@ def _contextual_section_titles(
     """Build contextual section titles (game-specific when context is available)."""
     topic = _headline_topic(keyword, brand, is_prediction_market=is_prediction_market, is_dfs=is_dfs)
     matchup = _extract_matchup_from_event_context(event_context)
+    title_matchup = _compact_matchup_label(matchup)
     seed = "|".join([
         topic.lower(),
         brand.lower(),
-        matchup.lower(),
+        title_matchup.lower(),
         "pm" if is_prediction_market else "dfs" if is_dfs else "sportsbook",
     ])
 
@@ -133,48 +235,48 @@ def _contextual_section_titles(
         digest = hashlib.sha1(f"{seed}|{slot}".encode("utf-8")).hexdigest()
         return options[int(digest[:8], 16) % len(options)]
 
-    if matchup:
+    if title_matchup:
         if is_prediction_market:
             overview_options = [
-                f"Why {topic} fits {matchup}",
-                f"{topic}: Best Market Angle for {matchup}",
-                f"What Stands Out About {topic} for {matchup}",
-                f"Where {topic} fits on {matchup}",
+                f"Why {topic} fits {title_matchup}",
+                f"Best Market Angle for {title_matchup}",
+                f"What Stands Out for {title_matchup}",
+                f"Where {topic} fits on {title_matchup}",
             ]
             claim_options = [
-                f"How to Use {topic} for {matchup}",
-                f"How to Use {topic} on {matchup}",
-                f"How to Use {topic} Around {matchup}",
+                f"How to Use the Offer for {title_matchup}",
+                f"How to Use the Offer on {title_matchup}",
+                f"How to Use the Offer Around {title_matchup}",
             ]
         elif is_dfs:
             overview_options = [
-                f"Why {topic} works for {matchup}",
-                f"{topic}: Best DFS Angle for {matchup}",
-                f"What to Know About {topic} for {matchup}",
+                f"Why {topic} works for {title_matchup}",
+                f"Best DFS Angle for {title_matchup}",
+                f"What to Know About {title_matchup}",
                 f"Where {topic} fits on this slate",
             ]
             claim_options = [
-                f"How to Use {topic} for {matchup}",
-                f"How to Use {topic} on this slate",
-                f"How to Use {topic} before {matchup}",
+                f"How to Use the Offer for {title_matchup}",
+                f"How to Use the Offer on this slate",
+                f"How to Use the Offer before {title_matchup}",
             ]
         else:
             overview_options = [
-                f"Why {topic} is worth a look for {matchup}",
-                f"{topic}: Best Angle for {matchup}",
-                f"What Stands Out About {topic} for {matchup}",
-                f"How {topic} fits {matchup}",
+                f"Why {topic} is worth a look for {title_matchup}",
+                f"Best Angle for {title_matchup}",
+                f"What Stands Out for {title_matchup}",
+                f"How {topic} fits {title_matchup}",
             ]
             claim_options = [
-                f"How to Use {topic} for {matchup}",
-                f"Worked Example: {topic} for {matchup}",
-                f"Using {topic} on {matchup}",
-                f"How the {topic} works for {matchup}",
+                f"Worked Example for {title_matchup}",
+                f"How the Bonus Bets Play Out for {title_matchup}",
+                f"Example: Turning the Offer Into Extra Bets for {title_matchup}",
+                f"What the Welcome Offer Looks Like on {title_matchup}",
             ]
         signup_options = [
-            f"How to Sign Up Before {matchup}",
-            f"Sign-Up Steps Before {matchup}",
-            f"How to Get Started Before {matchup}",
+            f"How to Sign Up Before {title_matchup}",
+            f"Sign-Up Steps Before {title_matchup}",
+            f"How to Get Started Before {title_matchup}",
         ]
     else:
         if is_prediction_market:
@@ -185,9 +287,9 @@ def _contextual_section_titles(
                 f"Where {topic} fits today",
             ]
             claim_options = [
-                f"How to Use {topic} for Any Market",
-                f"How to Use {topic} Today",
-                f"How to Use {topic} Across Top Markets",
+                "How to Use the Offer for Any Market",
+                "How to Use the Offer Today",
+                "How to Use the Offer Across Top Markets",
             ]
         elif is_dfs:
             overview_options = [
@@ -197,9 +299,9 @@ def _contextual_section_titles(
                 f"Where {topic} fits today",
             ]
             claim_options = [
-                f"How to Use {topic} for Any Slate",
-                f"How to Use {topic} Today",
-                f"How to Use {topic} Across Top Slates",
+                "How to Use the Offer for Any Slate",
+                "How to Use the Offer Today",
+                "How to Use the Offer Across Top Slates",
             ]
         else:
             overview_options = [
@@ -209,10 +311,10 @@ def _contextual_section_titles(
                 f"Where {topic} fits today",
             ]
             claim_options = [
-                f"How to Use {topic} for Any Sport",
-                f"Worked Example: {topic} in Action",
-                f"How the {topic} works today",
-                f"Using {topic} right now",
+                "Worked Example: Offer in Action",
+                "How the Bonus Bets Play Out Today",
+                "Example: Turning the Offer Into Extra Bets",
+                "What the Welcome Offer Looks Like Today",
             ]
         signup_options = [
             f"How to Sign Up for {topic}",
@@ -228,21 +330,21 @@ def _contextual_section_titles(
     ]
     if is_prediction_market:
         terms_options = [
-            "Market Terms & Eligibility",
-            "Market Rules & Eligibility",
-            "Terms, Eligibility & Settlement",
+            "Market Terms & Settlement",
+            "Market Rules & Settlement",
+            "Offer Terms & Market Rules",
         ]
     elif is_dfs:
         terms_options = [
-            "Contest Terms & Eligibility",
-            "DFS Terms & Eligibility",
-            "Contest Rules & Eligibility",
+            "Contest Terms & Rules",
+            "DFS Terms & Rules",
+            "Contest Rules & Fine Print",
         ]
     else:
         terms_options = [
             "Terms & Conditions",
             "Offer Terms & Conditions",
-            "Terms, Eligibility & Fine Print",
+            "Fine Print & Offer Terms",
         ]
 
     return {
@@ -252,6 +354,23 @@ def _contextual_section_titles(
         "daily_promos": choose("daily_promos", daily_promos_options),
         "terms": choose("terms", terms_options),
     }
+
+
+def _is_daily_promos_title(title_lower: str) -> bool:
+    """Return True for any daily-promo placeholder title variant."""
+    if not title_lower:
+        return False
+    return any(
+        phrase in title_lower
+        for phrase in (
+            "daily promo",
+            "promos today",
+            "promo update placeholder",
+            "daily promos placeholder",
+            "today's promo placeholder",
+            "promo placeholder",
+        )
+    )
 
 
 def _apply_editorial_section_rules(
@@ -293,26 +412,33 @@ def _apply_editorial_section_rules(
         if level == "h2":
             if first_h2_idx == -1:
                 first_h2_idx = len(cleaned)
-            if "how to claim" in title_lower or "how to use" in title_lower:
+                normalized["title"] = titles["overview"]
+                cleaned.append(normalized)
+                continue
+
+            section_kind = _classify_h2_section(title_lower)
+            if section_kind == "claim":
+                if has_claim:
+                    continue
                 normalized["title"] = titles["claim"]
                 has_claim = True
-            elif "daily promo" in title_lower or "promos today" in title_lower:
+            elif section_kind == "daily_promos":
+                if has_daily_promos:
+                    continue
                 normalized["title"] = titles["daily_promos"]
                 has_daily_promos = True
-            elif "how to sign" in title_lower or "sign up" in title_lower or "register" in title_lower:
+            elif section_kind == "signup":
+                if has_signup:
+                    continue
                 normalized["title"] = titles["signup"]
                 has_signup = True
-            elif "terms" in title_lower or "conditions" in title_lower or "fine print" in title_lower:
+            elif section_kind == "terms":
+                if has_terms:
+                    continue
                 normalized["title"] = titles["terms"]
                 has_terms = True
 
         cleaned.append(normalized)
-
-    if first_h2_idx >= 0:
-        first_h2 = dict(cleaned[first_h2_idx])
-        if str(first_h2.get("level", "")) == "h2":
-            first_h2["title"] = titles["overview"]
-            cleaned[first_h2_idx] = first_h2
 
     if not has_claim:
         cleaned.append({
@@ -352,7 +478,10 @@ def _apply_editorial_section_rules(
             (
                 idx for idx, sec in enumerate(cleaned)
                 if str(sec.get("level", "")) == "h2"
-                and ("sign up" in str(sec.get("title", "")).lower() or "terms" in str(sec.get("title", "")).lower())
+                and (
+                    _is_signup_title(str(sec.get("title", "")).lower())
+                    or _is_terms_title(str(sec.get("title", "")).lower())
+                )
             ),
             len(cleaned),
         )
@@ -474,12 +603,13 @@ The outline you create will be reviewed by human writers who may modify it.
 Do not mirror the H1 with boilerplate H2s. Avoid section titles that are just the keyword plus the matchup.
 
 Output a structured outline in this exact JSON format:
-[
-  {{"level": "intro", "title": "", "talking_points": ["point 1", "point 2"], "avoid": []}},
-  {{"level": "shortcode", "title": "", "talking_points": [], "avoid": []}},
-  {{"level": "h2", "title": "Section Title", "talking_points": ["unique point 1", "unique point 2"], "avoid": ["thing covered elsewhere"]}},
-  ...
-]
+{{
+  "outline": [
+    {{"level": "intro", "title": "", "talking_points": ["point 1", "point 2"], "avoid": []}},
+    {{"level": "shortcode", "title": "", "talking_points": [], "avoid": []}},
+    {{"level": "h2", "title": "Section Title", "talking_points": ["unique point 1", "unique point 2"], "avoid": ["thing covered elsewhere"]}}
+  ]
+}}
 
 RULES:
 - INTRO: 2-3 talking points about the hook, date, and offer value
@@ -588,10 +718,10 @@ HEADING RULES:
 - Avoid headings that are just "{keyword}" plus the event label
 - Vary the framing across articles so the outline does not look templated
 
-Output ONLY the JSON array, no other text:"""
+Output ONLY the JSON object, no other text:"""
 
     try:
-        outline = await generate_completion_structured(
+        data = await generate_completion_structured(
             prompt=user_prompt,
             system_prompt=system_prompt,
             schema=OUTLINE_SCHEMA,
@@ -600,6 +730,7 @@ Output ONLY the JSON array, no other text:"""
             temperature=get_temperature_by_section("outline"),
             max_tokens=2000,
         )
+        outline = data.get("outline", []) if isinstance(data, dict) else []
         outline = _ensure_shortcodes(outline)
         outline = _apply_editorial_section_rules(
             outline,
