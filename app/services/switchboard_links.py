@@ -70,6 +70,8 @@ def inject_switchboard_links(
         inner_lower = inner.lower()
         brand_match = bool(brand_lower) and brand_lower in inner_lower
         code_match = bool(code_lower) and code_lower in inner_lower
+        if re.search(r"\b(?:promo|bonus)\s+code\b", inner_lower):
+            return match.group(0)
         # Do not wrap generic anchors like "<strong>promo code</strong>" for every offer.
         if not (brand_match or code_match):
             return match.group(0)
@@ -170,6 +172,7 @@ def build_switchboard_url(
     context: str = "web-article-top-stories",
     state_code: str = "",
     property_id: str | int = "1",
+    switchboard_domain: str = "switchboard.actionnetwork.com",
 ) -> str:
     """Build a switchboard tracking URL.
 
@@ -183,7 +186,7 @@ def build_switchboard_url(
     Returns:
         Fully constructed switchboard URL
     """
-    base = "https://switchboard.actionnetwork.com/offers"
+    base = f"https://{switchboard_domain}/offers"
     params = [
         f"affiliateId={affiliate_id}",
         f"campaignId={campaign_id}",

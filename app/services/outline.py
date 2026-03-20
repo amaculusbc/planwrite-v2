@@ -4,6 +4,7 @@ Generates structured outlines with unique talking points per section.
 Writers can review and modify the outline before draft generation (Execute stage).
 """
 
+import hashlib
 import json
 import re
 from datetime import datetime
@@ -98,7 +99,10 @@ def _headline_topic(
     if keyword and keyword.strip():
         return keyword.strip()
     if brand and brand.strip():
-        return f"{brand.strip()} promo code"
+        brand_clean = brand.strip()
+        if brand_clean.lower() == "bet365":
+            return f"{brand_clean} bonus code"
+        return f"{brand_clean} promo code"
     if is_prediction_market:
         return "prediction market promo code"
     if is_dfs:
@@ -116,41 +120,137 @@ def _contextual_section_titles(
     """Build contextual section titles (game-specific when context is available)."""
     topic = _headline_topic(keyword, brand, is_prediction_market=is_prediction_market, is_dfs=is_dfs)
     matchup = _extract_matchup_from_event_context(event_context)
-    claim_title = (
-        f"How to Use {topic} for {matchup}"
-        if is_prediction_market and matchup
-        else f"How to Use {topic} for Any Market"
-        if is_prediction_market
-        else f"How to Use {topic} for {matchup}"
-        if is_dfs and matchup
-        else f"How to Use {topic} for Any Slate"
-        if is_dfs
-        else f"How to Claim {topic} for {matchup}"
-        if matchup
-        else f"How to Claim {topic} for Any Sport"
-    )
-    terms_title = "Terms & Eligibility" if (is_prediction_market or is_dfs) else "Terms & Conditions"
-    overview_no_matchup = (
-        f"{topic}: Promo for Top Markets Today"
-        if is_prediction_market
-        else f"{topic}: Best Offers for Today's Slates"
-        if is_dfs
-        else f"{topic}: Get Bonus for All Sports Today"
-    )
+    seed = "|".join([
+        topic.lower(),
+        brand.lower(),
+        matchup.lower(),
+        "pm" if is_prediction_market else "dfs" if is_dfs else "sportsbook",
+    ])
+
+    def choose(slot: str, options: list[str]) -> str:
+        if not options:
+            return ""
+        digest = hashlib.sha1(f"{seed}|{slot}".encode("utf-8")).hexdigest()
+        return options[int(digest[:8], 16) % len(options)]
+
     if matchup:
-        return {
-            "overview": f"{topic} for {matchup}",
-            "claim": claim_title,
-            "signup": f"How to Sign Up Before {matchup}",
-            "daily_promos": "Daily Promos Today",
-            "terms": terms_title,
-        }
+        if is_prediction_market:
+            overview_options = [
+                f"Why {topic} fits {matchup}",
+                f"{topic}: Best Market Angle for {matchup}",
+                f"What Stands Out About {topic} for {matchup}",
+                f"Where {topic} fits on {matchup}",
+            ]
+            claim_options = [
+                f"How to Use {topic} for {matchup}",
+                f"How to Use {topic} on {matchup}",
+                f"How to Use {topic} Around {matchup}",
+            ]
+        elif is_dfs:
+            overview_options = [
+                f"Why {topic} works for {matchup}",
+                f"{topic}: Best DFS Angle for {matchup}",
+                f"What to Know About {topic} for {matchup}",
+                f"Where {topic} fits on this slate",
+            ]
+            claim_options = [
+                f"How to Use {topic} for {matchup}",
+                f"How to Use {topic} on this slate",
+                f"How to Use {topic} before {matchup}",
+            ]
+        else:
+            overview_options = [
+                f"Why {topic} is worth a look for {matchup}",
+                f"{topic}: Best Angle for {matchup}",
+                f"What Stands Out About {topic} for {matchup}",
+                f"How {topic} fits {matchup}",
+            ]
+            claim_options = [
+                f"How to Use {topic} for {matchup}",
+                f"Worked Example: {topic} for {matchup}",
+                f"Using {topic} on {matchup}",
+                f"How the {topic} works for {matchup}",
+            ]
+        signup_options = [
+            f"How to Sign Up Before {matchup}",
+            f"Sign-Up Steps Before {matchup}",
+            f"How to Get Started Before {matchup}",
+        ]
+    else:
+        if is_prediction_market:
+            overview_options = [
+                f"Why {topic} is worth a look today",
+                f"{topic}: Best Market Angle Today",
+                f"What to Know About {topic} right now",
+                f"Where {topic} fits today",
+            ]
+            claim_options = [
+                f"How to Use {topic} for Any Market",
+                f"How to Use {topic} Today",
+                f"How to Use {topic} Across Top Markets",
+            ]
+        elif is_dfs:
+            overview_options = [
+                f"Why {topic} is worth a look today",
+                f"{topic}: Best DFS Angle Today",
+                f"What to Know About {topic} right now",
+                f"Where {topic} fits today",
+            ]
+            claim_options = [
+                f"How to Use {topic} for Any Slate",
+                f"How to Use {topic} Today",
+                f"How to Use {topic} Across Top Slates",
+            ]
+        else:
+            overview_options = [
+                f"Why {topic} is worth a look today",
+                f"{topic}: Best Angle Right Now",
+                f"What to Know About {topic} today",
+                f"Where {topic} fits today",
+            ]
+            claim_options = [
+                f"How to Use {topic} for Any Sport",
+                f"Worked Example: {topic} in Action",
+                f"How the {topic} works today",
+                f"Using {topic} right now",
+            ]
+        signup_options = [
+            f"How to Sign Up for {topic}",
+            f"Sign-Up Steps for {topic}",
+            f"How to Get Started with {topic}",
+        ]
+
+    daily_promos_options = [
+        "Daily Promos Placeholder",
+        "Daily Promos Today",
+        "Today's Promo Placeholder",
+        "Promo Update Placeholder",
+    ]
+    if is_prediction_market:
+        terms_options = [
+            "Market Terms & Eligibility",
+            "Market Rules & Eligibility",
+            "Terms, Eligibility & Settlement",
+        ]
+    elif is_dfs:
+        terms_options = [
+            "Contest Terms & Eligibility",
+            "DFS Terms & Eligibility",
+            "Contest Rules & Eligibility",
+        ]
+    else:
+        terms_options = [
+            "Terms & Conditions",
+            "Offer Terms & Conditions",
+            "Terms, Eligibility & Fine Print",
+        ]
+
     return {
-        "overview": overview_no_matchup,
-        "claim": claim_title,
-        "signup": f"How to Sign Up for {topic}",
-        "daily_promos": "Daily Promos Today",
-        "terms": terms_title,
+        "overview": choose("overview", overview_options),
+        "claim": choose("claim", claim_options),
+        "signup": choose("signup", signup_options),
+        "daily_promos": choose("daily_promos", daily_promos_options),
+        "terms": choose("terms", terms_options),
     }
 
 
@@ -238,12 +338,12 @@ def _apply_editorial_section_rules(
             "level": "h2",
             "title": titles["daily_promos"],
             "talking_points": [
-                "Placeholder for today's rotating promos",
-                "List operator, promo code, and eligible states"
+                "Placeholder only for today's rotating promos",
+                "List operator, code, and eligible states"
                 if is_prediction_market
-                else "List DFS app, promo code, and eligible states"
+                else "List DFS app, code, and eligible states"
                 if is_dfs
-                else "List sportsbook, promo code, and eligible states",
+                else "List sportsbook, code, and eligible states",
                 "Update this section daily before publishing",
             ],
             "avoid": ["Using stale promos from prior days"],
@@ -371,6 +471,7 @@ Your job is to create a DETAILED CONTENT PLAN for a promo code article.
 
 CRITICAL: Each section must have UNIQUE talking points. Never repeat information across sections.
 The outline you create will be reviewed by human writers who may modify it.
+Do not mirror the H1 with boilerplate H2s. Avoid section titles that are just the keyword plus the matchup.
 
 Output a structured outline in this exact JSON format:
 [
@@ -387,7 +488,8 @@ RULES:
 - H3 subsections: Only when genuinely helpful, 1-2 talking points
 - "avoid" lists what other sections cover (to prevent repetition)
 - Maximum 5 H2 sections total
-- Include keyword in first H2 title
+- The first H2 should mention the topic naturally, but should not repeat the H1 wording
+- Do not create a standalone "Key Details" or "Eligibility" section
 - {language_rule}"""
 
     claim_point = (
@@ -425,14 +527,14 @@ RULES:
         if is_prediction_market
         else "Should mention date, offer value, promo code if required, and explicit eligible states (not generic \"nationwide\")"
         if is_dfs
-        else "Should mention date, offer value, that code is needed, and explicit eligible states (not generic \"nationwide\")"
+        else "Should mention date, offer value, whether a code is needed, and explicit eligible states (not generic \"nationwide\")"
     )
     daily_promos_point = (
-        "Use placeholder bullets for editor updates (operator, code, offer, states)"
+        "Use placeholder bullets only for editor updates (operator, code, offer, states)"
         if is_prediction_market
-        else "Use placeholder bullets for editor updates (DFS app, code, offer, states)"
+        else "Use placeholder bullets only for editor updates (DFS app, code, offer, states)"
         if is_dfs
-        else "Use placeholder bullets for editor updates (book, code, offer, states)"
+        else "Use placeholder bullets only for editor updates (book, code, offer, states)"
     )
 
     user_prompt = f"""Create a detailed content plan for this article:
@@ -459,6 +561,8 @@ STYLE GUIDE (follow for tone/structure):
 STYLE EXAMPLES (match this tone):
 {rag_context or "(none available)"}
 
+{"COMPETITOR RESEARCH GOAL:\n- Use the research below to avoid cloning competitor headings or flow.\n- Pick at least one angle or heading style that is materially different from competitors.\n- Do not reuse competitor wording verbatim.\n" if competitor_context else ""}
+
 REQUIRED STRUCTURE:
 1. [INTRO] - Hook with date, offer value, promo code mention
 2. [SHORTCODE] - Promo card
@@ -466,7 +570,7 @@ REQUIRED STRUCTURE:
 4. [SHORTCODE]
 5. [H2: {section_titles["claim"]}] - Worked example with calculations
 6. [SHORTCODE]
-7. [H2: {section_titles["daily_promos"]}] - Placeholder section for daily promo updates
+7. [H2: {section_titles["daily_promos"]}] - Placeholder section only for daily promo updates
 8. [H2: {section_titles["signup"]}] - Step-by-step numbered list
 9. [H2: {section_titles["terms"]}] - Fine print summary
 
@@ -477,6 +581,12 @@ TALKING POINTS GUIDANCE:
 - DAILY PROMOS: {daily_promos_point}
 - SIGN UP: Numbered steps (1. Go to site 2. Register 3. Enter code 4. Deposit {signup_step_five})
 - TERMS: {terms_point}
+
+HEADING RULES:
+- Every H2 must feel editorially distinct from the H1
+- Avoid generic headings like "Key Details & Eligibility"
+- Avoid headings that are just "{keyword}" plus the event label
+- Vary the framing across articles so the outline does not look templated
 
 Output ONLY the JSON array, no other text:"""
 
@@ -555,7 +665,7 @@ def _ensure_shortcodes(outline: list[dict]) -> list[dict]:
         result.insert(0, {
             "level": "intro",
             "title": "",
-            "talking_points": ["Hook with date and offer value", "Mention promo code twice"],
+            "talking_points": ["Hook with date and offer value", "Mention the code only if one is required"],
             "avoid": [],
         })
         result.insert(1, {"level": "shortcode", "title": "", "talking_points": [], "avoid": []})
@@ -592,8 +702,8 @@ def _get_default_outline(
             "title": "",
             "talking_points": [
                 f"Hook with today's date and {brand} offer value",
-                f"Mention the promo code twice naturally",
-                "State eligibility (21+, new users, explicit eligible states)",
+                "Mention the code naturally if one is required",
+                "State explicit eligible states without calling the offer nationwide",
             ],
             "avoid": [],
         },
@@ -615,7 +725,7 @@ def _get_default_outline(
                 "Timing advantage (sign up now)",
                 "What makes it stand out from other promos",
             ],
-            "avoid": ["Step-by-step claiming instructions", "Full terms details"],
+            "avoid": ["Step-by-step claiming instructions", "Full terms details", "Repeating the H1 wording"],
         },
         {
             "level": "shortcode",
@@ -651,13 +761,13 @@ def _get_default_outline(
             "level": "h2",
             "title": titles["daily_promos"],
             "talking_points": [
-                "Placeholder for today's rotating promos (editor updates daily)",
-                "List sportsbook, offer, promo code, and state availability"
+                "Placeholder only for today's rotating promos (editor updates daily)",
+                "List sportsbook, offer, code, and state availability"
                 if not is_prediction_market and not is_dfs
-                else "List operator, offer, promo code, and state availability"
+                else "List operator, offer, code, and state availability"
                 if is_prediction_market
-                else "List DFS app, offer, promo code, and state availability",
-                "Note expiration window for today's promos",
+                else "List DFS app, offer, code, and state availability",
+                "Do not prefill this section with live promo copy",
             ],
             "avoid": ["Using stale promos from previous days"],
         },
@@ -689,7 +799,7 @@ def _get_default_outline(
                 if is_prediction_market
                 else "Eligibility, contest rules, and expiration notes",
             ],
-            "avoid": ["Eligibility (covered above)", "Claiming steps"],
+            "avoid": ["Repeating eligibility copy from above", "Claiming steps"],
         },
     ]
 

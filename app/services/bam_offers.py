@@ -358,6 +358,15 @@ async def get_offers_bam(
             o for o in offers
             if state_upper in (o.get("states") or []) or "ALL" in (o.get("states") or [])
         ]
+        offers.sort(
+            key=lambda o: (
+                0
+                if state_upper in (o.get("states") or []) and "ALL" not in (o.get("states") or [])
+                else 1,
+                str(o.get("brand") or "").lower(),
+                str(o.get("offer_text") or o.get("affiliate_offer") or "").lower(),
+            )
+        )
 
     return offers
 

@@ -1,6 +1,12 @@
 """Phase 6 tests for editorial/compliance regression validators."""
 
-from app.services.compliance import check_editorial_regressions, check_offer_facts, validate_content
+from app.services.compliance import (
+    check_cta_links,
+    check_editorial_regressions,
+    check_link_quality,
+    check_offer_facts,
+    validate_content,
+)
 
 
 def _issue_types(issues):
@@ -62,3 +68,22 @@ def test_validate_content_includes_editorial_regression_checks():
     )
     assert any(issue.type == "main_keyword_missing_early" for issue in result.issues)
 
+
+def test_check_cta_links_accepts_switchboard_and_bam_shortcodes():
+    switchboard_content = '<p><a data-id="switchboard_tracking" href="https://switchboard.actionnetwork.com/offers?x=1">Claim</a></p>'
+    bam_content = '[bam-inline-promotion placement-id="2037" property-id="1" affiliate="bet365"]'
+
+    assert check_cta_links(switchboard_content) == []
+    assert check_cta_links(bam_content) == []
+
+
+def test_check_link_quality_flags_html_heading_links():
+    content = '<h2><a href="https://www.actionnetwork.com/online-sports-betting/reviews/bet365">bet365 guide</a></h2>'
+    issues = check_link_quality(content, allowed_domains=["actionnetwork.com"])
+    assert "heading_link" in _issue_types(issues)
+
+
+def test_editorial_regressions_warn_on_bet365_promo_code_wording():
+    content = "<p>The bet365 promo code is live tonight.</p>"
+    issues = check_editorial_regressions(content, keyword="bet365 bonus code", offer={"brand": "bet365"})
+    assert "bet365_keyword_mismatch" in _issue_types(issues)

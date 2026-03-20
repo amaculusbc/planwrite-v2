@@ -142,8 +142,24 @@
                 <!-- Game Context Section -->
                 <div class="border-t border-gray-200 pt-4 mt-4">
                     <h3 class="text-sm font-medium text-gray-900 mb-3">Game Context (Optional)</h3>
-                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <!-- Sport selector -->
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-gray-700">Context Mode</label>
+                        <div class="mt-2 flex flex-wrap gap-3">
+                            <label class="inline-flex items-center gap-2 text-sm text-gray-700">
+                                <input type="radio" x-model="form.event_mode" value="team" @change="onEventModeChange()"
+                                       class="border-gray-300 text-primary-600 focus:ring-primary-500">
+                                <span>Team Game</span>
+                            </label>
+                            <label class="inline-flex items-center gap-2 text-sm text-gray-700">
+                                <input type="radio" x-model="form.event_mode" value="custom" @change="onEventModeChange()"
+                                       class="border-gray-300 text-primary-600 focus:ring-primary-500">
+                                <span>Custom Event</span>
+                            </label>
+                        </div>
+                        <p class="mt-1 text-xs text-gray-500">Use custom events for UFC, NASCAR, golf, World Cup, WBC, and other niche coverage.</p>
+                    </div>
+
+                    <div x-show="form.event_mode === 'team'" x-transition class="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <div>
                             <label for="sport" class="block text-sm font-medium text-gray-700">Sport</label>
                             <select x-model="form.sport" id="sport" name="sport" @change="loadGames()"
@@ -155,14 +171,12 @@
                             </select>
                         </div>
 
-                        <!-- Date picker -->
                         <div>
                             <label for="game_date" class="block text-sm font-medium text-gray-700">Date</label>
                             <input type="date" x-model="form.game_date" id="game_date" name="game_date" @change="loadGames()"
                                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm">
                         </div>
 
-                        <!-- Game selector -->
                         <div>
                             <label for="game_id" class="block text-sm font-medium text-gray-700">Game</label>
                             <select x-model="form.game_id" id="game_id" name="game_id" @change="loadOdds()"
@@ -175,6 +189,48 @@
                             </select>
                             <p x-show="loadingGames" class="mt-1 text-xs text-gray-500">Loading games...</p>
                             <p x-show="!loadingGames && form.sport && games.length === 0" class="mt-1 text-xs text-yellow-600">No games found for this date</p>
+                        </div>
+                    </div>
+
+                    <div x-show="form.event_mode === 'custom'" x-transition class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label for="custom_event_type" class="block text-sm font-medium text-gray-700">Event Type</label>
+                            <select x-model="form.custom_event_type" id="custom_event_type" name="custom_event_type"
+                                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm">
+                                <option value="custom">Custom Event</option>
+                                <option value="fight">Fight Card</option>
+                                <option value="race">Race</option>
+                                <option value="tournament">Tournament</option>
+                                <option value="event">Special Event</option>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label for="custom_sport" class="block text-sm font-medium text-gray-700">Sport/League</label>
+                            <input type="text" x-model="form.custom_sport" id="custom_sport" name="custom_sport"
+                                   placeholder="e.g., UFC, NASCAR, Golf, Soccer"
+                                   class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm">
+                        </div>
+
+                        <div class="md:col-span-2">
+                            <label for="custom_event" class="block text-sm font-medium text-gray-700">Event Name</label>
+                            <input type="text" x-model="form.custom_event" id="custom_event" name="custom_event" @input="refreshSuggestedTitle()"
+                                   placeholder="e.g., UFC 325 Main Card or World Cup Qualifier"
+                                   class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm">
+                        </div>
+
+                        <div>
+                            <label for="custom_start_time" class="block text-sm font-medium text-gray-700">Start Time</label>
+                            <input type="text" x-model="form.custom_start_time" id="custom_start_time" name="custom_start_time"
+                                   placeholder="e.g., Sat, May 3, 10:00 PM ET"
+                                   class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm">
+                        </div>
+
+                        <div>
+                            <label for="custom_network" class="block text-sm font-medium text-gray-700">Network/Platform</label>
+                            <input type="text" x-model="form.custom_network" id="custom_network" name="custom_network"
+                                   placeholder="e.g., ESPN+, FOX, CBS"
+                                   class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm">
                         </div>
                     </div>
 
@@ -269,7 +325,7 @@
                     <div>
                         <label for="title" class="block text-sm font-medium text-gray-700">H1 Title <span class="text-red-500">*</span></label>
                         <input type="text" x-model="form.title" @input="onTitleInput()" id="title" name="title" :required="activeTab === 'single'"
-                               placeholder="e.g., DraftKings Promo Code: Get $150 Bonus Bets in January 2025"
+                               placeholder="e.g., bet365 bonus code: Celtics vs. Spurs"
                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm">
                     </div>
 
@@ -329,7 +385,7 @@
                 <div class="md:col-span-3">
                     <label class="block text-sm font-medium text-gray-700">Title</label>
                     <input type="text" x-model="batch.newItem.title"
-                           placeholder="e.g., bet365 Promo Code: Get $200 Bonus Bets"
+                           placeholder="e.g., bet365 bonus code: UFC 325 Main Card"
                            class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm">
                 </div>
             </div>
@@ -418,7 +474,7 @@
                 <h3 class="text-sm font-semibold text-gray-900">1. Quick Start</h3>
                 <ol class="list-decimal list-inside space-y-1 text-sm text-gray-700">
                     <li>Pick `Property`, `Offer`, and `State` in `Single Draft`.</li>
-                    <li>Optionally add game context and generate a bet example.</li>
+                    <li>Optionally add team-game context or a custom event, then generate a bet example when odds are available.</li>
                     <li>Set `Keyword` and `H1 Title`, then click `Generate Outline`.</li>
                     <li>Edit the outline, then click `Generate Draft`.</li>
                     <li>Validate compliance, preview content, and export or save.</li>
@@ -439,7 +495,8 @@
             <div class="bw-card p-4 space-y-2">
                 <h3 class="text-sm font-semibold text-gray-900">3. Game Context + Odds</h3>
                 <ul class="list-disc list-inside space-y-1 text-sm text-gray-700">
-                    <li>Select sport, date, and game to pull odds context.</li>
+                    <li>Select `Team Game` for supported ESPN slates, or `Custom Event` for UFC, NASCAR, golf, World Cup, and similar niches.</li>
+                    <li>Use sport, date, and game to pull odds context when a team game is available.</li>
                     <li>Book selection auto-matches the selected offer brand when possible.</li>
                     <li>Odds panel shows away/home spread, moneyline, and total views.</li>
                     <li>`Bet Example Builder` creates reusable math text for prompts.</li>
@@ -776,7 +833,13 @@ function articleWizard() {
             keyword: '',
             title: '',
             competitors: '',
+            event_mode: 'team',
             sport: '',
+            custom_sport: '',
+            custom_event_type: 'custom',
+            custom_event: '',
+            custom_start_time: '',
+            custom_network: '',
             game_date: new Date().toISOString().split('T')[0],
             game_id: ''
         },
@@ -961,6 +1024,91 @@ function articleWizard() {
         returnFromTutorial() {
             this.activeTab = this.lastWorkTab === 'batch' ? 'batch' : 'single';
         },
+        isCustomEventMode() {
+            return this.form.event_mode === 'custom';
+        },
+        clearGameSelection(resetGames = true) {
+            if (resetGames) {
+                this.games = [];
+            }
+            this.form.game_id = '';
+            this.selectedGame = null;
+            this.odds = null;
+            this.betExample = '';
+            this.betExampleData = null;
+            this.selectedBook = '';
+        },
+        onEventModeChange() {
+            this.clearGameSelection(true);
+            this.refreshSuggestedTitle();
+            if (!this.isCustomEventMode() && this.form.sport) {
+                this.loadGames();
+            }
+        },
+        shortTeamName(name) {
+            const value = String(name || '').trim().replace(/\s+/g, ' ');
+            if (!value) return '';
+            const words = value.split(' ');
+            if (words.length === 1) return value;
+            const multiWordNicknames = new Set([
+                'red sox',
+                'white sox',
+                'blue jays',
+                'trail blazers',
+                'tar heels',
+                'fighting irish',
+                'golden eagles',
+                'mean green',
+                'hilltoppers',
+                'mountain hawks',
+                'ragin cajuns',
+                'sun devils',
+            ]);
+            const lastTwo = words.slice(-2).join(' ').toLowerCase();
+            if (multiWordNicknames.has(lastTwo)) {
+                return words.slice(-2).join(' ');
+            }
+            return words[words.length - 1];
+        },
+        selectedEventLabel() {
+            if (this.isCustomEventMode()) {
+                return (this.form.custom_event || '').trim();
+            }
+            if (this.selectedGame && this.selectedGame.away_team && this.selectedGame.home_team) {
+                const away = this.shortTeamName(this.selectedGame.away_team);
+                const home = this.shortTeamName(this.selectedGame.home_team);
+                if (away && home) return `${away} vs. ${home}`;
+            }
+            return '';
+        },
+        buildGenerationContext() {
+            if (this.isCustomEventMode()) {
+                const customEvent = (this.form.custom_event || '').trim();
+                if (!customEvent) return null;
+                return {
+                    event_type: this.form.custom_event_type || 'custom',
+                    custom_event: customEvent,
+                    sport: (this.form.custom_sport || '').trim() || null,
+                    start_time: (this.form.custom_start_time || '').trim() || null,
+                    network: (this.form.custom_network || '').trim() || null,
+                    headline: customEvent
+                };
+            }
+
+            if (!this.selectedGame) return null;
+            const gameContext = {
+                sport: this.form.sport,
+                away_team: this.selectedGame.away_team,
+                home_team: this.selectedGame.home_team,
+                start_time: this.getSelectedGameStartTimeForPrompt(),
+                network: this.selectedGame.network,
+                headline: this.selectedGame.headline
+            };
+            if (this.odds) gameContext.odds = this.odds;
+            if (this.betExample) gameContext.bet_example = this.betExample;
+            if (this.betExampleData) gameContext.bet_example_data = this.betExampleData;
+            return gameContext;
+        },
 
         async loadProperties() {
             try {
@@ -1063,24 +1211,19 @@ function articleWizard() {
 
         // Load games for selected sport and date
         async loadGames() {
+            if (this.isCustomEventMode()) {
+                this.clearGameSelection(true);
+                this.refreshSuggestedTitle();
+                return;
+            }
             if (!this.form.sport) {
-                this.games = [];
-                this.selectedGame = null;
-                this.odds = null;
-                this.betExample = '';
-                this.betExampleData = null;
+                this.clearGameSelection(true);
                 this.refreshSuggestedTitle();
                 return;
             }
 
               this.loadingGames = true;
-              this.games = [];
-              this.form.game_id = '';
-              this.selectedGame = null;
-              this.odds = null;
-              this.betExample = '';
-              this.betExampleData = null;
-              this.selectedBook = '';
+              this.clearGameSelection(true);
 
             try {
                 const params = new URLSearchParams({
@@ -1105,11 +1248,8 @@ function articleWizard() {
 
         // Load odds for selected game
         async loadOdds() {
-            if (!this.form.game_id || !this.form.sport) {
-                this.selectedGame = null;
-                this.odds = null;
-                this.betExample = '';
-                this.betExampleData = null;
+            if (this.isCustomEventMode() || !this.form.game_id || !this.form.sport) {
+                this.clearGameSelection(false);
                 this.refreshSuggestedTitle();
                 return;
             }
@@ -1220,10 +1360,11 @@ function articleWizard() {
         buildSuggestedTitle() {
             const keyword = (this.form.keyword || '').trim();
             if (!keyword) return '';
-            if (this.selectedGame && this.selectedGame.away_team && this.selectedGame.home_team) {
-                return `${keyword}: Get Bonus for ${this.selectedGame.away_team} vs. ${this.selectedGame.home_team}`;
+            const eventLabel = this.selectedEventLabel();
+            if (eventLabel) {
+                return `${keyword}: ${eventLabel}`;
             }
-            return `${keyword}: Get Bonus for All Sports`;
+            return `${keyword}: Offer Details`;
         },
 
         refreshSuggestedTitle(force = false) {
@@ -1239,19 +1380,7 @@ function articleWizard() {
 
         // Batch helpers
         buildBatchGameContext() {
-            if (!this.selectedGame) return null;
-            const gameContext = {
-                sport: this.form.sport,
-                away_team: this.selectedGame.away_team,
-                home_team: this.selectedGame.home_team,
-                start_time: this.getSelectedGameStartTimeForPrompt(),
-                network: this.selectedGame.network,
-                headline: this.selectedGame.headline
-            };
-            if (this.odds) gameContext.odds = this.odds;
-            if (this.betExample) gameContext.bet_example = this.betExample;
-            if (this.betExampleData) gameContext.bet_example_data = this.betExampleData;
-            return gameContext;
+            return this.buildGenerationContext();
         },
 
         getSelectedGameStartTimeForPrompt() {
@@ -1428,28 +1557,7 @@ function articleWizard() {
                 .split('\n')
                 .map(u => u.trim())
                 .filter(u => u.startsWith('http'));
-
-            // Build game context if selected
-            let gameContext = null;
-            if (this.selectedGame) {
-                gameContext = {
-                    sport: this.form.sport,
-                    away_team: this.selectedGame.away_team,
-                    home_team: this.selectedGame.home_team,
-                    start_time: this.getSelectedGameStartTimeForPrompt(),
-                    network: this.selectedGame.network,
-                    headline: this.selectedGame.headline
-                };
-                if (this.odds) {
-                    gameContext.odds = this.odds;
-                }
-                if (this.betExample) {
-                    gameContext.bet_example = this.betExample;
-                }
-                if (this.betExampleData) {
-                    gameContext.bet_example_data = this.betExampleData;
-                }
-            }
+            const gameContext = this.buildGenerationContext();
 
             try {
                 const resp = await fetch('/api/generate/outline/sync', {
@@ -1497,28 +1605,7 @@ function articleWizard() {
                 .split('\n')
                 .map(t => t.trim())
                 .filter(t => t.startsWith('['));
-
-            // Build game context if selected
-            let gameContext = null;
-            if (this.selectedGame) {
-                gameContext = {
-                    sport: this.form.sport,
-                    away_team: this.selectedGame.away_team,
-                    home_team: this.selectedGame.home_team,
-                    start_time: this.getSelectedGameStartTimeForPrompt(),
-                    network: this.selectedGame.network,
-                    headline: this.selectedGame.headline
-                };
-                if (this.odds) {
-                    gameContext.odds = this.odds;
-                }
-                if (this.betExample) {
-                    gameContext.bet_example = this.betExample;
-                }
-                if (this.betExampleData) {
-                    gameContext.bet_example_data = this.betExampleData;
-                }
-            }
+            const gameContext = this.buildGenerationContext();
 
             try {
                 const resp = await fetch('/api/generate/draft/sync', {

@@ -243,16 +243,28 @@ def check_cta_links(content: str) -> list[ComplianceIssue]:
     issues = []
 
     cta_pattern = re.compile(r"\[Claim Offer\]\(([^)]+)\)", re.IGNORECASE)
-    cta_matches = cta_pattern.findall(content)
     html_cta_pattern = re.compile(r"<a\s+[^>]*>.*?Claim Offer.*?</a>", re.IGNORECASE | re.DOTALL)
-    html_cta_matches = html_cta_pattern.findall(content)
+    switchboard_anchor_pattern = re.compile(
+        r'<a\b[^>]*href\s*=\s*(["\'])https?://[^"\']*switchboard\.[^"\']+/offers[^"\']*\1[^>]*>',
+        re.IGNORECASE,
+    )
+    switchboard_tracking_pattern = re.compile(r'data-id\s*=\s*(["\'])switchboard_tracking\1', re.IGNORECASE)
+    bam_shortcode_pattern = re.compile(r"\[bam-inline-promotion\b", re.IGNORECASE)
 
-    if len(cta_matches) < 1 and len(html_cta_matches) < 1:
+    has_cta = any([
+        bool(cta_pattern.search(content or "")),
+        bool(html_cta_pattern.search(content or "")),
+        bool(switchboard_anchor_pattern.search(content or "")),
+        bool(switchboard_tracking_pattern.search(content or "")),
+        bool(bam_shortcode_pattern.search(content or "")),
+    ])
+
+    if not has_cta:
         issues.append(ComplianceIssue(
             type="missing_cta",
             message="No CTA link found",
             severity=IssueSeverity.WARNING,
-            suggestion="Add at least one 'Claim Offer' link (markdown or HTML anchor)",
+            suggestion="Add a promo module, switchboard CTA, or explicit 'Claim Offer' link",
         ))
 
     return issues
@@ -289,9 +301,28 @@ def check_link_quality(content: str, allowed_domains: list[str] | None = None) -
                 suggestion="Verify external link is appropriate",
             ))
 
+    for url, _, anchor_text in _extract_html_links(content):
+        anchor = anchor_text.strip()
+        if len(anchor.split()) < 2 and "switchboard." not in url.lower():
+            issues.append(ComplianceIssue(
+                type="short_anchor",
+                message=f"Anchor text too short: '{anchor}'",
+                severity=IssueSeverity.WARNING,
+                location=url,
+                suggestion="Use descriptive anchor text (2+ words)",
+            ))
+        if domains and "switchboard." not in url.lower() and not any(domain in url for domain in domains):
+            issues.append(ComplianceIssue(
+                type="external_link",
+                message=f"External link detected: {url}",
+                severity=IssueSeverity.INFO,
+                suggestion="Verify external link is appropriate",
+            ))
+
     # Check for links in headings
     heading_link_pattern = re.compile(r"^#+ .*\]\(", re.MULTILINE)
-    if heading_link_pattern.search(content):
+    html_heading_link_pattern = re.compile(r"<h[1-6][^>]*>.*?<a\b[^>]*>.*?</a>.*?</h[1-6]>", re.IGNORECASE | re.DOTALL)
+    if heading_link_pattern.search(content) or html_heading_link_pattern.search(content):
         issues.append(ComplianceIssue(
             type="heading_link",
             message="Link found in heading",
@@ -360,14 +391,27 @@ def check_editorial_regressions(
     switchboard_links = [
         (url, inner, text)
         for url, inner, text in links
-        if "switchboard.actionnetwork.com/offers" in url.lower()
+        if "switchboard." in url.lower() and "/offers" in url.lower()
     ]
-    if len(switchboard_links) > 2:
+    if len(switchboard_links) > 1:
         issues.append(ComplianceIssue(
             type="switchboard_link_overuse",
-            message=f"Too many switchboard links: {len(switchboard_links)} found (target <= 2 in body)",
+            message=f"Too many switchboard links: {len(switchboard_links)} found (target <= 1 in body)",
             severity=IssueSeverity.WARNING,
             suggestion="Keep switchboard links to primary CTA placements and use internal links elsewhere",
+        ))
+
+    non_switchboard_links = [
+        (url, inner, text)
+        for url, inner, text in links
+        if not ("switchboard." in url.lower() and "/offers" in url.lower())
+    ]
+    if len(non_switchboard_links) > 1:
+        issues.append(ComplianceIssue(
+            type="internal_link_overuse",
+            message=f"Too many internal/external links: {len(non_switchboard_links)} found (target <= 1 in body)",
+            severity=IssueSeverity.WARNING,
+            suggestion="Keep only the most relevant supporting link in the body copy",
         ))
 
     # Duplicate internal links by URL (excluding switchboard).
@@ -375,7 +419,7 @@ def check_editorial_regressions(
     seen_internal: set[str] = set()
     for url, _, _ in links:
         url_lc = url.lower()
-        if "switchboard.actionnetwork.com/offers" in url_lc:
+        if "switchboard." in url_lc and "/offers" in url_lc:
             continue
         if url_lc in seen_internal:
             duplicate_urls.add(url)
@@ -426,6 +470,14 @@ def check_editorial_regressions(
                 suggestion="Use operator-appropriate language (prediction market or DFS terms) throughout the article",
             ))
 
+    if brand_operator == "bet365" and re.search(r"\bbet365 promo code\b", plain, flags=re.IGNORECASE):
+        issues.append(ComplianceIssue(
+            type="bet365_keyword_mismatch",
+            message="bet365 article uses 'promo code' instead of house-style 'bonus code'",
+            severity=IssueSeverity.WARNING,
+            suggestion="Use 'bet365 bonus code' in visible copy",
+        ))
+
     return issues
 
 
@@ -434,20 +486,28 @@ def check_seo(content: str) -> list[ComplianceIssue]:
     issues = []
 
     # Check paragraph length
-    paragraphs = [p for p in content.split("\n\n") if p.strip() and not p.strip().startswith("#")]
-    long_paragraphs = [p for p in paragraphs if len(p.split()) > 130]
+    html_paragraphs = [
+        _strip_html_tags(p).strip()
+        for p in re.findall(r"<p\b[^>]*>(.*?)</p>", content or "", flags=re.IGNORECASE | re.DOTALL)
+    ]
+    paragraphs = [p for p in html_paragraphs if p] or [
+        p for p in content.split("\n\n") if p.strip() and not p.strip().startswith("#")
+    ]
+    long_paragraphs = [p for p in paragraphs if len(p.split()) > 140]
 
     if long_paragraphs:
         issues.append(ComplianceIssue(
             type="long_paragraph",
-            message=f"{len(long_paragraphs)} paragraph(s) exceed ~120 words",
+            message=f"{len(long_paragraphs)} paragraph(s) exceed ~140 words",
             severity=IssueSeverity.WARNING,
             suggestion="Break long paragraphs into smaller chunks",
         ))
 
     # Check link density
-    link_count = len(re.findall(r"\]\((https?://[^)]+)\)", content))
-    word_count = len(content.split())
+    markdown_link_count = len(re.findall(r"\]\((https?://[^)]+)\)", content))
+    html_link_count = len(_extract_html_links(content))
+    link_count = markdown_link_count + html_link_count
+    word_count = len(_strip_html_tags(content).split())
 
     if word_count > 0 and link_count / word_count > (1 / 120):
         issues.append(ComplianceIssue(
@@ -459,6 +519,8 @@ def check_seo(content: str) -> list[ComplianceIssue]:
 
     # Check heading hierarchy
     headings = re.findall(r"^(#{1,6}) ", content, re.MULTILINE)
+    if not headings:
+        headings = [("#" * int(level)) for level in re.findall(r"<h([1-6])\b", content, re.IGNORECASE)]
     if headings:
         levels = [len(h) for h in headings]
         for i in range(1, len(levels)):
@@ -500,7 +562,7 @@ def validate_content(
         issues.extend(check_link_quality(content, allowed_domains))
 
     # Calculate metrics
-    word_count = len(content.split())
+    word_count = len(_strip_html_tags(content).split())
     error_count = sum(1 for i in issues if i.severity == IssueSeverity.ERROR)
     warning_count = sum(1 for i in issues if i.severity == IssueSeverity.WARNING)
 

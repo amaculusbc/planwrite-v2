@@ -4,6 +4,7 @@ from app.services.draft import (
     _dedupe_non_switchboard_links_by_url,
     _inject_switchboard_links_for_offers,
     _link_first_keyword_internal,
+    _offer_switchboard_url,
 )
 from app.services.switchboard_links import inject_switchboard_links
 
@@ -89,3 +90,19 @@ def test_dedupes_internal_links_but_keeps_switchboard_links():
     assert out.count('href="https://example.com/bet365"') == 1
     assert "bet365 review page" in out  # unwrapped text remains
     assert out.count('data-id="switchboard_tracking"') == 2
+
+
+def test_offer_switchboard_url_uses_property_domain_and_state_code():
+    url = _offer_switchboard_url(
+        {
+            "affiliate_id": "123",
+            "campaign_id": "456",
+            "switchboard_link": "https://switchboard.actionnetwork.com/offers?affiliateId=123&campaignId=456",
+        },
+        state="NJ",
+        property_key="vegas_insider",
+    )
+
+    assert "switchboard.vegasinsider.com/offers" in url
+    assert "stateCode=NJ" in url
+    assert "propertyId=2" in url

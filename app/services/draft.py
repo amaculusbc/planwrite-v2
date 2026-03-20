@@ -15,11 +15,10 @@ from app.services.rag import query_articles
 from app.services.internal_links import (
     format_links_markdown,
     get_operator_evergreen_link,
-    get_required_links_for_property,
     suggest_links_for_section,
 )
 from app.services.compliance import get_disclaimer_for_state
-from app.services.bam_offers import render_bam_offer_block
+from app.services.bam_offers import PROPERTIES, render_bam_offer_block
 from app.services.content_guidelines import get_style_instructions, get_temperature_by_section
 from app.services.style import get_rag_usage_guidance
 from app.services.switchboard_links import inject_switchboard_links, build_switchboard_url
@@ -86,6 +85,73 @@ def _extract_common_phrases(text: str) -> list[str]:
 def _normalize_heading(text: str) -> str:
     """Normalize a heading for de-duplication checks."""
     return re.sub(r"\s+", " ", (text or "").strip().lower())
+
+
+def _sanitize_heading_text(text: str) -> str:
+    """Strip links/HTML from section headings so headings stay plain text."""
+    if not text:
+        return ""
+    cleaned = re.sub(r"<[^>]+>", " ", text)
+    cleaned = re.sub(r"\[([^\]]+)\]\((https?://[^)]+)\)", r"\1", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return cleaned.strip(" -:\t\r\n")
+
+
+def _preferred_code_term(brand: str) -> str:
+    """Return the preferred keyword label for operators with house-style rules."""
+    if str(brand or "").strip().lower() == "bet365":
+        return "bonus code"
+    return "promo code"
+
+
+def _normalize_brand_keyword_text(text: str, brand: str) -> str:
+    """Apply operator-specific keyword wording rules in visible copy."""
+    if not text:
+        return text
+    if str(brand or "").strip().lower() == "bet365":
+        return re.sub(r"\bbet365\s+promo code\b", "bet365 bonus code", text, flags=re.IGNORECASE)
+    return text
+
+
+def _offer_value_summary(
+    offer: dict[str, Any] | None,
+    *,
+    prediction_market: bool = False,
+    dfs_mode: bool = False,
+) -> str:
+    """Return a concise offer summary without repeating the raw offer headline."""
+    offer = offer or {}
+    offer_text = str(offer.get("offer_text") or offer.get("affiliate_offer") or "").strip()
+    if not offer_text:
+        return "the listed offer"
+
+    details = extract_offer_amount_details(offer_text)
+    reward_amount = (
+        offer.get("bonus_amount")
+        or offer.get("reward_amount")
+        or details.get("reward_amount")
+        or extract_bonus_amount(offer_text)
+    )
+    reward_label = str(offer.get("reward_label") or details.get("reward_label") or "").strip().lower()
+    qualifying_amount = str(offer.get("qualifying_amount") or details.get("qualifying_amount") or "").strip()
+    qualifying_action = str(offer.get("qualifying_action") or details.get("qualifying_action") or "").strip().lower()
+
+    reward_noun = (
+        "promo credits"
+        if prediction_market
+        else "bonus entries"
+        if dfs_mode
+        else "bonus bets"
+    )
+    if reward_label:
+        reward_noun = reward_label
+
+    if reward_amount and qualifying_amount and qualifying_action:
+        action_label = qualifying_action.replace("_", " ")
+        return f"{reward_amount} in {reward_noun} after a {qualifying_amount} {action_label}"
+    if reward_amount:
+        return f"{reward_amount} in {reward_noun}"
+    return offer_text
 
 
 def _is_signup_heading(title_lower: str) -> bool:
@@ -214,6 +280,7 @@ def _inject_switchboard_links_for_offers(
     html_output: str,
     offers: list[dict[str, Any]],
     state: str,
+    property_key: str = "action_network",
     max_links: int = 12,
 ) -> str:
     """Inject switchboard links for offers with a GLOBAL cap across the article."""
@@ -225,13 +292,7 @@ def _inject_switchboard_links_for_offers(
             break
         brand = offer.get("brand", "")
         bonus_code = offer.get("bonus_code", "")
-        switchboard_url = offer.get("switchboard_link", "")
-        if not switchboard_url and offer.get("affiliate_id") and offer.get("campaign_id"):
-            switchboard_url = build_switchboard_url(
-                offer["affiliate_id"],
-                offer["campaign_id"],
-                state_code=state if state != "ALL" else "",
-            )
+        switchboard_url = _offer_switchboard_url(offer, state=state, property_key=property_key)
         if not (brand and switchboard_url):
             continue
         remaining = max(0, max_links - _count_switchboard_links(html_output))
@@ -245,6 +306,30 @@ def _inject_switchboard_links_for_offers(
             max_links=remaining,
         )
     return html_output
+
+
+def _offer_switchboard_url(
+    offer: dict[str, Any] | None,
+    *,
+    state: str,
+    property_key: str,
+) -> str:
+    """Return a property-correct switchboard URL for an offer."""
+    offer = offer or {}
+    affiliate_id = offer.get("affiliate_id")
+    campaign_id = offer.get("campaign_id")
+    if affiliate_id and campaign_id:
+        prop_key = str(property_key or "action_network").strip().lower()
+        prop = PROPERTIES.get(prop_key, PROPERTIES["action_network"])
+        return build_switchboard_url(
+            affiliate_id,
+            campaign_id,
+            state_code=state if state != "ALL" else "",
+            property_id=prop.get("property_id", "1"),
+            switchboard_domain=prop.get("switchboard_domain", "switchboard.actionnetwork.com"),
+        )
+
+    return str(offer.get("switchboard_link") or "").strip()
 
 
 def _build_signup_list(
@@ -272,7 +357,7 @@ def _build_signup_list(
     )
 
     steps = [
-        f"Confirm you're eligible (21+ in your state) and open the {signup_guide_ref}.",
+        f"Confirm you're eligible in your state and open the {signup_guide_ref}.",
         step_two,
         "Complete verification and log in.",
         "Fund your account.",
@@ -310,6 +395,20 @@ def _count_switchboard_links(html: str) -> int:
     if not html:
         return 0
     return len(re.findall(r'data-id\s*=\s*(["\'])switchboard_tracking\1', html, flags=re.IGNORECASE))
+
+
+def _count_non_switchboard_links(html: str) -> int:
+    """Count non-switchboard links in HTML."""
+    if not html:
+        return 0
+    links = re.findall(r'<a\b([^>]*)href\s*=\s*(["\'])(https?://[^"\']+)\2([^>]*)>', html, flags=re.IGNORECASE)
+    count = 0
+    for before_attrs, _, _, after_attrs in links:
+        attrs_text = f"{before_attrs} {after_attrs}".lower()
+        if "switchboard_tracking" in attrs_text:
+            continue
+        count += 1
+    return count
 
 
 def _link_first_keyword_internal(
@@ -384,11 +483,37 @@ def _dedupe_non_switchboard_links_by_url(html: str) -> str:
     return anchor_pattern.sub(_replace, html)
 
 
+def _limit_non_switchboard_links(html: str, max_links: int = 1) -> str:
+    """Keep only the first N non-switchboard links and unwrap the rest."""
+    if not html or max_links < 0:
+        return html
+
+    kept = 0
+    anchor_pattern = re.compile(
+        r'<a\b([^>]*)href\s*=\s*(["\'])(https?://[^"\']+)\2([^>]*)>(.*?)</a>',
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+    def _replace(match: re.Match[str]) -> str:
+        nonlocal kept
+        before_attrs = match.group(1) or ""
+        after_attrs = match.group(4) or ""
+        attrs_text = f"{before_attrs} {after_attrs}".lower()
+        if "switchboard_tracking" in attrs_text:
+            return match.group(0)
+        if kept >= max_links:
+            return match.group(5) or ""
+        kept += 1
+        return match.group(0)
+
+    return anchor_pattern.sub(_replace, html)
+
+
 def _offer_expiration_prompt_line(expiration_days: int | None) -> str:
-    """Build a safe expiration prompt line for source-of-truth sections."""
+    """Build a safe reward-expiration prompt line for source-of-truth sections."""
     if expiration_days is None:
-        return "- Expiration: Not provided (if needed, say \"see full terms\"; do not guess)"
-    return f"- Expiration: {expiration_days} days (if mentioned, use exactly {expiration_days})"
+        return "- Reward Expiration: Not provided (do not mention expiration unless it is explicit in source terms)"
+    return f"- Reward Expiration: {expiration_days} days (this refers to the bonus/credit, not the main offer)"
 
 
 def _format_offer_for_prompt(
@@ -419,7 +544,7 @@ def _format_offer_for_prompt(
     expiration_text = (
         f"{expiration_days} days"
         if expiration_days is not None
-        else "Not provided (use \"see full terms\")"
+        else "Not provided (omit unless explicit)"
     )
     bonus_amount_display = str(bonus_amount or "[not provided]")
     if reward_label and bonus_amount and reward_label.lower() not in bonus_amount_display.lower():
@@ -460,7 +585,7 @@ def _format_offer_for_prompt(
         f"  Bonus Amount: {bonus_amount_display}\n"
         f"  Bonus Code: {code}\n"
         f"  Available in: {states_text}\n"
-        f"  Expiration: {expiration_text}\n"
+        f"  Bonus Bet Expiration: {expiration_text}\n"
         f"  Qualifying Action: {qualifying_action_line}\n"
         f"  Minimum Odds: {min_odds if min_odds else '[see terms - do not guess]'}\n"
         f"  Wagering: {wagering if wagering else '[see terms - do not guess]'}"
@@ -500,13 +625,13 @@ def _offer_states_text(offer: dict[str, Any], fallback_state: str = "ALL") -> st
     if not states:
         if fallback_state and fallback_state != "ALL":
             return fallback_state
-        return "all eligible states (see full terms)"
+        return "eligible states listed by the operator"
     if "ALL" in states and len(states) > 1:
         states = [s for s in states if s != "ALL"]
     if "ALL" in states:
         if fallback_state and fallback_state != "ALL":
             return fallback_state
-        return "all eligible states (see full terms)"
+        return "eligible states listed by the operator"
     return ", ".join(states)
 
 
@@ -521,36 +646,24 @@ def _render_daily_promos_placeholder(
         "<p><strong>Daily Promos Update:</strong> Refresh this section before publishing with today's rotating promos, limits, and expiration windows.</p>"
     ]
 
-    items: list[str] = []
-    for offer in offers[:4]:
-        brand = offer.get("brand") or ("Operator" if prediction_market else "DFS App" if dfs_mode else "Sportsbook")
-        offer_text = offer.get("offer_text") or offer.get("affiliate_offer") or "Promo details"
-        bonus_code = offer.get("bonus_code") or ""
-        states_text = _offer_states_text(offer, state)
-        code_text = f" Code: {bonus_code}." if bonus_code else ""
-        items.append(
-            f"<li><strong>{brand}:</strong> {offer_text}.{code_text} States Available: {states_text}.</li>"
-        )
-
-    if not items:
-        if prediction_market:
-            items = [
-                "<li><strong>[Operator 1]:</strong> [Promo details]. Code: [CODE]. States Available: [state list].</li>",
-                "<li><strong>[Operator 2]:</strong> [Promo details]. Code: [CODE]. States Available: [state list].</li>",
-                "<li><strong>[Operator 3]:</strong> [Promo details]. Code: [CODE]. States Available: [state list].</li>",
-            ]
-        elif dfs_mode:
-            items = [
-                "<li><strong>[DFS App 1]:</strong> [Promo details]. Code: [CODE]. States Available: [state list].</li>",
-                "<li><strong>[DFS App 2]:</strong> [Promo details]. Code: [CODE]. States Available: [state list].</li>",
-                "<li><strong>[DFS App 3]:</strong> [Promo details]. Code: [CODE]. States Available: [state list].</li>",
-            ]
-        else:
-            items = [
-                "<li><strong>[Sportsbook 1]:</strong> [Promo details]. Code: [CODE]. States Available: [state list].</li>",
-                "<li><strong>[Sportsbook 2]:</strong> [Promo details]. Code: [CODE]. States Available: [state list].</li>",
-                "<li><strong>[Sportsbook 3]:</strong> [Promo details]. Code: [CODE]. States Available: [state list].</li>",
-            ]
+    if prediction_market:
+        items = [
+            "<li><strong>[Operator 1]:</strong> [Promo details]. Code: [CODE]. States Available: [state list].</li>",
+            "<li><strong>[Operator 2]:</strong> [Promo details]. Code: [CODE]. States Available: [state list].</li>",
+            "<li><strong>[Operator 3]:</strong> [Promo details]. Code: [CODE]. States Available: [state list].</li>",
+        ]
+    elif dfs_mode:
+        items = [
+            "<li><strong>[DFS App 1]:</strong> [Promo details]. Code: [CODE]. States Available: [state list].</li>",
+            "<li><strong>[DFS App 2]:</strong> [Promo details]. Code: [CODE]. States Available: [state list].</li>",
+            "<li><strong>[DFS App 3]:</strong> [Promo details]. Code: [CODE]. States Available: [state list].</li>",
+        ]
+    else:
+        items = [
+            "<li><strong>[Sportsbook 1]:</strong> [Promo details]. Code: [CODE]. States Available: [state list].</li>",
+            "<li><strong>[Sportsbook 2]:</strong> [Promo details]. Code: [CODE]. States Available: [state list].</li>",
+            "<li><strong>[Sportsbook 3]:</strong> [Promo details]. Code: [CODE]. States Available: [state list].</li>",
+        ]
 
     lines.append("<ul>")
     lines.extend(items)
@@ -559,6 +672,7 @@ def _render_daily_promos_placeholder(
 
 def _render_terms_section_html(
     *,
+    offers: list[dict[str, Any]] | None = None,
     terms: str,
     expiration_days: int | None,
     min_odds: str,
@@ -567,6 +681,40 @@ def _render_terms_section_html(
     dfs_mode: bool = False,
 ) -> str:
     """Render a deterministic terms section to avoid legal hallucinations."""
+    normalized_offers = [offer for offer in (offers or []) if offer]
+    if len(normalized_offers) > 1:
+        items: list[str] = []
+        for offer in normalized_offers[:3]:
+            offer_terms = str(offer.get("terms") or "")
+            offer_expiration = offer.get("bonus_expiration_days") or extract_bonus_expiration_days(offer_terms)
+            offer_min_odds = str(offer.get("minimum_odds") or extract_minimum_odds(offer_terms) or "").strip()
+            offer_wagering = str(offer.get("wagering_requirement") or extract_wagering_requirement(offer_terms) or "").strip()
+            brand = str(offer.get("brand") or "Offer").strip()
+            code = str(offer.get("bonus_code") or "").strip()
+            states_text = _offer_states_text(offer, "ALL")
+            parts = [f"<strong>{brand}</strong>."]
+            if code:
+                parts.append(f"Code: {code}.")
+            else:
+                parts.append("No promo code required.")
+            parts.append(f"States Available: {states_text}.")
+            if offer_expiration is not None:
+                parts.append(
+                    f"Promotional credits expire in {offer_expiration} days."
+                    if prediction_market
+                    else f"Bonus entries expire in {offer_expiration} days."
+                    if dfs_mode
+                    else f"Bonus bets expire in {offer_expiration} days."
+                )
+            if not prediction_market and not dfs_mode:
+                if offer_min_odds:
+                    parts.append(f"Minimum odds requirement: {offer_min_odds}.")
+                if offer_wagering:
+                    parts.append(f"Wagering requirement: {offer_wagering}.")
+            parts.append("Full operator terms apply.")
+            items.append(f"<li>{' '.join(parts)}</li>")
+        return "<ul>\n" + "\n".join(items) + "\n</ul>"
+
     if terms:
         cleaned = terms.replace("\\n", "\n")
         paras = [p.strip() for p in cleaned.splitlines() if p.strip()]
@@ -588,11 +736,11 @@ def _render_terms_section_html(
         if wagering:
             points.append(f"Wagering requirement: {wagering}.")
     points.append(
-        "See full terms at the operator site for complete eligibility and restrictions."
+        "Full operator terms apply for complete eligibility and restrictions."
         if not prediction_market and not dfs_mode
-        else "See full terms at the operator site for complete eligibility and contest rules."
+        else "Full operator terms apply for complete eligibility and contest rules."
         if dfs_mode
-        else "See full terms at the operator site for complete eligibility, market rules, and settlement details."
+        else "Full operator terms apply for complete eligibility, market rules, and settlement details."
     )
     return f"<p>{' '.join(points)}</p>"
 
@@ -647,10 +795,10 @@ State: {state}
 {code_line}
 {mechanics_line}
 
-Include at least one internal link using a REAL URL from the list above,
-for example: <a href="https://example.com/page">anchor text</a>.
+Use a REAL URL only if it directly helps the step.
+At most one step may include an internal link.
 Never use placeholder links such as href="#".
-Available internal links (use 1-2):
+Available internal links (optional):
 {links_md}
 
 Do NOT include responsible gaming disclaimers here.
@@ -716,16 +864,17 @@ def _ensure_two_paragraphs(
         first, second = sentences
     else:
         first = body
+        offer_summary = _offer_value_summary({"brand": brand, "offer_text": offer_text})
         details = []
-        if brand and offer_text:
-            details.append(f"{brand} is offering {offer_text}.")
+        if brand and offer_summary:
+            details.append(f"{brand} is highlighting {offer_summary}.")
         if has_code:
-            details.append(f"Enter the {code_strong} when you register.")
+            details.append(f"Enter {code_strong} when you register.")
         else:
             details.append("No promo code is required.")
         if states_text:
-            details.append(f"Available in {states_text}.")
-        second = " ".join(details) or "See full terms for eligibility and timing."
+            details.append(f"States Available: {states_text}.")
+        second = " ".join(details) or "Full operator terms apply."
 
     return f"<p>{first}</p>\n<p>{second}</p>"
 
@@ -862,48 +1011,8 @@ def _append_required_property_links(
     prediction_market: bool = False,
     dfs_mode: bool = False,
 ) -> str:
-    """Ensure property-mandated evergreen links are present in every generation."""
-    if not html:
-        return html
-
-    required = get_required_links_for_property(property_key)
-    if not required:
-        return html
-
-    html_lower = html.lower()
-    additions: list[tuple[str, str]] = []
-    seen: set[tuple[str, str]] = set()
-    for link in required:
-        if not link.url:
-            continue
-        anchor = (link.recommended_anchors[0] if link.recommended_anchors else link.title).strip()
-        if prediction_market:
-            anchor = _prediction_market_safe_text(anchor)
-        elif dfs_mode:
-            anchor = _dfs_safe_text(anchor)
-        if not anchor:
-            continue
-        pair = (anchor, link.url)
-        if pair in seen:
-            continue
-        seen.add(pair)
-        anchor_present = anchor.lower() in html_lower
-        url_present = link.url.lower() in html_lower
-        if anchor_present and url_present:
-            continue
-        additions.append(pair)
-
-    if not additions:
-        return html
-
-    links_html = ", ".join(f'<a href="{url}">{anchor}</a>' for anchor, url in additions)
-    if prediction_market:
-        resources_label = "More resources"
-    elif dfs_mode:
-        resources_label = "More DFS resources"
-    else:
-        resources_label = "More betting resources"
-    return html.rstrip() + f"\n<p>{resources_label}: {links_html}.</p>"
+    """Leave extra property-level resource links out of the draft by default."""
+    return html
 
 
 _SPORTSBOOK_DISPLAY_NAMES = {
@@ -1039,7 +1148,7 @@ async def generate_draft_from_outline(
     terms = offer.get("terms", "")
     bonus_amount = offer.get("bonus_amount") or extract_bonus_amount(offer_text)
     expiration_days = offer.get("bonus_expiration_days") or extract_bonus_expiration_days(terms)
-    switchboard_url = offer.get("switchboard_link", "")
+    switchboard_url = _offer_switchboard_url(offer, state=state, property_key=offer_property)
 
     # Multi-offer support
     all_offers = [offer] + (alt_offers or []) if offer else (alt_offers or [])
@@ -1051,6 +1160,7 @@ async def generate_draft_from_outline(
     )
     is_prediction_market = content_mode == CONTENT_MODE_PREDICTION_MARKET
     is_dfs_mode = content_mode == CONTENT_MODE_DFS
+    keyword = _normalize_brand_keyword_text(keyword, brand)
 
     def select_offer_for_shortcode(level: str) -> dict[str, Any] | None:
         if not all_offers:
@@ -1067,14 +1177,6 @@ async def generate_draft_from_outline(
             return all_offers[0]
         return all_offers[0]
 
-    # Build switchboard URL if not provided
-    if not switchboard_url and offer.get("affiliate_id") and offer.get("campaign_id"):
-        switchboard_url = build_switchboard_url(
-            offer["affiliate_id"],
-            offer["campaign_id"],
-            state_code=state if state != "ALL" else "",
-        )
-
     parts = []
     parts.append(f"<h1>{title}</h1>")
     previous_content = ""
@@ -1084,7 +1186,7 @@ async def generate_draft_from_outline(
 
     for section in outline:
         level = section.get("level", "h2")
-        section_title = section.get("title", "")
+        section_title = _sanitize_heading_text(section.get("title", ""))
         talking_points = section.get("talking_points", [])
         avoid = section.get("avoid", [])
 
@@ -1107,7 +1209,11 @@ async def generate_draft_from_outline(
         elif level.startswith("shortcode"):
             current_offer = select_offer_for_shortcode(level)
             if current_offer:
-                current_switchboard = current_offer.get("switchboard_link", "") or switchboard_url
+                current_switchboard = _offer_switchboard_url(
+                    current_offer,
+                    state=state,
+                    property_key=offer_property,
+                ) or switchboard_url
                 block = _render_html_offer_block(current_offer, current_switchboard)
                 parts.append(block)
             else:
@@ -1170,11 +1276,14 @@ async def generate_draft_from_outline(
         html_output,
         offers=all_offers,
         state=state,
-        max_links=2,
+        property_key=offer_property,
+        max_links=1,
     )
     html_output = _strip_placeholder_hash_links(html_output)
     html_output = _dedupe_non_switchboard_links_by_url(html_output)
+    html_output = _limit_non_switchboard_links(html_output, max_links=1)
     html_output = _apply_content_mode_language_guardrails(html_output, content_mode)
+    html_output = _normalize_brand_keyword_text(html_output, brand)
 
     if output_format == "markdown":
         # Convert back to markdown (basic)
@@ -1199,8 +1308,8 @@ async def _generate_intro_section(
     The intro should:
     1. Hook with a specific game/event if available (e.g., "Seahawks vs Patriots tonight at 6:30 PM ET on NBC")
     2. State the offer clearly with date
-    3. Mention the promo code twice in plain text, but only wrap ONE natural anchor phrase in <strong> (used for switchboard links)
-    4. State eligibility (21+, new users, states)
+    3. Keep code mention light and use only one natural <strong> anchor when helpful
+    4. State eligibility without turning into a legal dump
     """
     brand = offer.get("brand", "")
     offer_text = offer.get("offer_text", "")
@@ -1208,12 +1317,18 @@ async def _generate_intro_section(
     terms = offer.get("terms", "")
     expiration_days = offer.get("bonus_expiration_days") or extract_bonus_expiration_days(terms)
     bonus_amount = offer.get("bonus_amount") or extract_bonus_amount(offer_text)
+    offer_summary = _offer_value_summary(
+        offer,
+        prediction_market=prediction_market,
+        dfs_mode=dfs_mode,
+    )
     expiration_line = _offer_expiration_prompt_line(expiration_days)
     date_str = today_long()
     style_guide = get_style_instructions()
     has_code = bool(bonus_code.strip())
-    code_strong = f"<strong>{brand} bonus code {bonus_code}</strong>"
-    link_anchor = f"<strong>{brand} promo code</strong>"
+    preferred_code_term = _preferred_code_term(brand)
+    code_strong = f"<strong>{bonus_code}</strong>" if has_code else ""
+    link_anchor = f"<strong>{brand} offer</strong>" if brand else "<strong>the offer</strong>"
     prompt_offers = [o for o in (all_offers or []) if o] or [offer]
     has_multiple_offers = len(prompt_offers) > 1
     multi_offer_context = _build_multi_offer_prompt_context(
@@ -1250,9 +1365,9 @@ Output clean HTML only - use <p>, <a>, <strong> tags. No markdown. No exclamatio
 Write a 2-paragraph intro (lede) that sits between the H1 and H2.
 
 TONE: Direct, confident, conversational. Like you're telling a friend about a deal.
-- "The bet365 promo code is live for Seahawks vs. Patriots tonight..."
-- "Use the bet365 promo code for Seahawks vs. Patriots tonight..."
-- NOT "If you are looking for a valuable offer, consider bet365..."
+- Lead with the event or the offer value, not a canned template.
+- Summarize the offer naturally instead of pasting the full raw promo headline.
+- Do NOT use generic openers like "If you are looking for a valuable offer..."
 
 Output clean HTML only - use <p>, <a>, <strong> tags. No markdown. No exclamation points."""
     )
@@ -1267,6 +1382,9 @@ Output clean HTML only - use <p>, <a>, <strong> tags. No markdown. No exclamatio
         "If no game hook, start with a direct offer statement; avoid generic openers like \"If you are looking for a valuable offer...\"",
         "Use explicit eligible states from source data. Do not say 'nationwide states'.",
         "When listing state eligibility, use this exact label format: 'States Available: AZ, CO, ...'.",
+        "Do not paste the full raw offer string more than once. Prefer a natural summary.",
+        "Do not mention 21+, minimum odds, or long legal disclaimers in the intro.",
+        "If expiration is mentioned, it must describe the bonus/credit expiration, not the offer itself.",
         "Do NOT include responsible gaming disclaimers here (handled at the end of the article).",
     ]
     if prediction_market:
@@ -1280,11 +1398,11 @@ Output clean HTML only - use <p>, <a>, <strong> tags. No markdown. No exclamatio
             "Do not use sportsbook, betting, wager, or bonus bets."
         )
     if has_multiple_offers:
-        requirements.append("This article includes multiple offers: mention at least two distinct offers naturally in the lede.")
+        requirements.append("This article includes multiple offers: mention the main offer first, and weave in one other offer only if it fits naturally.")
     if has_code:
         requirements.extend([
-            f"Mention the promo code value {bonus_code} twice in plain text.",
-            f"Include ONE natural link anchor wrapped in <strong>, e.g., {link_anchor} or <strong>{brand} offer</strong>.",
+            f"Use the {preferred_code_term} {bonus_code} naturally once or twice in plain text.",
+            f"Include at most ONE natural <strong> anchor, e.g., {link_anchor} or {code_strong}.",
             "Do NOT wrap every mention in <strong>.",
         ])
     else:
@@ -1292,25 +1410,27 @@ Output clean HTML only - use <p>, <a>, <strong> tags. No markdown. No exclamatio
     requirements.extend([
         "Keep sentences short and plain.",
         "Avoid legal or compliance language here.",
+        "Do not use links in headings or heading-like text.",
         "NO exclamation points anywhere",
-        "Do NOT invent numbers not listed above. If unsure, say \"see full terms.\"",
+        "Do NOT invent numbers not listed above.",
+        "Do not default to filler like 'see full terms' unless a missing detail must be acknowledged.",
     ])
     requirements_md = "\n".join(f"- {r}" for r in requirements)
 
     if has_code:
         example_output = (
-            f"<p>The {link_anchor} is live for [Game] tonight at [time] on [network], and {brand} is offering {offer_text} ahead of {date_str}.</p>"
+            f"<p>The {preferred_code_term if brand else 'offer'} is live for [Game] tonight at [time] on [network], and {brand} is highlighting {offer_summary} ahead of {date_str}.</p>"
             + (
-                f"<p>Sign up, enter the promo code {bonus_code}, complete the qualifying action in the offer, and unlock the listed promotional credit.</p>"
+                f"<p>Sign up, enter {code_strong}, complete the qualifying action, and unlock the listed promotional credit.</p>"
                 if prediction_market
-                else f"<p>Sign up, enter the promo code {bonus_code}, make your first qualifying DFS entry, and unlock the listed bonus entries or promo credits from the app.</p>"
+                else f"<p>Sign up, enter {code_strong}, make your first qualifying DFS entry, and unlock the listed bonus entries or promo credits from the app.</p>"
                 if dfs_mode
-                else f"<p>Sign up, enter the promo code {bonus_code}, place your $5 bet, and you will get $200 in bonus bets whether your pick wins or loses.</p>"
+                else f"<p>Sign up, enter {code_strong}, complete the qualifying wager, and unlock the listed reward tied to the offer.</p>"
             )
         )
     else:
         example_output = (
-            f"<p>The {brand} offer is live for [Game] tonight at [time] on [network], and {brand} is offering {offer_text} ahead of {date_str}.</p>"
+            f"<p>The {brand} offer is live for [Game] tonight at [time] on [network], and {brand} is highlighting {offer_summary} ahead of {date_str}.</p>"
             + (
                 "<p>No promo code is required; complete the qualifying action described in the offer to unlock the listed promotional credit.</p>"
                 if prediction_market
@@ -1327,6 +1447,7 @@ DATE (include this): {date_str}
 {game_hook}OFFER DETAILS:
 - Brand: {brand}
 - Offer: {offer_text}
+- Offer Summary: {offer_summary}
 - Bonus Code: {bonus_code or "No code required"}
 - Bonus Amount: {bonus_amount or "See offer"}
 - {expiration_line[2:]}
@@ -1397,6 +1518,11 @@ async def _generate_body_section(
     min_odds = primary_offer.get("minimum_odds") or extract_minimum_odds(terms)
     wagering = primary_offer.get("wagering_requirement") or extract_wagering_requirement(terms)
     expiration_line = _offer_expiration_prompt_line(expiration_days)
+    offer_summary = _offer_value_summary(
+        primary_offer,
+        prediction_market=prediction_market,
+        dfs_mode=dfs_mode,
+    )
     multi_offer_context = _build_multi_offer_prompt_context(
         prompt_offers,
         state,
@@ -1408,31 +1534,32 @@ async def _generate_body_section(
     style_guide = get_style_instructions()
     rag_guidance = get_rag_usage_guidance()
     has_code = bool(bonus_code.strip())
-    code_strong = f"<strong>{brand} Promo Code {bonus_code}</strong>"
-    link_anchor = f"<strong>{brand} promo code</strong>"
+    preferred_code_term = _preferred_code_term(brand)
+    code_strong = f"<strong>{bonus_code}</strong>" if has_code else ""
+    link_anchor = f"<strong>{brand} offer</strong>" if brand else "<strong>the offer</strong>"
 
     code_requirement = (
-        f"Mention the promo code value {bonus_code} at least once in plain text. "
-        f"Include ONE natural <strong> anchor for linking, e.g., {link_anchor} or <strong>{brand} offer</strong>."
+        f"Mention the {preferred_code_term} {bonus_code} at most once if it helps the section. "
+        f"Include at most ONE natural <strong> anchor for linking, e.g., {link_anchor} or {code_strong}."
         if has_code
         else f"State clearly that no promo code is required (do not invent a code). "
-        f"Include ONE natural <strong> anchor for linking, e.g., <strong>{brand} offer</strong>."
+        f"Include at most ONE natural <strong> anchor for linking, e.g., {link_anchor}."
     )
     code_relevance = (
-        f"If relevant, mention the promo code value {bonus_code} in plain text and include ONE <strong> anchor like {link_anchor}."
+        f"If relevant, mention the {preferred_code_term} {bonus_code} once in plain text and optionally include one <strong> anchor like {link_anchor}."
         if has_code
-        else f"If relevant, note no promo code is required and include ONE <strong> anchor like <strong>{brand} offer</strong>."
+        else f"If relevant, note that no promo code is required and optionally include one <strong> anchor like {link_anchor}."
     )
 
     if has_multiple_offers:
         entity_label = "operators" if prediction_market else "DFS apps" if dfs_mode else "sportsbooks"
         entity_label_singular = "operator" if prediction_market else "DFS app" if dfs_mode else "sportsbook"
         code_requirement = (
-            "When mentioning promo codes, use the correct brand/code pairing for each offer. "
+            "When mentioning codes, use the correct brand/code pairing for each offer. "
             f"Do not mix codes across {entity_label}."
         )
         code_relevance = (
-            f"If you reference multiple offers, keep each bonus code tied to the correct {entity_label_singular}."
+            f"If you reference multiple offers, keep each code tied to the correct {entity_label_singular}."
         )
 
     step_two = (
@@ -1443,19 +1570,19 @@ async def _generate_body_section(
 
     if prediction_market:
         claim_intro = (
-            f'- "If I open a $50 position on [Market] at [price], I start by signing up and entering the {code_strong}."'
+            f'- "If I open a $50 position on [Market] at [price], I start by signing up and entering {code_strong}."'
             if has_code
             else '- "If I open a $50 position on [Market] at [price], I start by signing up (no promo code required)."'
         )
     elif dfs_mode:
         claim_intro = (
-            f"- \"If I enter a $50 pick'em contest on [Game/Slate], I start by signing up and entering the {code_strong}.\""
+            f"- \"If I enter a $50 pick'em contest on [Game/Slate], I start by signing up and entering {code_strong}.\""
             if has_code
             else "- \"If I enter a $50 pick'em contest on [Game/Slate], I start by signing up (no promo code required).\""
         )
     else:
         claim_intro = (
-            f'- "If I place a $50 moneyline bet on [Team] at [odds], I start by signing up and entering the {code_strong}."'
+            f'- "If I place a $50 moneyline bet on [Team] at [odds], I start by signing up and entering {code_strong}."'
             if has_code
             else '- "If I place a $50 moneyline bet on [Team] at [odds], I start by signing up (no promo code required)."'
         )
@@ -1510,6 +1637,7 @@ async def _generate_body_section(
 
     if is_terms:
         return _render_terms_section_html(
+            offers=prompt_offers,
             terms=terms,
             expiration_days=expiration_days,
             min_odds=min_odds,
@@ -1627,6 +1755,7 @@ Use the bet example provided if available, or create one using the event context
 Focus on:
 - WHO this offer is good for ({audience_label}, etc.)
 - WHEN to use it (timing - {'promo credits' if prediction_market else 'bonus entries or promo credits' if dfs_mode else 'bonus bets'} expire in X days, packed schedule, etc.)
+- A concise value summary: {offer_summary}
 - {code_requirement}
 
 Do NOT include step-by-step instructions (that's in How to Claim)."""
@@ -1675,10 +1804,10 @@ SECTION TITLE: {section_title}
 === SOURCE OF TRUTH - DO NOT DEVIATE ===
 These are exact offer details. Do NOT invent or modify numbers.
 {multi_offer_context}
-RULE: If a detail is not provided, say "see full terms" instead of guessing.
+RULE: If a detail is not provided, omit it instead of guessing. Use "Full operator terms apply" only when a fallback is necessary.
 === END SOURCE OF TRUTH ===
 
-{f"MULTI-OFFER RULES:{chr(10)}- This article includes {len(prompt_offers)} offers.{chr(10)}- Mention at least two distinct offers in overview-style sections.{chr(10)}- Keep brand/code pairings correct for every mention.{chr(10)}" if has_multiple_offers else ""}
+{f"MULTI-OFFER RULES:{chr(10)}- This article includes {len(prompt_offers)} offers.{chr(10)}- Mention more than one offer only when the section clearly calls for comparison or options.{chr(10)}- Keep brand/code pairings correct for every mention.{chr(10)}" if has_multiple_offers else ""}
 
 {"WORKED EXAMPLE DATA (use this for worked examples):" + chr(10) + bet_example + chr(10) if bet_example else ""}
 {event_label + chr(10) + event_context + chr(10) if event_context else ""}
@@ -1686,6 +1815,7 @@ RULE: If a detail is not provided, say "see full terms" instead of guessing.
 OFFER CONTEXT:
 - Brand: {brand}
 - Offer: {offer_text}
+- Offer Summary: {offer_summary}
 - Bonus Code: {bonus_code or "No code required"}
 - Eligible States: {primary_states_text}
 - {expiration_line[2:]}
@@ -1693,7 +1823,11 @@ OFFER CONTEXT:
 {"TALKING POINTS:" + chr(10) + points_md + chr(10) if points_md else ""}
 {"DO NOT COVER (handled elsewhere):" + chr(10) + avoid_md + chr(10) if avoid_md else ""}
 
-INTERNAL LINKS TO WEAVE IN (MUST use at least 2; use placeholder anchors like [sign-up guide]):
+OPTIONAL INTERNAL LINK SUPPORT:
+- Use at most ONE internal link in this section, and only if it clearly helps the reader.
+- Never link the heading.
+- Never invent a URL or use href="#".
+- If the suggested links do not fit the section, use none.
 {links_md}
 
 STYLE GUIDE (must follow):
@@ -1719,9 +1853,16 @@ PREVIOUSLY WRITTEN (do NOT repeat this content):
 {"PHRASES TO AVOID (overused):" + chr(10) + blacklisted_md if blacklisted_md else ""}
 {language_guardrail}
 
+SECTION-SPECIFIC GUARDRAILS:
+- Do not repeat the H1 wording or simply restate the heading.
+- Do not call the offer nationwide.
+- Do not paste the full raw offer string unless the section is explicitly about terms.
+- Outside Terms/Eligibility, avoid repeating 21+, minimum odds, or expiration details unless essential.
+- Keep any worked example tied to the exact event context or worked-example data provided above.
+
 DO NOT add responsible gaming disclaimers in this section (handled at the end).
 
-FORMAT: 2-3 <p> paragraphs
+FORMAT: 2 short <p> paragraphs (3 only if a worked example truly needs it)
 
 Write the section now (HTML only, no heading, no markdown):"""
 
@@ -1782,8 +1923,8 @@ async def generate_draft_from_outline_streaming(
     Yields dicts: {type: 'status'|'content'|'done', ...}
     """
     brand = offer.get("brand", "")
-    bonus_code = offer.get("bonus_code", "")
-    switchboard_url = offer.get("switchboard_link", "")
+    keyword = _normalize_brand_keyword_text(keyword, brand)
+    switchboard_url = _offer_switchboard_url(offer, state=state, property_key=offer_property)
 
     all_offers = [offer] + (alt_offers or []) if offer else (alt_offers or [])
     content_mode = _get_content_mode(
@@ -1809,13 +1950,6 @@ async def generate_draft_from_outline_streaming(
             return all_offers[0]
         return all_offers[0]
 
-    if not switchboard_url and offer.get("affiliate_id") and offer.get("campaign_id"):
-        switchboard_url = build_switchboard_url(
-            offer["affiliate_id"],
-            offer["campaign_id"],
-            state_code=state if state != "ALL" else "",
-        )
-
     parts = []
     previous_content = ""
     total_sections = len(outline)
@@ -1831,7 +1965,7 @@ async def generate_draft_from_outline_streaming(
 
     for i, section in enumerate(outline):
         level = section.get("level", "h2")
-        section_title = section.get("title", "")
+        section_title = _sanitize_heading_text(section.get("title", ""))
         talking_points = section.get("talking_points", [])
         avoid = section.get("avoid", [])
 
@@ -1857,7 +1991,11 @@ async def generate_draft_from_outline_streaming(
         elif level.startswith("shortcode"):
             current_offer = select_offer_for_shortcode(level)
             if current_offer:
-                current_switchboard = current_offer.get("switchboard_link", "") or switchboard_url
+                current_switchboard = _offer_switchboard_url(
+                    current_offer,
+                    state=state,
+                    property_key=offer_property,
+                ) or switchboard_url
                 block = _render_html_offer_block(current_offer, current_switchboard)
                 parts.append(block)
                 yield {"type": "content", "section": "shortcode", "content": block}
@@ -1920,11 +2058,14 @@ async def generate_draft_from_outline_streaming(
         html_output,
         offers=all_offers,
         state=state,
-        max_links=2,
+        property_key=offer_property,
+        max_links=1,
     )
     html_output = _strip_placeholder_hash_links(html_output)
     html_output = _dedupe_non_switchboard_links_by_url(html_output)
+    html_output = _limit_non_switchboard_links(html_output, max_links=1)
     html_output = _apply_content_mode_language_guardrails(html_output, content_mode)
+    html_output = _normalize_brand_keyword_text(html_output, brand)
 
     if output_format == "markdown":
         html_output = _html_to_markdown(html_output)
