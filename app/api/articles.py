@@ -47,8 +47,9 @@ async def list_articles(
     # Check if request is from HTMX
     if request.headers.get("HX-Request"):
         return templates.TemplateResponse(
-            "article/partials/table_rows.html",
-            {"request": request, "articles": articles},
+            request=request,
+            name="article/partials/table_rows.html",
+            context={"articles": articles},
         )
 
     # Return JSON for API clients
@@ -101,8 +102,9 @@ async def get_article(
             "word_count": article.word_count,
         }
         return templates.TemplateResponse(
-            "article/partials/edit_form.html",
-            {"request": request, "article": article_dict},
+            request=request,
+            name="article/partials/edit_form.html",
+            context={"article": article_dict},
         )
 
     return ArticleResponse.model_validate(article)

@@ -234,8 +234,9 @@ async def login_page(request: Request, next: str = "/articles/new"):
         destination = next if next.startswith("/") else "/articles/new"
         return RedirectResponse(url=destination, status_code=302)
     return templates.TemplateResponse(
-        "auth/login.html",
-        {"request": request, "title": "Login", "next": next, "error": ""},
+        request=request,
+        name="auth/login.html",
+        context={"title": "Login", "next": next, "error": ""},
     )
 
 
@@ -280,9 +281,9 @@ async def login_submit(
         user_agent=user_agent,
     )
     return templates.TemplateResponse(
-        "auth/login.html",
-        {
-            "request": request,
+        request=request,
+        name="auth/login.html",
+        context={
             "title": "Login",
             "next": next if next.startswith("/") else "/articles/new",
             "error": "Invalid username or password.",
@@ -321,8 +322,9 @@ async def dashboard(request: Request):
 async def new_article(request: Request):
     """New article wizard."""
     return templates.TemplateResponse(
-        "article/new.html",
-        {"request": request, "title": "New Article"},
+        request=request,
+        name="article/new.html",
+        context={"title": "New Article"},
     )
 
 
@@ -330,8 +332,9 @@ async def new_article(request: Request):
 async def view_article(request: Request, article_id: int):
     """View/edit article."""
     return templates.TemplateResponse(
-        "article/edit.html",
-        {"request": request, "title": "Edit Article", "article_id": article_id},
+        request=request,
+        name="article/edit.html",
+        context={"title": "Edit Article", "article_id": article_id},
     )
 
 
@@ -339,8 +342,9 @@ async def view_article(request: Request, article_id: int):
 async def admin_page(request: Request):
     """Admin tools."""
     return templates.TemplateResponse(
-        "admin/index.html",
-        {"request": request, "title": "Admin"},
+        request=request,
+        name="admin/index.html",
+        context={"title": "Admin"},
     )
 
 

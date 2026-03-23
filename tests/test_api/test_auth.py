@@ -49,6 +49,19 @@ async def test_login_accepts_secondary_user_from_auth_users_json():
 
 
 @pytest.mark.asyncio
+async def test_login_page_renders_when_auth_enabled():
+    prev_enabled = app_settings.auth_enabled
+    app_settings.auth_enabled = True
+    try:
+        async with AsyncClient(app=app, base_url="http://test") as client:
+            response = await client.get("/login?next=/articles/new")
+            assert response.status_code == 200
+            assert "Sign In" in response.text
+    finally:
+        app_settings.auth_enabled = prev_enabled
+
+
+@pytest.mark.asyncio
 async def test_login_accepts_secondary_user_from_relaxed_auth_users_json():
     prev_enabled = app_settings.auth_enabled
     prev_users_json = app_settings.auth_users_json
@@ -66,3 +79,10 @@ async def test_login_accepts_secondary_user_from_relaxed_auth_users_json():
     finally:
         app_settings.auth_enabled = prev_enabled
         app_settings.auth_users_json = prev_users_json
+
+
+@pytest.mark.asyncio
+async def test_new_article_page_renders_without_auth(client):
+    response = await client.get("/articles/new")
+    assert response.status_code == 200
+    assert "Single Draft" in response.text
