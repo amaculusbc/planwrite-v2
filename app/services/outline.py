@@ -666,6 +666,14 @@ RULES:
         if is_dfs
         else "Use placeholder bullets only for editor updates (book, code, offer, states)"
     )
+    competitor_research_goal = (
+        "COMPETITOR RESEARCH GOAL:\n"
+        "- Use the research below to avoid cloning competitor headings or flow.\n"
+        "- Pick at least one angle or heading style that is materially different from competitors.\n"
+        "- Do not reuse competitor wording verbatim.\n"
+        if competitor_context
+        else ""
+    )
 
     user_prompt = f"""Create a detailed content plan for this article:
 
@@ -691,7 +699,7 @@ STYLE GUIDE (follow for tone/structure):
 STYLE EXAMPLES (match this tone):
 {rag_context or "(none available)"}
 
-{"COMPETITOR RESEARCH GOAL:\n- Use the research below to avoid cloning competitor headings or flow.\n- Pick at least one angle or heading style that is materially different from competitors.\n- Do not reuse competitor wording verbatim.\n" if competitor_context else ""}
+{competitor_research_goal}
 
 REQUIRED STRUCTURE:
 1. [INTRO] - Hook with date, offer value, promo code mention
