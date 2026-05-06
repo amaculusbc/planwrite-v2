@@ -9,6 +9,8 @@ from app.services.draft import (
     _ensure_primary_keyword_internal_link,
     _ensure_keyword_in_first_paragraph,
     _generate_signup_steps_structured,
+    _humanize_article_html,
+    _humanizer_preserves_markers,
     _keep_selected_non_switchboard_links,
     _keep_only_primary_non_switchboard_link,
     _is_signup_heading,
@@ -584,3 +586,82 @@ async def test_generate_signup_steps_structured_rejects_plain_url_steps(monkeypa
     )
 
     assert steps is None
+
+
+def test_humanizer_preserves_markers_rejects_fact_drift():
+    original = "<p>Use ACTION365 to get $150 in bonus bets. States Available: NJ, PA.</p>"
+    rewritten = "<p>Use ACTION365 to get $200 in bonus bets. States Available: NJ, PA.</p>"
+    assert not _humanizer_preserves_markers(original, rewritten, {}, offer={"bonus_code": "ACTION365"})
+
+
+@pytest.mark.asyncio
+async def test_humanize_article_html_only_rewrites_safe_sections(monkeypatch):
+    async def fake_generate_completion_structured(**kwargs):
+        return {
+            "rewrites": [
+                "<p>For readers tracking bet365 bonus code, Celtics vs. Spurs tips tonight and the $150 offer is in play.</p>"
+                "<p>Use [[KEEP_0]] at sign-up and keep the focus on the matchup instead of filler copy. States Available: NJ, PA.</p>",
+                "<p>This version reads tighter while keeping the same offer details and event hook.</p>",
+            ]
+        }
+
+    monkeypatch.setattr(
+        "app.services.draft.generate_completion_structured",
+        fake_generate_completion_structured,
+    )
+
+    html = (
+        "<h1>bet365 bonus code: Celtics vs. Spurs</h1>"
+        "<p>bet365 bonus code is live for Celtics vs. Spurs tonight.</p>"
+        "<p>Use <strong>ACTION365</strong> at sign-up. States Available: NJ, PA.</p>"
+        "<h2>Why bet365 bonus code is worth a look for Celtics vs. Spurs</h2>"
+        "<p>This is the kind of stock filler section that should be cleaned up.</p>"
+        "<h2>Sign-Up Steps Before Celtics vs. Spurs</h2>"
+        "<ol><li>Open the site.</li><li>Enter ACTION365.</li></ol>"
+        "<h2>Terms & Conditions</h2>"
+        "<p>Bonus bets expire in 7 days.</p>"
+    )
+
+    cleaned = await _humanize_article_html(
+        html,
+        keyword="bet365 bonus code",
+        offer={"brand": "bet365", "bonus_code": "ACTION365"},
+    )
+
+    assert "For readers tracking bet365 bonus code" in cleaned
+    assert "This version reads tighter" in cleaned
+    assert "<ol><li>Open the site.</li><li>Enter ACTION365.</li></ol>" in cleaned
+    assert "<p>Bonus bets expire in 7 days.</p>" in cleaned
+
+
+@pytest.mark.asyncio
+async def test_humanize_article_html_reverts_section_when_facts_drift(monkeypatch):
+    async def fake_generate_completion_structured(**kwargs):
+        return {
+            "rewrites": [
+                "<p>bet365 bonus code is live for Celtics vs. Spurs tonight.</p>"
+                "<p>Use [[KEEP_0]] at sign-up to get $200 in bonus bets. States Available: NJ, PA.</p>",
+            ]
+        }
+
+    monkeypatch.setattr(
+        "app.services.draft.generate_completion_structured",
+        fake_generate_completion_structured,
+    )
+
+    html = (
+        "<h1>bet365 bonus code: Celtics vs. Spurs</h1>"
+        "<p>bet365 bonus code is live for Celtics vs. Spurs tonight.</p>"
+        "<p>Use <strong>ACTION365</strong> at sign-up to get $150 in bonus bets. States Available: NJ, PA.</p>"
+        "<h2>Sign-Up Steps Before Celtics vs. Spurs</h2>"
+        "<ol><li>Open the site.</li></ol>"
+    )
+
+    cleaned = await _humanize_article_html(
+        html,
+        keyword="bet365 bonus code",
+        offer={"brand": "bet365", "bonus_code": "ACTION365"},
+    )
+
+    assert "$150 in bonus bets" in cleaned
+    assert "$200 in bonus bets" not in cleaned

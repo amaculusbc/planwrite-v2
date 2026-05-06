@@ -1704,6 +1704,284 @@ def _apply_generation_quality_postprocess(html: str, keyword: str) -> str:
     return html
 
 
+def _count_paragraphs(html: str) -> int:
+    """Count paragraph tags in an HTML fragment."""
+    if not html:
+        return 0
+    return len(re.findall(r"<p\b[^>]*>.*?</p>", html, flags=re.IGNORECASE | re.DOTALL))
+
+
+def _protect_humanizer_fragments(html: str) -> tuple[str, dict[str, str]]:
+    """Replace fragile HTML fragments with placeholders before the humanizer rewrite."""
+    if not html:
+        return html, {}
+
+    protected = html
+    replacements: dict[str, str] = {}
+    counter = 0
+    patterns = [
+        re.compile(r"<a\b[^>]*>.*?</a>", flags=re.IGNORECASE | re.DOTALL),
+        re.compile(r"<strong\b[^>]*>.*?</strong>", flags=re.IGNORECASE | re.DOTALL),
+        re.compile(r"<em\b[^>]*>.*?</em>", flags=re.IGNORECASE | re.DOTALL),
+    ]
+    for pattern in patterns:
+        while True:
+            match = pattern.search(protected)
+            if not match:
+                break
+            token = f"[[KEEP_{counter}]]"
+            replacements[token] = match.group(0)
+            protected = protected[:match.start()] + token + protected[match.end():]
+            counter += 1
+    return protected, replacements
+
+
+def _restore_humanizer_fragments(html: str, replacements: dict[str, str]) -> str:
+    """Restore protected placeholders after the humanizer rewrite."""
+    restored = html
+    for token, original in replacements.items():
+        restored = restored.replace(token, original)
+    return restored
+
+
+def _extract_humanizer_markers(html: str, offer: dict[str, Any] | None = None) -> list[str]:
+    """Extract hard-fact markers that must survive a prose rewrite."""
+    plain = _html_to_plain_text(html)
+    if not plain:
+        return []
+
+    markers: list[str] = []
+    patterns = [
+        r"\$\d[\d,]*(?:\.\d{1,2})?",
+        r"(?<!\w)[+-]\d{2,4}(?!\w)",
+        r"\b(?:18\+|19\+|21\+)\b",
+        r"\b\d{1,2}:\d{2}\s*(?:AM|PM)\s*ET\b",
+        r"\b(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),?\s+[A-Z][a-z]+\s+\d{1,2}(?:,\s+\d{4})?\b",
+        r"\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2}(?:,\s+\d{4})?\b",
+        r"States Available:\s*[^.]+",
+        r"(?:Offer not valid in|not valid in)\s+[^.]+",
+        r"\b(?:ESPN\+|ESPN|ABC|CBS|NBC|FOX|FS1|TBS|TNT|Peacock)\b",
+    ]
+    for pattern in patterns:
+        for match in re.findall(pattern, plain, flags=re.IGNORECASE):
+            marker = re.sub(r"\s+", " ", str(match).strip())
+            if marker and marker.lower() not in {m.lower() for m in markers}:
+                markers.append(marker)
+
+    bonus_code = str((offer or {}).get("bonus_code") or "").strip()
+    if bonus_code and re.search(re.escape(bonus_code), plain, flags=re.IGNORECASE):
+        markers.append(bonus_code)
+    return markers
+
+
+def _humanizer_preserves_markers(
+    original_html: str,
+    rewritten_html: str,
+    replacements: dict[str, str],
+    offer: dict[str, Any] | None = None,
+) -> bool:
+    """Return True when a rewritten section preserves protected fragments and hard facts."""
+    if _count_paragraphs(original_html) != _count_paragraphs(rewritten_html):
+        return False
+    if re.search(r"<(?:h[1-6]|ol|ul|table)\b", rewritten_html, flags=re.IGNORECASE):
+        return False
+    for token in replacements:
+        if token not in rewritten_html:
+            return False
+
+    restored = _restore_humanizer_fragments(rewritten_html, replacements)
+    rewritten_plain = re.sub(r"\s+", " ", _html_to_plain_text(restored)).lower()
+    for marker in _extract_humanizer_markers(original_html, offer=offer):
+        normalized = re.sub(r"\s+", " ", marker).lower()
+        if normalized and normalized not in rewritten_plain:
+            return False
+    return True
+
+
+def _is_humanizer_safe_heading(title_lower: str) -> bool:
+    """Return True when the section is safe for a prose-only humanizer pass."""
+    if not title_lower:
+        return True
+    if _is_signup_heading(title_lower):
+        return False
+    if _is_claim_heading(title_lower, False):
+        return False
+    if _is_daily_promos_heading(title_lower):
+        return False
+    if any(x in title_lower for x in ["terms", "conditions", "fine print", "house rules", "market rules", "settlement"]):
+        return False
+    return True
+
+
+def _segment_article_for_humanizer(html: str) -> list[dict[str, str]]:
+    """Split article HTML into static and rewriteable paragraph groups."""
+    if not html:
+        return []
+
+    tokens = re.findall(
+        r"<!--.*?-->|<h[1-6][^>]*>.*?</h[1-6]>|<ol\b[^>]*>.*?</ol>|<ul\b[^>]*>.*?</ul>|<table\b[^>]*>.*?</table>|<p\b[^>]*>.*?</p>|[^<]+",
+        html,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    parts: list[dict[str, str]] = []
+    current: list[str] = []
+    current_heading_lower = ""
+    seen_h2 = False
+
+    def flush() -> None:
+        nonlocal current
+        if not current:
+            return
+        block_html = "".join(current)
+        is_intro = not seen_h2
+        if re.search(r"<p\b", block_html, flags=re.IGNORECASE) and (is_intro or _is_humanizer_safe_heading(current_heading_lower)):
+            parts.append({
+                "type": "rewrite",
+                "kind": "intro" if is_intro else "body",
+                "heading": current_heading_lower,
+                "html": block_html,
+            })
+        else:
+            parts.append({"type": "static", "html": block_html})
+        current = []
+
+    for token in tokens:
+        if re.match(r"<p\b", token, flags=re.IGNORECASE):
+            current.append(token)
+            continue
+        if not token.strip():
+            if current:
+                current.append(token)
+            else:
+                parts.append({"type": "static", "html": token})
+            continue
+        flush()
+        parts.append({"type": "static", "html": token})
+        if re.match(r"<h[23]\b", token, flags=re.IGNORECASE):
+            seen_h2 = True
+            current_heading_lower = _sanitize_heading_text(re.sub(r"<[^>]+>", " ", token)).lower()
+        elif re.match(r"<h1\b", token, flags=re.IGNORECASE):
+            current_heading_lower = ""
+        elif re.match(r"<(?:ol|ul|table)\b", token, flags=re.IGNORECASE):
+            # Keep current heading for the following prose block.
+            pass
+
+    flush()
+    return parts
+
+
+async def _humanize_article_html(
+    html: str,
+    *,
+    keyword: str,
+    offer: dict[str, Any] | None = None,
+    content_mode: str = CONTENT_MODE_SPORTSBOOK,
+) -> str:
+    """Polish safe prose sections so the draft reads less tool-shaped without changing facts."""
+    if not html:
+        return html
+
+    segments = _segment_article_for_humanizer(html)
+    rewrite_segments = [segment for segment in segments if segment.get("type") == "rewrite" and segment.get("html")]
+    if not rewrite_segments:
+        return html
+
+    protected_segments: list[dict[str, Any]] = []
+    for segment in rewrite_segments:
+        protected_html, replacements = _protect_humanizer_fragments(segment["html"])
+        protected_segments.append({
+            **segment,
+            "protected_html": protected_html,
+            "replacements": replacements,
+        })
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "rewrites": {
+                "type": "array",
+                "items": {"type": "string"},
+                "minItems": len(protected_segments),
+                "maxItems": len(protected_segments),
+            }
+        },
+        "required": ["rewrites"],
+        "additionalProperties": False,
+    }
+
+    mode_line = (
+        "Use prediction-market wording only (market, trade, position, contract). Never use sportsbook or bonus-bet language."
+        if content_mode == CONTENT_MODE_PREDICTION_MARKET
+        else "Use DFS wording only (entries, contests, picks, lineup, fantasy app). Never use sportsbook or bonus-bet language."
+        if content_mode == CONTENT_MODE_DFS
+        else "Use sportsbook wording naturally and directly."
+    )
+    section_lines: list[str] = []
+    for idx, segment in enumerate(protected_segments):
+        heading_note = f"; heading: {segment['heading']}" if segment.get("heading") else ""
+        section_lines.append(
+            f"SECTION {idx + 1} ({segment['kind']}{heading_note}):\n{segment['protected_html']}"
+        )
+    sections_md = "\n\n".join(section_lines)
+
+    prompt = f"""Rewrite these HTML sections so they read more like polished editorial copy and less like raw AI output.
+
+CRITICAL:
+- Preserve every placeholder token exactly as written, including [[KEEP_n]].
+- Do not change or remove any numbers, odds, promo codes, dates, times, state lists, or offer mechanics.
+- Keep the same number of <p> paragraphs in each section.
+- Do not add headings, lists, tables, disclaimers, or new links.
+- Prefer active voice, cleaner sentence rhythm, and less repetitive phrasing.
+- Remove stock filler and chatbot-shaped transitions.
+- Keep the exact keyword phrase intact when it already appears: {keyword}
+- {mode_line}
+
+Return JSON with a single key "rewrites" containing the rewritten HTML strings in the same order.
+
+{sections_md}
+"""
+
+    try:
+        data = await generate_completion_structured(
+            prompt=prompt,
+            system_prompt="You are a senior editorial polish assistant. Rewrite safely and preserve locked facts exactly.",
+            schema=schema,
+            name="humanized_sections",
+            description="Fact-locked editorial rewrites for safe article sections",
+            temperature=0.8,
+            max_tokens=2200,
+        )
+        rewrites = data.get("rewrites", []) if isinstance(data, dict) else []
+        if len(rewrites) != len(protected_segments):
+            return html
+    except Exception:
+        return html
+
+    rewrite_iter = iter(zip(protected_segments, rewrites))
+    rendered_parts: list[str] = []
+    for part in segments:
+        if part.get("type") != "rewrite":
+            rendered_parts.append(part.get("html", ""))
+            continue
+        original_segment, rewritten = next(rewrite_iter)
+        candidate = str(rewritten or "").strip()
+        if not candidate:
+            rendered_parts.append(original_segment["html"])
+            continue
+        if not _humanizer_preserves_markers(
+            original_segment["html"],
+            candidate,
+            original_segment["replacements"],
+            offer=offer,
+        ):
+            rendered_parts.append(original_segment["html"])
+            continue
+        restored = _restore_humanizer_fragments(candidate, original_segment["replacements"])
+        rendered_parts.append(_normalize_visible_punctuation(restored))
+
+    return "".join(rendered_parts)
+
+
 def _ensure_single_disclaimer(html: str, disclaimer: str) -> str:
     """Ensure the disclaimer appears only once at the end of the article."""
     if not disclaimer:
@@ -2591,6 +2869,13 @@ async def generate_draft_from_outline(
         preferred_urls,
         fallback_primary_url=primary_internal_url,
     )
+    html_output = await _humanize_article_html(
+        html_output,
+        keyword=keyword,
+        offer=offer,
+        content_mode=content_mode,
+    )
+    html_output = _ensure_keyword_in_first_paragraph(html_output, keyword)
     html_output = _apply_content_mode_language_guardrails(html_output, content_mode)
     html_output = _normalize_brand_keyword_text(html_output, brand)
     html_output = _target_keyword_mentions(html_output, keyword)
@@ -3562,6 +3847,13 @@ async def generate_draft_from_outline_streaming(
         preferred_urls,
         fallback_primary_url=primary_internal_url,
     )
+    html_output = await _humanize_article_html(
+        html_output,
+        keyword=keyword,
+        offer=offer,
+        content_mode=content_mode,
+    )
+    html_output = _ensure_keyword_in_first_paragraph(html_output, keyword)
     html_output = _apply_content_mode_language_guardrails(html_output, content_mode)
     html_output = _normalize_brand_keyword_text(html_output, brand)
     html_output = _target_keyword_mentions(html_output, keyword)

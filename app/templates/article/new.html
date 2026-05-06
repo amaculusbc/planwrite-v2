@@ -412,7 +412,7 @@
                             </div>
                             <div x-show="loadingLinkOptions" class="text-xs text-gray-500">Loading link options...</div>
                             <div x-show="!loadingLinkOptions && linkOptions.length === 0" class="text-xs text-gray-500">
-                                Add a keyword and offer/property to load link options.
+                                Select a property or offer to load link options. Adding a keyword will make them more targeted.
                             </div>
                             <div x-show="linkOptions.length > 0" class="space-y-2">
                                 <template x-for="link in linkOptions" :key="link.url">
@@ -1144,9 +1144,11 @@ function articleWizard() {
             };
         },
         async loadLinkOptions() {
-            const keyword = (this.form.keyword || '').trim();
             const property = (this.form.offer_property || '').trim();
-            if (!keyword || !property) {
+            const keyword = (this.form.keyword || '').trim();
+            const offer = this.selectedOffer();
+            const brand = offer && offer.brand ? String(offer.brand).trim() : '';
+            if (!property) {
                 this.linkOptions = [];
                 return;
             }
@@ -1154,11 +1156,9 @@ function articleWizard() {
             try {
                 const params = new URLSearchParams({
                     property,
-                    keyword,
                     limit: '8'
                 });
-                const offer = this.selectedOffer();
-                const brand = offer && offer.brand ? String(offer.brand).trim() : '';
+                if (keyword) params.set('keyword', keyword);
                 if (brand) params.set('brand', brand);
                 const resp = await fetch(`/api/generate/link-options?${params.toString()}`);
                 if (!resp.ok) throw new Error('Failed to load links');
