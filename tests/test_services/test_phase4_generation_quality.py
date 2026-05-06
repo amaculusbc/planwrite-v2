@@ -8,6 +8,7 @@ from app.services.draft import (
     _clean_orphaned_keyword_page_references,
     _ensure_primary_keyword_internal_link,
     _ensure_keyword_in_first_paragraph,
+    _extract_featured_label_from_event_context,
     _generate_signup_steps_structured,
     _humanize_article_html,
     _humanizer_preserves_markers,
@@ -16,6 +17,7 @@ from app.services.draft import (
     _is_signup_heading,
     _is_daily_promos_heading,
     _normalize_matchup_vs_notation,
+    _offer_excluded_states_text,
     _offer_states_text,
     _adapt_disclaimer_for_dfs,
     _generate_body_section,
@@ -253,7 +255,7 @@ def test_render_dfs_intro_deterministic_uses_exact_state_and_age_copy():
         article_date="Monday, May 4, 2026",
     )
     assert "States Available: AL, AK, AR, CA, DC" in html
-    assert "Excluded: MD, MI, NJ, NY, OH, PA." in html
+    assert "Excluded:" not in html
     assert "18+ (age varies by state)." in html
     assert "21+ required" not in html
 
@@ -592,6 +594,19 @@ def test_humanizer_preserves_markers_rejects_fact_drift():
     original = "<p>Use ACTION365 to get $150 in bonus bets. States Available: NJ, PA.</p>"
     rewritten = "<p>Use ACTION365 to get $200 in bonus bets. States Available: NJ, PA.</p>"
     assert not _humanizer_preserves_markers(original, rewritten, {}, offer={"bonus_code": "ACTION365"})
+
+
+def test_extract_featured_label_from_event_context_keeps_vs_period():
+    label = _extract_featured_label_from_event_context(
+        "Featured game: Celtics vs. Spurs. Game time: Friday, May 8 at 8:00 PM ET. Network: ESPN"
+    )
+    assert label == "Celtics vs. Spurs"
+
+
+def test_offer_excluded_states_text_omits_irrelevant_exclusion_for_selected_state():
+    offer = {"terms": "Deposit required. Not available in Illinois."}
+    assert _offer_excluded_states_text(offer, current_state="NJ") == ""
+    assert _offer_excluded_states_text(offer, current_state="IL") == "IL"
 
 
 @pytest.mark.asyncio

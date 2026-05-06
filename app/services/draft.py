@@ -848,6 +848,7 @@ def _format_offer_for_prompt(
     )
     excluded_states_text = _offer_excluded_states_text(
         offer,
+        current_state=state,
         prediction_market=prediction_market,
         dfs_mode=dfs_mode,
     )
@@ -858,6 +859,7 @@ def _format_offer_for_prompt(
     )
     excluded_states_text = _offer_excluded_states_text(
         offer,
+        current_state=state,
         prediction_market=prediction_market,
         dfs_mode=dfs_mode,
     )
@@ -979,6 +981,7 @@ def _offer_states_text(
 def _offer_excluded_states_text(
     offer: dict[str, Any],
     *,
+    current_state: str = "",
     prediction_market: bool = False,
     dfs_mode: bool = False,
 ) -> str:
@@ -994,6 +997,9 @@ def _offer_excluded_states_text(
     states = _normalize_states(operator_facts.get("excluded_states"))
     if not states:
         states = extract_excluded_states_from_terms(str(offer.get("terms") or ""))
+    normalized_state = str(current_state or "").strip().upper()
+    if normalized_state and normalized_state != "ALL":
+        return normalized_state if normalized_state in states else ""
     return ", ".join(states)
 
 
@@ -1327,6 +1333,17 @@ def _ensure_intro_state_specificity(html: str, states_text: str) -> str:
     if not normalized_states or normalized_states.lower().startswith("all eligible states"):
         return html
 
+    if re.fullmatch(r"[A-Z]{2}|District of Columbia", normalized_states):
+        html = _rewrite_html_text_nodes(
+            html,
+            lambda text: re.sub(
+                r"States Available:\s*[^.]+",
+                f"States Available: {normalized_states}",
+                text,
+                flags=re.IGNORECASE,
+            ),
+        )
+
     html = re.sub(r"\bavailable nationwide\b", f"available in {normalized_states}", html, flags=re.IGNORECASE)
     html = re.sub(r"\bnationwide states\b", normalized_states, html, flags=re.IGNORECASE)
 
@@ -1468,6 +1485,7 @@ def _polish_intro_section_prose(html: str) -> str:
         (r"\s+as a new customer\b", ""),
         (r"\s*You(?:'|’|â€™|�)ll need to be 21\+[^.]*\.", ""),
         (r"\s*New customers only\.?", ""),
+        (r"\b21\+\b(?:\s*(?:only|required))?", ""),
     ]
     for pattern, replacement in patterns:
         cleaned = _rewrite_html_text_nodes(
@@ -1500,7 +1518,73 @@ def _polish_intro_section_prose(html: str) -> str:
         cleaned,
         lambda text: re.sub(r"\bis the featured event\b", "is the focus", text, flags=re.IGNORECASE),
     )
+    cleaned = _rewrite_html_text_nodes(
+        cleaned,
+        lambda text: re.sub(r"\bis for,\s+and\b", " requires a deposit, and", text, flags=re.IGNORECASE),
+    )
+    cleaned = _rewrite_html_text_nodes(
+        cleaned,
+        lambda text: re.sub(r"\bis for,\b", " requires a deposit,", text, flags=re.IGNORECASE),
+    )
     cleaned = _remove_generic_state_fallbacks(cleaned)
+    return _normalize_visible_punctuation(cleaned)
+
+
+def _remove_irrelevant_excluded_state_mentions(html: str, current_state: str = "") -> str:
+    """Strip excluded-state clauses that are irrelevant to a single-state article."""
+    normalized_state = str(current_state or "").strip().upper()
+    if not html or not normalized_state or normalized_state == "ALL":
+        return html
+
+    def _drop_irrelevant(text: str) -> str:
+        patterns = [
+            r"(?:,\s*|\s+and\s+)?it(?:'|â€™|Ã¢â‚¬â„¢|ï¿½)?s not available in [^.]+\.?",
+            r"(?:,\s*|\s+and\s+)?it(?:'|â€™|Ã¢â‚¬â„¢|ï¿½)?s isn(?:'|â€™|Ã¢â‚¬â„¢|ï¿½)?t available in [^.]+\.?",
+            r"(?:,\s*|\s+and\s+)?not available in [^.]+\.?",
+            r"(?:,\s*|\s+and\s+)?isn(?:'|â€™|Ã¢â‚¬â„¢|ï¿½)?t available in [^.]+\.?",
+            r"\s*Excluded:\s*[^.]+\.?",
+        ]
+        cleaned = text
+        for pattern in patterns:
+            def _replace(match: re.Match[str]) -> str:
+                clause = match.group(0)
+                normalized_clause = re.sub(
+                    r"isn(?:'|â€™|Ã¢â‚¬â„¢|ï¿½)?t available in",
+                    "not available in",
+                    clause,
+                    flags=re.IGNORECASE,
+                )
+                states = extract_excluded_states_from_terms(normalized_clause)
+                if states and normalized_state not in states:
+                    return ""
+                return clause
+            cleaned = re.sub(pattern, _replace, cleaned, flags=re.IGNORECASE)
+        return cleaned
+
+    cleaned = _rewrite_html_text_nodes(html, _drop_irrelevant)
+    return _normalize_visible_punctuation(cleaned)
+
+
+def _remove_irrelevant_single_state_exclusion_phrases(html: str, current_state: str = "") -> str:
+    """Strip leftover 'isn't available in X' phrasing when the article is already scoped to another state."""
+    normalized_state = str(current_state or "").strip().upper()
+    if not html or not normalized_state or normalized_state == "ALL":
+        return html
+
+    def _drop_clause(text: str) -> str:
+        def _replace(match: re.Match[str]) -> str:
+            clause = match.group(0)
+            normalized_clause = re.sub(r"isn\S{0,6}?t available in", "not available in", clause, flags=re.IGNORECASE)
+            states = extract_excluded_states_from_terms(normalized_clause)
+            if states and normalized_state not in states:
+                return ""
+            return clause
+
+        cleaned = re.sub(r"[^.]*isn\S{0,6}?t available in [^.]+\.?", _replace, text, flags=re.IGNORECASE)
+        cleaned = re.sub(r"[^.]*not available in [^.]+\.?", _replace, cleaned, flags=re.IGNORECASE)
+        return cleaned
+
+    cleaned = _rewrite_html_text_nodes(html, _drop_clause)
     return _normalize_visible_punctuation(cleaned)
 
 
@@ -2030,9 +2114,9 @@ def _extract_featured_label_from_event_context(event_context: str, games_only: b
     """Extract the featured game/event label from context when available."""
     if not event_context:
         return ""
-    patterns = [r"Featured game:\s*([^\.]+)"]
+    patterns = [r"Featured game:\s*(.+?)(?:\.\s+(?:Game time|Network):|$)"]
     if not games_only:
-        patterns.append(r"Featured event:\s*([^\.]+)")
+        patterns.append(r"Featured event:\s*(.+?)(?:\.\s+(?:Game time|Network):|$)")
     for pattern in patterns:
         match = re.search(pattern, event_context, flags=re.IGNORECASE)
         if match:
@@ -2319,7 +2403,7 @@ def _render_dfs_intro_deterministic(
     reward_phrase = _offer_reward_phrase(offer).replace("bonus bets", "bonus entries")
     qualifying_amount = _offer_qualifying_amount_text(offer) or "$5"
     states_text = _offer_states_text(offer, state, dfs_mode=True)
-    excluded_states_text = _offer_excluded_states_text(offer, dfs_mode=True)
+    excluded_states_text = _offer_excluded_states_text(offer, current_state=state, dfs_mode=True)
     age_summary = _operator_age_summary(offer, dfs_mode=True)
     hook = _dfs_intro_hook_text(event_context, article_date=article_date)
 
@@ -2413,7 +2497,7 @@ def _render_prediction_market_intro_deterministic(
     reward_phrase = _offer_reward_phrase_visible(offer).replace("bonus bets", "promo credits")
     qualifying_amount = _offer_qualifying_amount_text(offer) or "$25"
     states_text = _offer_states_text(offer, state, prediction_market=True)
-    excluded_states_text = _offer_excluded_states_text(offer, prediction_market=True)
+    excluded_states_text = _offer_excluded_states_text(offer, current_state=state, prediction_market=True)
     age_summary = _operator_age_summary(offer, prediction_market=True)
     hook = _prediction_market_intro_hook_text(event_context, article_date=article_date)
 
@@ -2945,6 +3029,7 @@ async def _generate_intro_section(
     )
     excluded_states_text = _offer_excluded_states_text(
         offer,
+        current_state=state,
         prediction_market=prediction_market,
         dfs_mode=dfs_mode,
     )
@@ -3123,6 +3208,8 @@ Write TWO <p> tags now (HTML only, no markdown):"""
     result = _ensure_two_paragraphs(result, brand, offer_text, has_code, code_strong, states_text)
     result = _ensure_intro_state_specificity(result, states_text)
     result = _polish_intro_section_prose(result)
+    result = _remove_irrelevant_excluded_state_mentions(result, state)
+    result = _remove_irrelevant_single_state_exclusion_phrases(result, state)
     return _resolve_intro_age_conflicts(result, age_summary)
 
 

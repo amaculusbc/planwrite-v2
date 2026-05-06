@@ -16,6 +16,13 @@ def test_extract_matchup_from_event_context_supports_featured_event():
     assert event == "UFC 325 Main Card"
 
 
+def test_extract_matchup_from_event_context_keeps_vs_period():
+    matchup = _extract_matchup_from_event_context(
+        "Featured game: Boston Celtics vs. San Antonio Spurs. Game time: Friday, May 8 at 8:00 PM ET. Network: ESPN"
+    )
+    assert matchup == "Boston Celtics vs. San Antonio Spurs"
+
+
 def test_contextual_section_titles_can_use_non_team_event_label():
     titles = _contextual_section_titles(
         keyword="bet365 promo code",

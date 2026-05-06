@@ -83,11 +83,19 @@ def _extract_matchup_from_event_context(event_context: str) -> str:
     if not event_context:
         return ""
 
-    featured = re.search(r"Featured game:\s*([^\.]+)", event_context, flags=re.IGNORECASE)
+    featured = re.search(
+        r"Featured game:\s*(.+?)(?:\.\s+(?:Game time|Network):|$)",
+        event_context,
+        flags=re.IGNORECASE,
+    )
     if featured:
         raw = featured.group(1).strip()
     else:
-        featured_event = re.search(r"Featured event:\s*([^\.]+)", event_context, flags=re.IGNORECASE)
+        featured_event = re.search(
+            r"Featured event:\s*(.+?)(?:\.\s+(?:Game time|Network):|$)",
+            event_context,
+            flags=re.IGNORECASE,
+        )
         if featured_event:
             return re.sub(r"\s+", " ", featured_event.group(1).strip()).strip()
         direct = re.search(
