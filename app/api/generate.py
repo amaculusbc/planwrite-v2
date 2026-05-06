@@ -25,8 +25,22 @@ from app.services.draft import (
 from app.services.compliance import validate_content as validate_content_svc
 from app.services.competitor_scraper import scrape_competitors
 from app.services.bam_offers import get_offer_by_id_bam
+from app.services.internal_links import (
+    get_required_links_for_property,
+    suggest_links_for_section,
+)
 
 router = APIRouter()
+
+
+def _preferences_dict(preferences) -> dict:
+    """Normalize optional preference payloads into plain dicts."""
+    if not preferences:
+        return {}
+    try:
+        return preferences.model_dump(exclude_none=True)
+    except Exception:
+        return dict(preferences or {})
 
 
 def _normalize_game_time(start_time: str | None) -> str:
@@ -54,14 +68,41 @@ def _normalize_game_time(start_time: str | None) -> str:
     )
 
 
-def _build_game_context(game_context) -> tuple[str, str, dict]:
+def _normalize_article_date(value: str | None) -> str:
+    """Normalize an article/event date to long-form ET text when possible."""
+    if not value:
+        return ""
+
+    raw = value.strip()
+    if not raw:
+        return ""
+
+    try:
+        if len(raw) == 10 and raw[4] == "-" and raw[7] == "-":
+            dt = datetime.strptime(raw, "%Y-%m-%d").replace(tzinfo=ZoneInfo("America/New_York"))
+        else:
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=ZoneInfo("UTC"))
+            dt = dt.astimezone(ZoneInfo("America/New_York"))
+    except ValueError:
+        return raw
+
+    return f"{dt.strftime('%A')}, {dt.strftime('%B')} {dt.day}, {dt.year}"
+
+
+def _build_game_context(game_context) -> tuple[str, str, dict, str]:
     """Build game context text, bet example text, and structured bet-example data."""
     if not game_context:
-        return "", "", {}
+        return "", "", {}, ""
 
     parts: list[str] = []
     event_type = str(getattr(game_context, "event_type", "") or "").strip().lower()
     custom_event = str(getattr(game_context, "custom_event", "") or "").strip()
+    article_date = _normalize_article_date(
+        str(getattr(game_context, "event_date", "") or "").strip()
+        or str(getattr(game_context, "start_time", "") or "").strip()
+    )
     if custom_event:
         parts.append(f"Featured event: {custom_event}")
     elif game_context.headline and event_type in {"fight", "race", "tournament", "custom", "event"}:
@@ -75,7 +116,7 @@ def _build_game_context(game_context) -> tuple[str, str, dict]:
     if game_context.network:
         parts.append(f"Network: {game_context.network}")
 
-    return ". ".join(parts), game_context.bet_example or "", dict(game_context.bet_example_data or {})
+    return ". ".join(parts), game_context.bet_example or "", dict(game_context.bet_example_data or {}), article_date
 
 
 def _inject_alt_shortcodes(outline: list[dict], alt_offer_count: int) -> list[dict]:
@@ -151,7 +192,7 @@ async def _stream_outline(request: OutlineRequest, db: AsyncSession) -> AsyncGen
     competitor_context = ""
     if request.competitor_urls:
         competitor_context = await scrape_competitors(request.competitor_urls, max_chars_per_url=1500)
-    game_context_str, bet_example_str, _ = _build_game_context(request.game_context)
+    game_context_str, bet_example_str, _, article_date = _build_game_context(request.game_context)
 
     try:
         yield f"data: {json.dumps({'type': 'status', 'message': 'Generating structured outline...'})}\n\n"
@@ -160,8 +201,10 @@ async def _stream_outline(request: OutlineRequest, db: AsyncSession) -> AsyncGen
             title=request.title,
             offer=offer or {},
             event_context=game_context_str,
+            article_date=article_date,
             bet_example=bet_example_str,
             competitor_context=competitor_context,
+            article_preferences=_preferences_dict(request.article_preferences),
         )
         outline_structured = _inject_alt_shortcodes(outline_structured, len(alt_offers))
         tokens = structured_to_tokens(outline_structured)
@@ -187,7 +230,7 @@ async def _stream_draft(request: DraftRequest, db: AsyncSession) -> AsyncGenerat
             alt_offers.append(alt)
 
     outline = _resolve_outline_from_request(request)
-    game_context_str, bet_example_str, bet_example_data = _build_game_context(request.game_context)
+    game_context_str, bet_example_str, bet_example_data, article_date = _build_game_context(request.game_context)
 
     try:
         async for update in generate_draft_from_outline_streaming(
@@ -199,9 +242,11 @@ async def _stream_draft(request: DraftRequest, db: AsyncSession) -> AsyncGenerat
             state=request.state,
             offer_property=request.offer_property or "action_network",
             event_context=game_context_str,
+            article_date=article_date,
             bet_example=bet_example_str,
             bet_example_data=bet_example_data,
             output_format="markdown",
+            article_preferences=_preferences_dict(request.article_preferences),
         ):
             yield f"data: {json.dumps(update)}\n\n"
     except Exception as e:
@@ -243,15 +288,17 @@ async def generate_outline_sync(
     competitor_context = ""
     if request.competitor_urls:
         competitor_context = await scrape_competitors(request.competitor_urls, max_chars_per_url=1500)
-    game_context_str, bet_example_str, _ = _build_game_context(request.game_context)
+    game_context_str, bet_example_str, _, article_date = _build_game_context(request.game_context)
 
     outline_structured = await generate_structured_outline(
         keyword=request.keyword,
         title=request.title,
         offer=offer or {},
         event_context=game_context_str,
+        article_date=article_date,
         bet_example=bet_example_str,
         competitor_context=competitor_context,
+        article_preferences=_preferences_dict(request.article_preferences),
     )
     outline_structured = _inject_alt_shortcodes(outline_structured, len(alt_offers))
     tokens = structured_to_tokens(outline_structured)
@@ -297,7 +344,7 @@ async def generate_draft_sync(
             alt_offers.append(alt)
 
     outline = _resolve_outline_from_request(request)
-    game_context_str, bet_example_str, bet_example_data = _build_game_context(request.game_context)
+    game_context_str, bet_example_str, bet_example_data, article_date = _build_game_context(request.game_context)
 
     draft = await generate_draft_from_outline(
         outline=outline,
@@ -308,9 +355,11 @@ async def generate_draft_sync(
         state=request.state,
         offer_property=request.offer_property or "action_network",
         event_context=game_context_str,
+        article_date=article_date,
         bet_example=bet_example_str,
         bet_example_data=bet_example_data,
         output_format="html",
+        article_preferences=_preferences_dict(request.article_preferences),
     )
 
     return {"draft": draft, "word_count": len(draft.split())}
@@ -336,6 +385,42 @@ async def validate_content_endpoint(
         offer=offer_dict,
     )
     return result.to_dict()
+
+
+@router.get("/link-options")
+async def list_link_options(
+    property: str | None = None,
+    keyword: str = "",
+    brand: str = "",
+    limit: int = 12,
+):
+    """Return writer-selectable internal link options for the current property."""
+    safe_limit = max(3, min(limit, 25))
+    suggested = await suggest_links_for_section(
+        title=keyword or brand or "article",
+        must_include=[keyword, brand],
+        k=safe_limit,
+        property_key=property,
+        brand=brand,
+    )
+    required = get_required_links_for_property(property_key=property)
+
+    links: list[dict] = []
+    seen_urls: set[str] = set()
+    for link in [*suggested, *required]:
+        url = str(link.url or "").strip()
+        if not url or url.lower() in seen_urls:
+            continue
+        seen_urls.add(url.lower())
+        links.append(link.to_dict())
+        if len(links) >= safe_limit:
+            break
+
+    return {
+        "property": property or "action_network",
+        "count": len(links),
+        "links": links,
+    }
 
 
 @router.post("/parse-outline")

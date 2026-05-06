@@ -3,6 +3,7 @@
 from app.services.offer_parsing import (
     enrich_offer_dict,
     extract_bonus_amount,
+    extract_excluded_states_from_terms,
     extract_offer_amount_details,
     extract_states_from_terms,
     parse_states,
@@ -30,6 +31,27 @@ def test_extract_states_from_terms_uses_available_in_segment():
 def test_extract_states_from_terms_ignores_negative_only_availability():
     terms = "US Promotional Offers Not Available in MS, NY, ON, or PR."
     assert extract_states_from_terms(terms) == []
+
+
+def test_extract_states_from_terms_handles_washington_dc_without_wa():
+    terms = "Must be physically present in AZ, CO, NJ, PA, or Washington, DC."
+    assert extract_states_from_terms(terms) == ["AZ", "CO", "NJ", "PA", "DC"]
+
+
+def test_extract_excluded_states_from_terms_parses_not_available_segment():
+    terms = "Deposit required. Paid in Bonus Bets. Not available in Illinois."
+    assert extract_excluded_states_from_terms(terms) == ["IL"]
+
+
+def test_enrich_offer_dict_prefers_term_derived_states_over_dirty_payload_states():
+    enriched = enrich_offer_dict(
+        {
+            "offer_text": "Sample Offer",
+            "terms": "Available in AZ, CO, NJ, PA, or Washington, DC only.",
+            "states_list": ["AZ", "CO", "NJ", "PA", "DC", "WA"],
+        }
+    )
+    assert enriched["states_list"] == ["AZ", "CO", "NJ", "PA", "DC"]
 
 
 def test_extract_bonus_amount_prefers_reward_amount_for_spend_get_offers():

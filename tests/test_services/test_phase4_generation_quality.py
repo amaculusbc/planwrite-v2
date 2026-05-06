@@ -5,14 +5,34 @@ import pytest
 from app.services.draft import (
     _apply_generation_quality_postprocess,
     _build_signup_list,
+    _clean_orphaned_keyword_page_references,
+    _ensure_primary_keyword_internal_link,
     _ensure_keyword_in_first_paragraph,
     _generate_signup_steps_structured,
+    _keep_selected_non_switchboard_links,
+    _keep_only_primary_non_switchboard_link,
+    _is_signup_heading,
     _is_daily_promos_heading,
     _normalize_matchup_vs_notation,
+    _offer_states_text,
+    _adapt_disclaimer_for_dfs,
+    _generate_body_section,
+    _generate_intro_section,
+    _polish_body_section_prose,
+    _polish_intro_fallback_phrases,
+    _polish_intro_section_prose,
+    _remove_generic_state_fallbacks,
+    _render_dfs_intro_deterministic,
+    _render_dfs_overview_section_deterministic,
+    _render_dfs_example_section_deterministic,
     _render_bet_example_section_deterministic,
     _remove_inline_compliance_fragments,
+    _resolve_intro_age_conflicts,
     _soften_repetitive_intro_opener,
+    _strip_formatting_from_headings,
     _strip_invalid_non_switchboard_links,
+    _target_keyword_mentions,
+    _trim_dangling_paragraph_endings,
     _trim_repeated_phrase_in_html,
 )
 
@@ -27,7 +47,22 @@ def test_soften_repetitive_intro_opener_rewrites_put_the_to_work():
 def test_ensure_keyword_in_first_paragraph_inserts_exact_keyword():
     html = "<p>Charlotte and Atlanta tip tonight on ESPN.</p><p>Later mention bet365 promo code details.</p>"
     cleaned = _ensure_keyword_in_first_paragraph(html, "bet365 promo code")
-    assert "The bet365 promo code is live today." in cleaned
+    assert "bet365 promo code" in cleaned
+    assert "Charlotte and Atlanta tip tonight on ESPN." in cleaned
+    assert "Here is the relevant" not in cleaned
+
+
+def test_polish_intro_fallback_phrases_rewrites_awkward_prefixes():
+    html = "<p>That puts <a href=\"https://example.com\">bet365 bonus code</a> front and center. Celtics vs. Spurs tips tonight.</p>"
+    cleaned = _polish_intro_fallback_phrases(html)
+    assert "front and center" not in cleaned
+    assert "For readers tracking" in cleaned
+
+
+def test_ensure_keyword_in_first_paragraph_skips_when_first_paragraph_is_after_h2():
+    html = "<h2>Terms & Conditions</h2><p>Deposit required. T&Cs apply.</p>"
+    cleaned = _ensure_keyword_in_first_paragraph(html, "bet365 bonus code")
+    assert cleaned == html
 
 
 def test_normalize_matchup_vs_notation_replaces_at_symbol_in_visible_text_only():
@@ -51,12 +86,13 @@ def test_trim_repeated_see_full_terms_mentions_caps_phrase():
 def test_apply_generation_quality_postprocess_combines_key_fixes():
     html = (
         "<p>Put the <strong>bet365 promo code</strong> to work for Hawks @ Hornets tonight.</p>"
-        "<p>See full terms. See full terms. See full terms.</p>"
+        "<p>See full terms. See full terms. See full terms, and</p>"
     )
     cleaned = _apply_generation_quality_postprocess(html, "bet365 promo code")
     assert "Put the" not in cleaned
     assert "Hawks vs. Hornets" in cleaned
-    assert cleaned.lower().count("see full terms") <= 2
+    assert "see full terms" not in cleaned.lower()
+    assert ", and</p>" not in cleaned.lower()
 
 
 def test_remove_inline_compliance_fragments_strips_standalone_21_plus():
@@ -72,9 +108,70 @@ def test_remove_inline_compliance_fragments_strips_full_operator_terms_line():
     assert "Full operator terms apply" not in cleaned
 
 
+def test_polish_body_section_prose_removes_legal_leakage_from_body_copy():
+    html = "<p>With bet365, you can unlock the bonus as long as you're 21+ and in NJ. New customers only. Time limits and exclusions apply.</p>"
+    cleaned = _polish_body_section_prose(html)
+    assert "21+" not in cleaned
+    assert "New customers only" not in cleaned
+    assert "Time limits and exclusions apply" not in cleaned
+
+
+def test_polish_intro_section_prose_removes_legalistic_intro_fragments():
+    html = "<p>Use the code when you sign up as a new customer. You’ll need to be 21+ in the states where bet365 is live.</p>"
+    cleaned = _polish_intro_section_prose(html)
+    assert "as a new customer" not in cleaned
+    assert "21+" not in cleaned
+
+
 def test_is_daily_promos_heading_accepts_placeholder_variants():
     assert _is_daily_promos_heading("promo update placeholder")
     assert _is_daily_promos_heading("today's promo placeholder")
+
+
+def test_polish_intro_section_prose_softens_stock_clean_spot_phrase():
+    html = "<p>Lakers vs. Thunder is the featured event Tuesday night, and it's a clean spot to use the underdog promo code for extra NBA entries.</p>"
+    cleaned = _polish_intro_section_prose(html)
+    assert "clean spot" not in cleaned
+    assert "good spot" in cleaned
+
+
+def test_polish_intro_section_prose_rewrites_default_21_plus_state_line():
+    html = "<p>This is 21+ and it's not valid in MD, MI, NJ, NY, OH, PA.</p>"
+    cleaned = _polish_intro_section_prose(html)
+    assert "This is 21+" not in cleaned
+    assert "supported states" in cleaned
+
+
+def test_resolve_intro_age_conflicts_removes_default_21_plus_when_dfs_age_summary_is_18_plus():
+    html = "<p>21+ required, and it's only available in supported states. Age note: 18+ (age varies by state).</p>"
+    cleaned = _resolve_intro_age_conflicts(html, "18+ (age varies by state)")
+    assert "21+ required" not in cleaned
+    assert "18+ (age varies by state)" in cleaned
+
+
+def test_polish_body_section_prose_rewrites_value_is_simple_phrase():
+    html = "<p>The value is simple: $50 in bonus entries after a $5 play.</p>"
+    cleaned = _polish_body_section_prose(html)
+    assert "The value is simple" not in cleaned
+    assert "The offer adds $50 in bonus entries after a $5 play." in cleaned
+
+
+def test_polish_body_section_prose_removes_location_compliance_sentence():
+    html = "<p>Quick checkpoint before you fund anything: make sure you're 21+ and physically located in an eligible state, since location services control what contests you can enter.</p>"
+    cleaned = _polish_body_section_prose(html)
+    assert "physically located in an eligible state" not in cleaned
+
+
+def test_polish_body_section_prose_removes_sign_up_guide_fallback():
+    html = "<p>If you want a quick walkthrough, the Underdog sign-up guide covers the same screens you'll see.</p>"
+    cleaned = _polish_body_section_prose(html)
+    assert "sign-up guide" not in cleaned.lower()
+
+
+def test_polish_body_section_prose_removes_any_sign_up_guide_sentence():
+    html = "<p>If you want a quick refresher on platforms and formats, start with our Underdog sign-up guide.</p>"
+    cleaned = _polish_body_section_prose(html)
+    assert "sign-up guide" not in cleaned.lower()
 
 
 def test_render_bet_example_section_deterministic_uses_reward_phrase_not_raw_offer_text():
@@ -115,6 +212,116 @@ def test_render_bet_example_section_deterministic_builds_contextual_fallback_for
     assert "$50 in bonus bets" in html.lower()
 
 
+def test_render_dfs_example_section_deterministic_uses_qualifying_entry_amount():
+    offer = {
+        "brand": "Underdog",
+        "offer_text": "Play $5, Get $50 in bonus entries",
+        "bonus_code": "TOPACTION",
+        "qualifying_amount": "$5",
+        "bonus_amount": "$50",
+        "reward_amount": "$50",
+        "reward_label": "bonus entries",
+    }
+    html = _render_dfs_example_section_deterministic(
+        offer=offer,
+        bet_example_data=None,
+        event_context="Featured game: Los Angeles Lakers vs Oklahoma City Thunder.",
+    )
+    assert html is not None
+    assert "$5" in html
+    assert "$50 entry" not in html
+    assert "$50 in bonus entries" in html.lower()
+    assert "for Los Angeles Lakers vs Oklahoma City Thunder for Los Angeles Lakers vs Oklahoma City Thunder" not in html
+
+
+def test_render_dfs_intro_deterministic_uses_exact_state_and_age_copy():
+    html = _render_dfs_intro_deterministic(
+        keyword="underdog promo code",
+        offer={
+            "brand": "Underdog",
+            "offer_text": "Play $5, Get $50 in bonus entries",
+            "bonus_code": "TOPACTION",
+            "qualifying_amount": "$5",
+            "bonus_amount": "$50",
+            "reward_label": "bonus entries",
+            "terms": "Offer not valid in MD, MI, NJ, NY, OH, and PA.",
+        },
+        state="TX",
+        event_context="Featured game: Los Angeles Lakers vs Oklahoma City Thunder. Game time: Tuesday, May 5, 2026 at 8:30 PM ET. Network: NBC.",
+        article_date="Monday, May 4, 2026",
+    )
+    assert "States Available: AL, AK, AR, CA, DC" in html
+    assert "Excluded: MD, MI, NJ, NY, OH, PA." in html
+    assert "18+ (age varies by state)." in html
+    assert "21+ required" not in html
+
+
+def test_render_dfs_intro_deterministic_varies_with_variation_key():
+    offer = {
+        "brand": "Underdog",
+        "offer_text": "Play $5, Get $50 in bonus entries",
+        "bonus_code": "TOPACTION",
+        "qualifying_amount": "$5",
+        "bonus_amount": "$50",
+        "reward_label": "bonus entries",
+        "terms": "Offer not valid in MD, MI, NJ, NY, OH, and PA.",
+    }
+    seen = {
+        _render_dfs_intro_deterministic(
+            keyword="underdog promo code",
+            offer=offer,
+            state="TX",
+            event_context="Featured game: Los Angeles Lakers vs Oklahoma City Thunder. Game time: Tuesday, May 5, 2026 at 8:30 PM ET. Network: NBC.",
+            article_date="Monday, May 4, 2026",
+            variation_key=f"run-{idx}",
+        )
+        for idx in range(8)
+    }
+    assert len(seen) > 1
+
+
+def test_render_dfs_overview_section_deterministic_avoids_tool_shaped_filler():
+    html = _render_dfs_overview_section_deterministic(
+        section_title="How Underdog promo code fits Lakers vs. Thunder",
+        keyword="underdog promo code",
+        offer={
+            "brand": "Underdog",
+            "offer_text": "Play $5, Get $50 in bonus entries",
+            "bonus_code": "TOPACTION",
+            "qualifying_amount": "$5",
+            "bonus_amount": "$50",
+            "reward_label": "bonus entries",
+        },
+        event_context="Featured game: Los Angeles Lakers vs Oklahoma City Thunder. Game time: Tuesday at 8:30 PM ET. Network: NBC.",
+    )
+    assert "sign-up guide" not in html.lower()
+    assert "bonus bets" not in html.lower()
+    assert "$5" in html
+    assert "$50 in bonus entries" in html.lower()
+
+
+def test_render_dfs_example_section_deterministic_varies_with_variation_key():
+    offer = {
+        "brand": "Underdog",
+        "offer_text": "Play $5, Get $50 in bonus entries",
+        "bonus_code": "TOPACTION",
+        "qualifying_amount": "$5",
+        "bonus_amount": "$50",
+        "reward_amount": "$50",
+        "reward_label": "bonus entries",
+    }
+    seen = {
+        _render_dfs_example_section_deterministic(
+            offer=offer,
+            bet_example_data=None,
+            event_context="Featured game: Los Angeles Lakers vs Oklahoma City Thunder.",
+            variation_key=f"run-{idx}",
+        )
+        for idx in range(8)
+    }
+    assert len(seen) > 1
+
+
 def test_build_signup_list_uses_state_and_event_instead_of_generic_guide_copy():
     html = _build_signup_list(
         brand="bet365",
@@ -122,10 +329,111 @@ def test_build_signup_list_uses_state_and_event_instead_of_generic_guide_copy():
         code_strong="<strong>ACTION365</strong>",
         state="NJ",
         event_context="Featured event: UFC 325 Main Card.",
+        signup_url="https://switchboard.actionnetwork.com/offers?x=1",
     )
     assert "sign-up guide" not in html.lower()
-    assert "Open bet365 in NJ and start registration." in html
+    assert "sign-up link" in html
     assert "UFC 325 Main Card" in html
+    assert "switchboard.actionnetwork.com" in html
+    assert 'data-id="switchboard_tracking"' in html
+
+
+@pytest.mark.asyncio
+async def test_generate_intro_section_uses_ai_prompt_for_dfs_intro(monkeypatch):
+    captured: dict[str, str] = {}
+
+    async def _fake_generate_completion(*, prompt, system_prompt, temperature, max_tokens):
+        captured["prompt"] = prompt
+        captured["system_prompt"] = system_prompt
+        return "<p>Use underdog promo code TOPACTION for Lakers vs. Thunder tonight.</p><p>States Available: TX. Extra entries land after the first $5 play.</p>"
+
+    monkeypatch.setattr("app.services.draft.generate_completion", _fake_generate_completion)
+
+    html = await _generate_intro_section(
+        keyword="underdog promo code",
+        title="underdog promo code TOPACTION: Lakers vs. Thunder",
+        offer={
+            "brand": "Underdog",
+            "offer_text": "Play $5, Get $50 in bonus entries",
+            "bonus_code": "TOPACTION",
+            "qualifying_amount": "$5",
+            "bonus_amount": "$50",
+            "reward_label": "bonus entries",
+            "terms": "Offer not valid in MD, MI, NJ, NY, OH, and PA.",
+        },
+        all_offers=None,
+        state="TX",
+        talking_points=[],
+        event_context="Featured game: Los Angeles Lakers vs Oklahoma City Thunder. Game time: Tuesday, May 5, 2026 at 8:30 PM ET. Network: NBC.",
+        article_date="Monday, May 4, 2026",
+        dfs_mode=True,
+    )
+    assert "VARIATION BRIEF:" in captured["prompt"]
+    assert "The intro should feel fresh on each run" in captured["prompt"]
+    assert "DFS writer" in captured["system_prompt"]
+    assert "TOPACTION" in html
+    assert "States Available:" in html
+
+
+@pytest.mark.asyncio
+async def test_generate_body_section_uses_ai_prompt_for_dfs_overview(monkeypatch):
+    captured: dict[str, str] = {}
+
+    async def _fake_query_articles(*args, **kwargs):
+        return []
+
+    async def _fake_suggest_links(*args, **kwargs):
+        return []
+
+    async def _fake_generate_completion(*, prompt, system_prompt, temperature, max_tokens):
+        captured["prompt"] = prompt
+        captured["system_prompt"] = system_prompt
+        return "<p>The extra entries matter on a one-game slate because they let you spread across more builds.</p><p>Use underdog promo code once, then move the credit into different contest paths.</p>"
+
+    monkeypatch.setattr("app.services.draft.generate_completion", _fake_generate_completion)
+    monkeypatch.setattr("app.services.draft.query_articles", _fake_query_articles)
+    monkeypatch.setattr("app.services.draft.suggest_links_for_section", _fake_suggest_links)
+
+    html = await _generate_body_section(
+        section_title="How Underdog promo code fits Lakers vs. Thunder",
+        level="h2",
+        keyword="underdog promo code",
+        offer={
+            "brand": "Underdog",
+            "offer_text": "Play $5, Get $50 in bonus entries",
+            "bonus_code": "TOPACTION",
+            "qualifying_amount": "$5",
+            "bonus_amount": "$50",
+            "reward_label": "bonus entries",
+        },
+        all_offers=None,
+        state="TX",
+        offer_property="action_network",
+        talking_points=[],
+        avoid=[],
+        previous_content="",
+        event_context="Featured game: Los Angeles Lakers vs Oklahoma City Thunder. Game time: Tuesday at 8:30 PM ET. Network: NBC.",
+        dfs_mode=True,
+    )
+    assert "VARIATION BRIEF:" in captured["prompt"]
+    assert "The article should feel new on each run" in captured["prompt"]
+    assert "How Underdog promo code fits Lakers vs. Thunder" in captured["prompt"]
+    assert "sign-up guide" not in html.lower()
+    assert "more builds" in html.lower()
+
+
+def test_build_signup_list_uses_exact_qualifying_amount_for_dfs_entries():
+    html = _build_signup_list(
+        brand="Underdog",
+        has_code=True,
+        code_strong="<strong>TOPACTION</strong>",
+        state="TX",
+        event_context="Featured game: Los Angeles Lakers vs Oklahoma City Thunder.",
+        signup_url="https://switchboard.actionnetwork.com/offers?x=1",
+        qualifying_amount="$5",
+        dfs_mode=True,
+    )
+    assert "first $5 fantasy entry" in html
 
 
 def test_strip_invalid_non_switchboard_links_unwraps_relative_urls():
@@ -134,6 +442,117 @@ def test_strip_invalid_non_switchboard_links_unwraps_relative_urls():
     assert 'href="/bet365-bonus-code"' not in cleaned
     assert "bet365 bonus code" in cleaned
     assert "switchboard.actionnetwork.com" in cleaned
+
+
+def test_target_keyword_mentions_normalizes_case_and_bolds_body_mentions():
+    html = "<p>Use BET365 BONUS CODE tonight.</p><p><a href=\"https://example.com\">bet365 bonus code</a> later.</p>"
+    cleaned = _target_keyword_mentions(html, "bet365 bonus code")
+    assert "<strong>bet365 bonus code</strong>" in cleaned
+    assert ">bet365 bonus code<" in cleaned
+
+
+def test_target_keyword_mentions_leaves_heading_case_alone():
+    html = "<h2>How Underdog promo code fits Lakers vs. Thunder</h2><p>Use underdog promo code tonight.</p>"
+    cleaned = _target_keyword_mentions(html, "underdog promo code")
+    assert "<h2>How Underdog promo code fits Lakers vs. Thunder</h2>" in cleaned
+    assert "<strong>underdog promo code</strong>" in cleaned
+
+
+def test_remove_generic_state_fallbacks_drops_vague_duplicate_line():
+    html = "<p>States Available: AZ, CO, IA.</p><p>States Available: eligible states listed by the operator.</p>"
+    cleaned = _remove_generic_state_fallbacks(html)
+    assert "eligible states listed by the operator" not in cleaned
+
+
+def test_strip_formatting_from_headings_removes_strong_and_links():
+    html = "<h1><strong>underdog promo code</strong> TOPACTION</h1><h2>How to Sign Up for <a href=\"https://example.com\">underdog promo code</a></h2>"
+    cleaned = _strip_formatting_from_headings(html)
+    assert "<strong>" not in cleaned
+    assert "<a href=" not in cleaned
+    assert "<h2>How to Sign Up for underdog promo code</h2>" in cleaned
+
+
+def test_is_signup_heading_treats_how_to_claim_as_signup_flow():
+    assert _is_signup_heading("how to claim underdog promo code")
+
+
+def test_clean_orphaned_keyword_page_references_removes_trailing_keyword_stub():
+    html = "<p>For the full rundown, start at the <strong>Underdog offer</strong> page: <strong>underdog promo code</strong>.</p>"
+    cleaned = _clean_orphaned_keyword_page_references(html, "underdog promo code")
+    assert "page: <strong>underdog promo code</strong>" not in cleaned
+    assert "page.</p>" in cleaned
+
+
+def test_clean_orphaned_keyword_page_references_removes_page_at_keyword_stub():
+    html = "<p>You can always reference the <strong>Underdog offer</strong> page at <strong>underdog promo code</strong> for the full details.</p>"
+    cleaned = _clean_orphaned_keyword_page_references(html, "underdog promo code")
+    assert "page at <strong>underdog promo code</strong>" not in cleaned
+    assert "page for the full details." in cleaned
+
+
+def test_ensure_primary_keyword_internal_link_rewrites_existing_external_keyword_anchor():
+    html = '<p>Use the <a href="https://www.bet365.com">bet365 bonus code</a> today.</p>'
+    cleaned = _ensure_primary_keyword_internal_link(
+        html,
+        "bet365 bonus code",
+        "https://www.actionnetwork.com/online-sports-betting/reviews/bet365",
+    )
+    assert 'href="https://www.actionnetwork.com/online-sports-betting/reviews/bet365"' in cleaned
+    assert "bet365.com" not in cleaned
+
+
+def test_keep_only_primary_non_switchboard_link_unwraps_other_links():
+    html = (
+        '<p><a href="https://www.bet365.com">bet365</a> text.</p>'
+        '<p><a href="https://www.actionnetwork.com/online-sports-betting/reviews/bet365">bet365 bonus code</a></p>'
+        '<p><a data-id="switchboard_tracking" href="https://switchboard.actionnetwork.com/offers?x=1">Claim</a></p>'
+    )
+    cleaned = _keep_only_primary_non_switchboard_link(
+        html,
+        "https://www.actionnetwork.com/online-sports-betting/reviews/bet365",
+    )
+    assert "switchboard.actionnetwork.com" in cleaned
+    assert 'href="https://www.actionnetwork.com/online-sports-betting/reviews/bet365"' in cleaned
+    assert "https://www.bet365.com" not in cleaned
+
+
+def test_keep_selected_non_switchboard_links_preserves_only_requested_urls():
+    html = (
+        '<p><a href="https://www.actionnetwork.com/online-sports-betting/reviews/bet365">bet365 bonus code</a></p>'
+        '<p><a href="https://www.actionnetwork.com/online-sports-betting/reviews/draftkings">draftkings promo code</a></p>'
+        '<p><a data-id="switchboard_tracking" href="https://switchboard.actionnetwork.com/offers?x=1">Claim</a></p>'
+    )
+    cleaned = _keep_selected_non_switchboard_links(
+        html,
+        ["https://www.actionnetwork.com/online-sports-betting/reviews/draftkings"],
+        fallback_primary_url="https://www.actionnetwork.com/online-sports-betting/reviews/bet365",
+    )
+    assert "switchboard.actionnetwork.com" in cleaned
+    assert 'href="https://www.actionnetwork.com/online-sports-betting/reviews/draftkings"' in cleaned
+    assert "https://www.actionnetwork.com/online-sports-betting/reviews/bet365" not in cleaned
+
+
+def test_trim_dangling_paragraph_endings_removes_trailing_conjunction_fragment():
+    html = '<p>If you want the full breakdown of the <a href="https://www.actionnetwork.com/online-sports-betting/reviews/bet365">bet365 bonus code</a> details, that page lays it out, and</p>'
+    cleaned = _trim_dangling_paragraph_endings(html)
+    assert cleaned.endswith("details, that page lays it out.</p>")
+
+
+def test_offer_states_text_uses_curated_underdog_states_for_dfs():
+    offer = {
+        "brand": "Underdog",
+        "states_list": [],
+        "terms": "Offer not valid in MD, MI, NJ, NY, OH, and PA.",
+    }
+    rendered = _offer_states_text(offer, "ALL", dfs_mode=True)
+    assert rendered.startswith("AL, AK, AR, CA, DC")
+    assert "NJ" not in rendered
+
+
+def test_adapt_disclaimer_for_dfs_removes_default_21_plus():
+    cleaned = _adapt_disclaimer_for_dfs("21+. Gambling problem? Call 1-800-GAMBLER. Please bet responsibly.")
+    assert cleaned.startswith("Need help?")
+    assert "21+" not in cleaned
 
 
 @pytest.mark.asyncio

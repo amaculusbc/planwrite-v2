@@ -478,7 +478,48 @@ def check_editorial_regressions(
             suggestion="Use 'bet365 bonus code' in visible copy",
         ))
 
+    filler_patterns = [
+        "front and center",
+        "angle is live",
+        "extra entry ammo",
+        "built for volume",
+        "the value is simple",
+    ]
+    matched_fillers = [phrase for phrase in filler_patterns if phrase in plain.lower()]
+    if matched_fillers:
+        issues.append(ComplianceIssue(
+            type="tool_shaped_phrase",
+            message=f"Article contains stock filler phrasing ({', '.join(sorted(set(matched_fillers)))})",
+            severity=IssueSeverity.WARNING,
+            suggestion="Replace stock filler with direct, specific editorial copy",
+        ))
+
     return issues
+
+
+def check_active_voice(content: str) -> list[ComplianceIssue]:
+    """Warn when passive constructions dominate visible copy."""
+    if not content:
+        return []
+
+    plain = _strip_html_tags(content)
+    passive_matches = re.findall(
+        r"\b(?:is|are|was|were|be|been|being)\s+[A-Za-z]+(?:ed|en)\b",
+        plain,
+        flags=re.IGNORECASE,
+    )
+    if len(passive_matches) < 3:
+        return []
+
+    examples = ", ".join(dict.fromkeys(match.lower() for match in passive_matches[:3]))
+    return [
+        ComplianceIssue(
+            type="passive_voice_heavy",
+            message=f"Article leans passive in multiple places ({examples})",
+            severity=IssueSeverity.WARNING,
+            suggestion="Rewrite those lines in active voice with a clearer subject and verb",
+        )
+    ]
 
 
 def check_seo(content: str) -> list[ComplianceIssue]:
@@ -557,6 +598,7 @@ def validate_content(
     issues.extend(check_seo(content))
     issues.extend(check_offer_facts(content, offer=offer, keyword=keyword))
     issues.extend(check_editorial_regressions(content, keyword=keyword, offer=offer))
+    issues.extend(check_active_voice(content))
 
     if check_links:
         issues.extend(check_link_quality(content, allowed_domains))

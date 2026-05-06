@@ -89,7 +89,7 @@
                 <div>
                     <label for="offer_id" class="block text-sm font-medium text-gray-700">Select Offer</label>
                     <select x-model="form.offer_id" id="offer_id" name="offer_id"
-                            @change="updateAltOffers(); syncSelectedBookToOffer()"
+                            @change="updateAltOffers(); syncSelectedBookToOffer(); loadLinkOptions()"
                             class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm">
                         <option value="">-- No offer (generic article) --</option>
                         <template x-for="offer in offers" :key="offer.id">
@@ -336,6 +336,99 @@
                         <textarea x-model="form.competitors" id="competitors" name="competitors" rows="3"
                                   placeholder="https://competitor1.com/article&#10;https://competitor2.com/article"
                                   class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"></textarea>
+                    </div>
+
+                    <div class="rounded-lg border border-gray-200 p-4 space-y-4">
+                        <div>
+                            <h3 class="text-sm font-semibold text-gray-900">Article Controls</h3>
+                            <p class="mt-1 text-xs text-gray-500">Use these to shape structure, interlinks, and voice before writing.</p>
+                        </div>
+
+                        <div>
+                            <label for="secondary_keywords" class="block text-sm font-medium text-gray-700">Secondary Keywords</label>
+                            <textarea x-model="secondaryKeywordsInput" id="secondary_keywords" name="secondary_keywords" rows="2"
+                                      placeholder="One per line or comma-separated"
+                                      class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"></textarea>
+                            <p class="mt-1 text-xs text-gray-500">The writer can weave these in without forcing them into every section.</p>
+                        </div>
+
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label for="section_count" class="block text-sm font-medium text-gray-700">Target H2 Count</label>
+                                <select x-model.number="articlePrefs.section_count" id="section_count" name="section_count"
+                                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm">
+                                    <option :value="3">3 sections</option>
+                                    <option :value="4">4 sections</option>
+                                    <option :value="5">5 sections</option>
+                                    <option :value="6">6 sections</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label for="structure_notes" class="block text-sm font-medium text-gray-700">Structure Notes</label>
+                                <input type="text" x-model="articlePrefs.structure_notes" id="structure_notes" name="structure_notes"
+                                       placeholder="e.g., lean harder into playoff angle"
+                                       class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm">
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm text-gray-700">
+                            <label class="flex items-center gap-2">
+                                <input type="checkbox" x-model="articlePrefs.allow_h3"
+                                       class="rounded border-gray-300 text-primary-600 focus:ring-primary-500">
+                                <span>Allow H3 subsections</span>
+                            </label>
+                            <label class="flex items-center gap-2">
+                                <input type="checkbox" x-model="articlePrefs.include_daily_promos"
+                                       class="rounded border-gray-300 text-primary-600 focus:ring-primary-500">
+                                <span>Include Daily Promos placeholder</span>
+                            </label>
+                            <label class="flex items-center gap-2">
+                                <input type="checkbox" x-model="articlePrefs.include_bullets"
+                                       class="rounded border-gray-300 text-primary-600 focus:ring-primary-500">
+                                <span>Allow bullets/lists</span>
+                            </label>
+                            <label class="flex items-center gap-2">
+                                <input type="checkbox" x-model="articlePrefs.include_table"
+                                       class="rounded border-gray-300 text-primary-600 focus:ring-primary-500">
+                                <span>Allow a compact table</span>
+                            </label>
+                            <label class="flex items-center gap-2 md:col-span-2">
+                                <input type="checkbox" x-model="articlePrefs.enforce_active_voice"
+                                       class="rounded border-gray-300 text-primary-600 focus:ring-primary-500">
+                                <span>Enforce active voice</span>
+                            </label>
+                        </div>
+
+                        <div class="space-y-2">
+                            <div class="flex items-center justify-between gap-3">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700">Preferred Internal Links</label>
+                                    <p class="text-xs text-gray-500">Pick the internal links you want the draft to prioritize.</p>
+                                </div>
+                                <button type="button" @click="loadLinkOptions()"
+                                        class="inline-flex items-center rounded-md bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50">
+                                    Refresh links
+                                </button>
+                            </div>
+                            <div x-show="loadingLinkOptions" class="text-xs text-gray-500">Loading link options...</div>
+                            <div x-show="!loadingLinkOptions && linkOptions.length === 0" class="text-xs text-gray-500">
+                                Add a keyword and offer/property to load link options.
+                            </div>
+                            <div x-show="linkOptions.length > 0" class="space-y-2">
+                                <template x-for="link in linkOptions" :key="link.url">
+                                    <label class="flex items-start gap-2 rounded-md border border-gray-200 p-2 text-sm text-gray-700">
+                                        <input type="checkbox"
+                                               :checked="articlePrefs.preferred_internal_urls.includes(link.url)"
+                                               @change="togglePreferredLink(link.url, $event.target.checked, $event)"
+                                               class="mt-0.5 rounded border-gray-300 text-primary-600 focus:ring-primary-500">
+                                        <span class="min-w-0">
+                                            <span class="block font-medium text-gray-900" x-text="link.title"></span>
+                                            <span class="block text-xs text-gray-500 break-all" x-text="link.url"></span>
+                                        </span>
+                                    </label>
+                                </template>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -587,10 +680,14 @@
                     Edit outline plan (sections + talking points)
                 </label>
                 <textarea x-model="outline" id="outline" name="outline" rows="12"
+                          @input="onOutlineInput()"
                           class="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 font-mono text-sm"
                           placeholder="[INTRO]&#10;> Hook with date and offer value&#10;&#10;[SHORTCODE]&#10;&#10;[H2: Offer Overview]&#10;> Why this offer is useful&#10;! Avoid: Repeating intro"></textarea>
                 <p class="mt-1 text-xs text-gray-500">
                     Supported format: `[INTRO]`, `[SHORTCODE]`, `[SHORTCODE_MAIN]`, `[SHORTCODE_1]`, `[SHORTCODE_2]`, `[H2: ...]`, `[H3: ...]` plus optional `>` talking points and `! Avoid: item1, item2`.
+                </p>
+                <p x-show="outlineStale" class="mt-2 text-xs text-amber-700">
+                    The H1 changed after this outline was generated. Refresh the outline so the draft follows the new title angle.
                 </p>
             </div>
 
@@ -823,6 +920,22 @@ function articleWizard() {
         statusType: 'info',
         titleManuallyEdited: false,
         lastSuggestedTitle: '',
+        outlineGeneratedForTitle: '',
+        outlineStale: false,
+        outlineManualEdits: false,
+        secondaryKeywordsInput: '',
+        loadingLinkOptions: false,
+        linkOptions: [],
+        articlePrefs: {
+            preferred_internal_urls: [],
+            section_count: 5,
+            allow_h3: false,
+            include_daily_promos: false,
+            include_bullets: false,
+            include_table: false,
+            enforce_active_voice: true,
+            structure_notes: ''
+        },
 
         // Form data
         form: {
@@ -1010,6 +1123,73 @@ function articleWizard() {
             this.loadProperties();
             this.loadOffers();
         },
+        parseSecondaryKeywords() {
+            return (this.secondaryKeywordsInput || '')
+                .split(/[\n,]+/)
+                .map(v => v.trim())
+                .filter(Boolean)
+                .slice(0, 6);
+        },
+        buildArticlePreferences() {
+            return {
+                secondary_keywords: this.parseSecondaryKeywords(),
+                preferred_internal_urls: [...(this.articlePrefs.preferred_internal_urls || [])],
+                section_count: Number(this.articlePrefs.section_count) || 5,
+                allow_h3: !!this.articlePrefs.allow_h3,
+                include_daily_promos: !!this.articlePrefs.include_daily_promos,
+                include_bullets: !!this.articlePrefs.include_bullets,
+                include_table: !!this.articlePrefs.include_table,
+                enforce_active_voice: !!this.articlePrefs.enforce_active_voice,
+                structure_notes: (this.articlePrefs.structure_notes || '').trim()
+            };
+        },
+        async loadLinkOptions() {
+            const keyword = (this.form.keyword || '').trim();
+            const property = (this.form.offer_property || '').trim();
+            if (!keyword || !property) {
+                this.linkOptions = [];
+                return;
+            }
+            this.loadingLinkOptions = true;
+            try {
+                const params = new URLSearchParams({
+                    property,
+                    keyword,
+                    limit: '8'
+                });
+                const offer = this.selectedOffer();
+                const brand = offer && offer.brand ? String(offer.brand).trim() : '';
+                if (brand) params.set('brand', brand);
+                const resp = await fetch(`/api/generate/link-options?${params.toString()}`);
+                if (!resp.ok) throw new Error('Failed to load links');
+                const data = await resp.json();
+                this.linkOptions = Array.isArray(data.links) ? data.links : [];
+                const allowed = new Set(this.linkOptions.map(link => link.url));
+                this.articlePrefs.preferred_internal_urls = (this.articlePrefs.preferred_internal_urls || []).filter(url => allowed.has(url));
+            } catch (e) {
+                console.error('Failed to load link options:', e);
+                this.linkOptions = [];
+            } finally {
+                this.loadingLinkOptions = false;
+            }
+        },
+        togglePreferredLink(url, checked, evt) {
+            const current = [...(this.articlePrefs.preferred_internal_urls || [])];
+            if (checked) {
+                if (current.includes(url)) return;
+                if (current.length >= 5) {
+                    if (evt && evt.target) evt.target.checked = false;
+                    this.showStatus('Select up to 5 preferred internal links', 'error');
+                    return;
+                }
+                current.push(url);
+            } else {
+                const next = current.filter(item => item !== url);
+                this.articlePrefs.preferred_internal_urls = next;
+                return;
+            }
+            this.articlePrefs.preferred_internal_urls = current;
+        },
         switchTab(tab) {
             if (tab === 'tutorial') {
                 if (this.activeTab !== 'tutorial') {
@@ -1088,6 +1268,7 @@ function articleWizard() {
                 return {
                     event_type: this.form.custom_event_type || 'custom',
                     custom_event: customEvent,
+                    event_date: this.form.game_date || null,
                     sport: (this.form.custom_sport || '').trim() || null,
                     start_time: (this.form.custom_start_time || '').trim() || null,
                     network: (this.form.custom_network || '').trim() || null,
@@ -1097,6 +1278,7 @@ function articleWizard() {
 
             if (!this.selectedGame) return null;
             const gameContext = {
+                event_date: this.form.game_date || null,
                 sport: this.form.sport,
                 away_team: this.selectedGame.away_team,
                 home_team: this.selectedGame.home_team,
@@ -1128,12 +1310,13 @@ function articleWizard() {
         },
 
         // Load offers from API
-        async loadOffers() {
+        async loadOffers(forceRefresh = false) {
             console.log('Loading offers...');
             try {
                 const params = new URLSearchParams();
                 if (this.form.offer_property) params.set('property', this.form.offer_property);
                 if (this.form.state) params.set('state', this.form.state);
+                if (forceRefresh) params.set('force_refresh', 'true');
 
                 const resp = await fetch(`/api/offers/?${params}`);
                 console.log('Offers response status:', resp.status);
@@ -1157,6 +1340,7 @@ function articleWizard() {
                         this.form.alt_offer_ids = [];
                     }
                     this.updateAltOffers();
+                    this.loadLinkOptions();
                     console.log('Offers mapped:', this.offers.length);
                 } else {
                     console.error('Offers response not ok:', resp.status);
@@ -1202,7 +1386,7 @@ function articleWizard() {
                 const params = new URLSearchParams();
                 if (this.form.offer_property) params.set('property', this.form.offer_property);
                 await fetch(`/api/offers/sync?${params}`, { method: 'POST' });
-                this.loadOffers();
+                await this.loadOffers(true);
                 this.showStatus('Offers refreshed', 'info');
             } catch (e) {
                 this.showStatus('Failed to refresh offers', 'error');
@@ -1350,11 +1534,17 @@ function articleWizard() {
 
         onKeywordInput() {
             this.refreshSuggestedTitle();
+            this.loadLinkOptions();
         },
 
         onTitleInput() {
             const current = (this.form.title || '').trim();
             this.titleManuallyEdited = !!current && current !== this.lastSuggestedTitle;
+            this.outlineStale = !!this.outline && !!this.outlineGeneratedForTitle && current !== this.outlineGeneratedForTitle;
+        },
+
+        onOutlineInput() {
+            this.outlineManualEdits = true;
         },
 
         buildSuggestedTitle() {
@@ -1405,7 +1595,8 @@ function articleWizard() {
                     alt_offer_ids: this.form.alt_offer_ids || [],
                     state: this.form.state,
                     competitor_urls: competitorUrls.length > 0 ? competitorUrls : null,
-                    game_context: gameContext
+                    game_context: gameContext,
+                    article_preferences: this.buildArticlePreferences()
                 })
             });
             if (!resp.ok) throw new Error('Outline failed');
@@ -1431,7 +1622,8 @@ function articleWizard() {
                     offer_property: this.form.offer_property || null,
                     alt_offer_ids: this.form.alt_offer_ids || [],
                     state: this.form.state,
-                    game_context: gameContext
+                    game_context: gameContext,
+                    article_preferences: this.buildArticlePreferences()
                 })
             });
             if (!resp.ok) throw new Error('Draft failed');
@@ -1542,14 +1734,14 @@ function articleWizard() {
         },
 
         // Generate outline
-        async generateOutline() {
+        async generateOutline(options = {}) {
             if (!this.form.keyword || !this.form.title) {
                 this.showStatus('Please fill in keyword and title', 'error');
-                return;
+                return false;
             }
 
             this.generating = true;
-            this.statusMessage = 'Connecting...';
+            this.statusMessage = options.statusMessage || 'Connecting...';
             this.statusType = 'info';
             this.outline = '';
 
@@ -1571,7 +1763,8 @@ function articleWizard() {
                         alt_offer_ids: this.form.alt_offer_ids || [],
                         state: this.form.state,
                         competitor_urls: competitorUrls.length > 0 ? competitorUrls : null,
-                        game_context: gameContext
+                        game_context: gameContext,
+                        article_preferences: this.buildArticlePreferences()
                     })
                 });
 
@@ -1580,10 +1773,15 @@ function articleWizard() {
                 const data = await resp.json();
                 this.outline = data.outline_text || (data.outline || []).join('\n');
                 this.outlineStructured = data.outline_structured || null;
-                this.step = 2;
-                this.showStatus('Outline generated!', 'info');
+                this.outlineGeneratedForTitle = (this.form.title || '').trim();
+                this.outlineStale = false;
+                this.outlineManualEdits = false;
+                if (!options.keepStep) this.step = 2;
+                this.showStatus(options.successMessage || 'Outline generated!', 'info');
+                return true;
             } catch (e) {
                 this.showStatus('Error: ' + e.message, 'error');
+                return false;
             } finally {
                 this.generating = false;
             }
@@ -1594,6 +1792,18 @@ function articleWizard() {
             if (!this.outline.trim()) {
                 this.showStatus('Please add an outline first', 'error');
                 return;
+            }
+            if (this.outlineStale && this.outlineManualEdits) {
+                this.showStatus('H1 changed after the outline was edited. Regenerate the outline or update it manually before drafting.', 'error');
+                return;
+            }
+            if (this.outlineStale) {
+                const refreshed = await this.generateOutline({
+                    keepStep: true,
+                    statusMessage: 'H1 changed. Refreshing outline to match the title...',
+                    successMessage: 'Outline refreshed for the updated H1'
+                });
+                if (!refreshed) return;
             }
 
             this.generating = true;
@@ -1621,7 +1831,8 @@ function articleWizard() {
                         offer_property: this.form.offer_property || null,
                         alt_offer_ids: this.form.alt_offer_ids || [],
                         state: this.form.state,
-                        game_context: gameContext
+                        game_context: gameContext,
+                        article_preferences: this.buildArticlePreferences()
                     })
                 });
 

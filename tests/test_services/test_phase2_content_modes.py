@@ -33,7 +33,7 @@ def test_dfs_signup_fallback_avoids_bet_terms():
     )
     assert "qualifying fantasy entry" in html
     assert "qualifying bet" not in html
-    assert "how pick'em entries work" in html
+    assert "trigger the bonus entries" in html
 
 
 def test_dfs_terms_fallback_avoids_sportsbook_fields():
@@ -84,4 +84,3 @@ def test_dfs_outline_titles_use_how_to_use_not_claim():
     )
     assert titles["claim"].startswith("How to Use")
     assert "How to Claim" not in titles["claim"]
-

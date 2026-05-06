@@ -1,9 +1,13 @@
 """Authentication middleware tests."""
 
 import pytest
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 
 from app.main import app, settings as app_settings
+
+
+def _test_client() -> AsyncClient:
+    return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
 
 
 @pytest.mark.asyncio
@@ -11,7 +15,7 @@ async def test_auth_blocks_api_when_enabled():
     prev = app_settings.auth_enabled
     app_settings.auth_enabled = True
     try:
-        async with AsyncClient(app=app, base_url="http://test") as client:
+        async with _test_client() as client:
             response = await client.get("/api/admin/status")
             assert response.status_code == 401
             assert response.json().get("detail") == "Authentication required"
@@ -30,7 +34,7 @@ async def test_login_accepts_secondary_user_from_auth_users_json():
     app_settings.auth_username = "legacy"
     app_settings.auth_password = "legacy-pass"
     try:
-        async with AsyncClient(app=app, base_url="http://test") as client:
+        async with _test_client() as client:
             login = await client.post(
                 "/login",
                 data={"username": "usteam", "password": "usteam-pass", "next": "/admin"},
@@ -53,7 +57,7 @@ async def test_login_page_renders_when_auth_enabled():
     prev_enabled = app_settings.auth_enabled
     app_settings.auth_enabled = True
     try:
-        async with AsyncClient(app=app, base_url="http://test") as client:
+        async with _test_client() as client:
             response = await client.get("/login?next=/articles/new")
             assert response.status_code == 200
             assert "Sign In" in response.text
@@ -68,7 +72,7 @@ async def test_login_accepts_secondary_user_from_relaxed_auth_users_json():
     app_settings.auth_enabled = True
     app_settings.auth_users_json = "{admin:admin-pass,usteam:usteam-pass}"
     try:
-        async with AsyncClient(app=app, base_url="http://test") as client:
+        async with _test_client() as client:
             login = await client.post(
                 "/login",
                 data={"username": "usteam", "password": "usteam-pass", "next": "/admin"},

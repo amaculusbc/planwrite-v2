@@ -6,6 +6,7 @@ Supports multiple properties (Action Network, VegasInsider, etc.).
 
 import hashlib
 import pickle
+import re
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
@@ -13,6 +14,7 @@ from typing import Any, Optional
 from app.config import get_settings
 from app.services.offer_parsing import (
     enrich_offer_dict,
+    extract_excluded_states_from_terms,
     extract_states_from_terms,
     parse_states,
 )
@@ -116,6 +118,76 @@ def _select_internal_id(internal_identifiers: list[str]) -> str:
     return internal_identifiers[0]
 
 
+def _looks_foreign_market_offer(offer_text: str, terms: str) -> bool:
+    """Return True when an offer clearly targets a non-US market."""
+    haystack = f"{offer_text}\n{terms}".lower()
+    return haystack.startswith("mexico:") or "nuevo cliente" in haystack or "apuestas gratis" in haystack
+
+
+def _offer_reward_amount(offer: dict) -> float:
+    raw = str(offer.get("reward_amount") or offer.get("bonus_amount") or "").replace(",", "")
+    match = re.search(r"(\d+(?:\.\d+)?)", raw)
+    if not match:
+        return 0.0
+    try:
+        return float(match.group(1))
+    except ValueError:
+        return 0.0
+
+
+def _offer_type_priority(offer: dict) -> int:
+    text = str(offer.get("offer_text") or offer.get("affiliate_offer") or "").lower()
+    if "safety net" in text or "refund" in text:
+        return 2
+    if _looks_foreign_market_offer(text, str(offer.get("terms") or "")):
+        return 3
+    return 0
+
+
+def _offer_matches_state(offer: dict, state_code: str) -> bool:
+    """Return True when an offer is usable for the requested state."""
+    if not state_code or state_code == "ALL":
+        return True
+
+    terms = str(offer.get("terms") or "")
+    states = parse_states(offer.get("states") or offer.get("states_list") or [])
+    positive_states = extract_states_from_terms(terms)
+    excluded_states = extract_excluded_states_from_terms(terms)
+
+    if state_code in excluded_states:
+        return False
+    if positive_states:
+        return state_code in positive_states
+    if state_code in states:
+        return True
+    if "ALL" in states:
+        return not _looks_foreign_market_offer(
+            str(offer.get("offer_text") or offer.get("affiliate_offer") or ""),
+            terms,
+        )
+    return False
+
+
+def _offer_state_sort_key(offer: dict, state_code: str) -> tuple[int, int, float, str]:
+    """Rank state-appropriate offers by specificity and editorial usefulness."""
+    states = parse_states(offer.get("states") or offer.get("states_list") or [])
+    terms = str(offer.get("terms") or "")
+    positive_states = extract_states_from_terms(terms)
+    specificity = 1
+    if positive_states:
+        specificity = 0 if state_code in positive_states else 9
+    elif state_code in states and "ALL" not in states:
+        specificity = 0
+    elif "ALL" not in states and states:
+        specificity = 9
+    return (
+        specificity,
+        _offer_type_priority(offer),
+        -_offer_reward_amount(offer),
+        str(offer.get("offer_text") or offer.get("affiliate_offer") or "").lower(),
+    )
+
+
 def _parse_promotion(promo: dict, property_config: dict, context: str) -> dict:
     """Parse a single promotion from BAM API response."""
     affiliate = promo.get("affiliate", {})
@@ -176,10 +248,13 @@ def _parse_promotion(promo: dict, property_config: dict, context: str) -> dict:
 
     # Parse states from explicit payload first, then terms text.
     states = parse_states(promo.get("states", []))
+    terms_states = extract_states_from_terms(terms)
+    if not terms_states:
+        terms_states = extract_states_from_terms(affiliate.get("terms", ""))
+    if terms_states:
+        states = terms_states
     if not states:
-        states = extract_states_from_terms(terms)
-    if not states:
-        states = extract_states_from_terms(affiliate.get("terms", ""))
+        states = terms_states
     if not states:
         states = ["ALL"]
 
@@ -208,6 +283,11 @@ def _cache_file(property_key: str) -> Any:
     return settings.storage_dir / f"bam_offers_{property_key}.pkl"
 
 
+def _normalize_cached_offers(offers: list[dict]) -> list[dict]:
+    """Re-enrich cached offers so parser fixes apply without waiting for cache expiry."""
+    return [enrich_offer_dict(dict(offer or {})) for offer in (offers or []) if offer]
+
+
 def _load_cache(property_key: str) -> tuple[Optional[datetime], list[dict]]:
     """Load cached offers from disk."""
     cache_file = _cache_file(property_key)
@@ -217,7 +297,7 @@ def _load_cache(property_key: str) -> tuple[Optional[datetime], list[dict]]:
     try:
         with open(cache_file, "rb") as f:
             data = pickle.load(f)
-            return data.get("timestamp"), data.get("offers", [])
+            return data.get("timestamp"), _normalize_cached_offers(data.get("offers", []))
     except Exception:
         return None, []
 
@@ -268,6 +348,7 @@ async def fetch_offers_from_bam(
     # Check memory cache first
     if not force_refresh and _cached_offers.get(property_key) and _last_fetch.get(property_key):
         if datetime.utcnow() - _last_fetch[property_key] < CACHE_DURATION:
+            _cached_offers[property_key] = _normalize_cached_offers(_cached_offers[property_key])
             return _cached_offers[property_key]
 
     # Check disk cache
@@ -297,6 +378,7 @@ async def fetch_offers_from_bam(
         # Fall back to cache
         _, cached = _load_cache(property_key)
         if cached:
+            _cached_offers[property_key] = cached
             return cached
         return []
 
@@ -354,19 +436,8 @@ async def get_offers_bam(
 
     if state and state.upper() != "ALL":
         state_upper = state.upper()
-        offers = [
-            o for o in offers
-            if state_upper in (o.get("states") or []) or "ALL" in (o.get("states") or [])
-        ]
-        offers.sort(
-            key=lambda o: (
-                0
-                if state_upper in (o.get("states") or []) and "ALL" not in (o.get("states") or [])
-                else 1,
-                str(o.get("brand") or "").lower(),
-                str(o.get("offer_text") or o.get("affiliate_offer") or "").lower(),
-            )
-        )
+        offers = [o for o in offers if _offer_matches_state(o, state_upper)]
+        offers.sort(key=lambda o: _offer_state_sort_key(o, state_upper))
 
     return offers
 

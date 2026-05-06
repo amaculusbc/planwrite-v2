@@ -265,6 +265,57 @@ class InternalLinksStore:
             return []
         return records
 
+    def get_links_by_urls(self, urls: list[str] | None) -> list[InternalLinkSpec]:
+        """Resolve a specific ordered set of internal links by URL."""
+        requested = [str(url or "").strip() for url in (urls or []) if str(url or "").strip()]
+        if not requested:
+            return []
+
+        by_url: dict[str, InternalLinkSpec] = {}
+        for item in self._read_index_items():
+            url = str(item.get("url") or "").strip()
+            title = str(item.get("title") or "").strip()
+            if not url or not title:
+                continue
+            by_url[url.lower()] = InternalLinkSpec(
+                title=title,
+                url=url,
+                recommended_anchors=[str(a) for a in item.get("recommended_anchors", []) if str(a).strip()],
+                description=str(item.get("summary") or item.get("description") or "").strip(),
+                operator=str(item.get("operator") or _link_operator(item) or "").strip(),
+                always_include=bool(item.get("always_include")),
+            )
+
+        for item in self._read_source_items():
+            url = str(item.get("url") or "").strip()
+            title = str(item.get("title") or "").strip()
+            if not url or not title or url.lower() in by_url:
+                continue
+            by_url[url.lower()] = InternalLinkSpec(
+                title=title,
+                url=url,
+                recommended_anchors=[str(a) for a in item.get("recommended_anchors", []) if str(a).strip()],
+                description=str(item.get("summary") or item.get("description") or "").strip(),
+                operator=str(item.get("operator") or _link_operator(item) or "").strip(),
+                always_include=bool(item.get("always_include")),
+            )
+
+        for rec in REQUIRED_LINKS_BY_PROPERTY.get(self.property_key, []):
+            url = str(rec.get("url") or "").strip()
+            title = str(rec.get("title") or "").strip()
+            if not url or not title or url.lower() in by_url:
+                continue
+            by_url[url.lower()] = InternalLinkSpec(
+                title=title,
+                url=url,
+                recommended_anchors=[str(a) for a in rec.get("recommended_anchors", []) if str(a).strip()],
+                description=str(rec.get("description") or "").strip(),
+                operator=str(rec.get("operator") or _link_operator(rec) or "").strip(),
+                always_include=bool(rec.get("always_include")),
+            )
+
+        return [by_url[url.lower()] for url in requested if url.lower() in by_url]
+
     def _always_include_links(self) -> list[InternalLinkSpec]:
         """Load operator-scoped links flagged for guaranteed insertion."""
         if self._items:
@@ -493,16 +544,25 @@ class InternalLinksStore:
             return None
 
         brand_lc = (brand or "").strip().lower()
+        prediction_market_mode = is_prediction_market_context(brand)
+        dfs_mode = is_dfs_context(brand)
 
-        def _rank(link: InternalLinkSpec) -> tuple[int, int, int, str]:
+        def _rank(link: InternalLinkSpec) -> tuple[int, int, int, int, int, str]:
             text = " ".join([link.title, link.url, " ".join(link.recommended_anchors[:3])]).lower()
             url_lc = (link.url or "").lower()
             has_brand = 0 if (brand_lc and brand_lc in text) else 1
+            if prediction_market_mode:
+                vertical_fit = 0 if "/prediction-markets/" in url_lc or "prediction-market" in url_lc else 1
+            elif dfs_mode:
+                vertical_fit = 0 if any(token in url_lc for token in ("/fantasy", "/dfs", "underdog-fantasy")) else 1
+            else:
+                vertical_fit = 0 if any(token in url_lc for token in ("/online-sports-betting/", "/sportsbooks/", "/sports-betting/")) else 1
+            casino_penalty = 1 if any(token in url_lc for token in ("/casino/", "/casinos/")) else 0
             looks_like_operator_promo_page = 0 if any(
                 token in text for token in ("promo", "bonus", "referral")
             ) else 1
             canonical_path = 0 if target_operator.replace("_", "-") in url_lc or target_operator in url_lc else 1
-            return (has_brand, looks_like_operator_promo_page, canonical_path, url_lc)
+            return (has_brand, vertical_fit, casino_penalty, looks_like_operator_promo_page, canonical_path, url_lc)
 
         candidates.sort(key=_rank)
         return candidates[0]
@@ -537,6 +597,8 @@ class InternalLinksStore:
         ranked_idx = np.argsort(-sims)
 
         target_operator = _normalize_operator(brand)
+        prediction_market_mode = is_prediction_market_context(brand, title, *(context or []))
+        dfs_mode = is_dfs_context(brand, title, *(context or []))
         picked: list[InternalLinkSpec] = []
         seen_urls: set[str] = {r.url for r in required if r.url}
 
@@ -553,6 +615,14 @@ class InternalLinksStore:
             # If article is for a known operator, do not surface competitor operator links.
             if target_operator and item_operator and item_operator != target_operator:
                 continue
+            if target_operator and item_operator == target_operator:
+                url_lc = url.lower()
+                if prediction_market_mode and "/prediction-markets/" not in url_lc and "prediction-market" not in url_lc:
+                    continue
+                if dfs_mode and not any(token in url_lc for token in ("/fantasy", "/dfs", "underdog-fantasy")):
+                    continue
+                if not prediction_market_mode and not dfs_mode and any(token in url_lc for token in ("/casino/", "/casinos/")):
+                    continue
 
             spec = InternalLinkSpec(
                 title=str(item.get("title", "")),
@@ -607,6 +677,12 @@ def get_operator_evergreen_link(property_key: str | None = None, brand: str = ""
     """Return deterministic operator-specific evergreen link for the current property."""
     store = get_links_store(property_key=property_key)
     return store.get_operator_evergreen_link(brand)
+
+
+def get_links_by_urls(urls: list[str] | None, property_key: str | None = None) -> list[InternalLinkSpec]:
+    """Resolve a writer-selected list of internal links for a property."""
+    store = get_links_store(property_key=property_key)
+    return store.get_links_by_urls(urls)
 
 
 def _prediction_market_safe_text(text: str) -> str:

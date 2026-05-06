@@ -1,6 +1,7 @@
 """Phase 6 tests for editorial/compliance regression validators."""
 
 from app.services.compliance import (
+    check_active_voice,
     check_cta_links,
     check_editorial_regressions,
     check_link_quality,
@@ -87,3 +88,15 @@ def test_editorial_regressions_warn_on_bet365_promo_code_wording():
     content = "<p>The bet365 promo code is live tonight.</p>"
     issues = check_editorial_regressions(content, keyword="bet365 bonus code", offer={"brand": "bet365"})
     assert "bet365_keyword_mismatch" in _issue_types(issues)
+
+
+def test_editorial_regressions_warn_on_tool_shaped_filler_phrases():
+    content = "<p>The value is simple: this angle is live and built for volume.</p>"
+    issues = check_editorial_regressions(content, keyword="Novig promo code", offer={"brand": "Novig"})
+    assert "tool_shaped_phrase" in _issue_types(issues)
+
+
+def test_check_active_voice_flags_passive_heavy_copy():
+    content = "<p>The offer is highlighted here. It was structured for new users. The bonus is delivered after signup.</p>"
+    issues = check_active_voice(content)
+    assert "passive_voice_heavy" in _issue_types(issues)

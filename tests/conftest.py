@@ -1,7 +1,7 @@
 """Pytest fixtures for PlanWrite v2 tests."""
 
 import pytest
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 
 from app.main import app, settings as app_settings
@@ -42,7 +42,8 @@ async def client(db_session):
     original_usage_session_maker = usage_tracking.async_session_maker
     usage_tracking.async_session_maker = test_session_maker
 
-    async with AsyncClient(app=app, base_url="http://test") as ac:
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
 
     usage_tracking.async_session_maker = original_usage_session_maker

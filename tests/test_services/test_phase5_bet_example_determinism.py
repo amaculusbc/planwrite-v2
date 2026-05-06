@@ -34,15 +34,24 @@ def test_render_bet_example_section_deterministic_uses_selected_values():
 
 
 @pytest.mark.asyncio
-async def test_generate_body_section_claim_uses_deterministic_bet_example(monkeypatch):
+async def test_generate_body_section_claim_uses_ai_prompt_with_exact_bet_mechanics(monkeypatch):
+    prompts: list[str] = []
+
     async def _fake_query_articles(*args, **kwargs):
         return []
 
     async def _fake_suggest_links(*args, **kwargs):
         return []
 
+    async def _fake_generate_completion(*, prompt, system_prompt, temperature, max_tokens):
+        prompts.append(prompt)
+        if len(prompts) == 1:
+            return "<p>If I place $75 on Boston Celtics ML at -105, the bet returns less than the requested example.</p><p>Second paragraph.</p>"
+        return "<p>If I place $100 on Atlanta Hawks ML at +170, the upside is $170.00 in profit and $270.00 back overall.</p><p>If the bet loses, the offer still returns bonus bets tied to the same first-bet setup.</p>"
+
     monkeypatch.setattr(draft_mod, "query_articles", _fake_query_articles)
     monkeypatch.setattr(draft_mod, "suggest_links_for_section", _fake_suggest_links)
+    monkeypatch.setattr(draft_mod, "generate_completion", _fake_generate_completion)
 
     content = await _generate_body_section(
         section_title="How to Claim BetMGM bonus code for Hawks vs. Hornets",
@@ -75,10 +84,15 @@ async def test_generate_body_section_claim_uses_deterministic_bet_example(monkey
         dfs_mode=False,
     )
 
+    assert len(prompts) == 2
+    assert "EXACT MECHANICS REFERENCE" in prompts[0]
+    assert "Atlanta Hawks ML" in prompts[0]
+    assert "+170" in prompts[0]
+    assert "$270.00" in prompts[0]
+    assert "MANDATORY CORRECTION" in prompts[1]
+    assert "exact first-bet amount" in prompts[1]
     assert "Atlanta Hawks ML" in content
     assert "+170" in content
     assert "$170.00" in content
     assert "$270.00" in content
-    # deterministic path should avoid placeholder wording from LLM prompt examples
     assert "[another pick]" not in content
-

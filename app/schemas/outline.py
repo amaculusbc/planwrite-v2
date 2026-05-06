@@ -10,6 +10,7 @@ class GameContext(BaseModel):
 
     event_type: Optional[str] = None
     custom_event: Optional[str] = None
+    event_date: Optional[str] = None
     sport: Optional[str] = None
     away_team: Optional[str] = None
     home_team: Optional[str] = None
@@ -19,6 +20,20 @@ class GameContext(BaseModel):
     odds: Optional[dict] = None
     bet_example: Optional[str] = None
     bet_example_data: Optional[dict[str, Any]] = None
+
+
+class ArticlePreferences(BaseModel):
+    """Writer-controlled article settings for structure, links, and voice."""
+
+    secondary_keywords: Optional[list[str]] = None
+    preferred_internal_urls: Optional[list[str]] = None
+    section_count: Optional[int] = None
+    allow_h3: Optional[bool] = None
+    include_daily_promos: Optional[bool] = None
+    include_bullets: Optional[bool] = None
+    include_table: Optional[bool] = None
+    enforce_active_voice: Optional[bool] = None
+    structure_notes: Optional[str] = None
 
 
 class OutlineRequest(BaseModel):
@@ -33,6 +48,7 @@ class OutlineRequest(BaseModel):
     competitor_urls: Optional[list[str]] = None
     style_profile_id: Optional[int] = None
     game_context: Optional[GameContext] = None
+    article_preferences: Optional[ArticlePreferences] = None
 
 
 class DraftRequest(BaseModel):
@@ -49,6 +65,7 @@ class DraftRequest(BaseModel):
     state: str = "ALL"
     style_profile_id: Optional[int] = None
     game_context: Optional[GameContext] = None
+    article_preferences: Optional[ArticlePreferences] = None
 
 
 class ValidationResult(BaseModel):

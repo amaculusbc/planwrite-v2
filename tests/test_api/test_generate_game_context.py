@@ -9,17 +9,19 @@ def test_build_game_context_formats_iso_time_to_et():
     context = GameContext(
         away_team="Atlanta Hawks",
         home_team="Charlotte Hornets",
+        event_date="2026-02-14",
         start_time="2026-02-14T01:00Z",
         network="ESPN",
     )
 
-    game_context, _, bet_example_data = _build_game_context(context)
+    game_context, _, bet_example_data, article_date = _build_game_context(context)
 
     assert "Featured game: Atlanta Hawks vs Charlotte Hornets" in game_context
     assert "Game time: Friday, February 13 at 8:00 PM ET" in game_context
     assert "Network: ESPN" in game_context
     assert "2026-02-14T01:00Z" not in game_context
     assert bet_example_data == {}
+    assert article_date == "Saturday, February 14, 2026"
 
 
 def test_build_game_context_keeps_preformatted_time():
@@ -30,9 +32,10 @@ def test_build_game_context_keeps_preformatted_time():
         start_time="Mon, Feb 9, 9:00 PM ET",
     )
 
-    game_context, _, _ = _build_game_context(context)
+    game_context, _, _, article_date = _build_game_context(context)
 
     assert "Game time: Mon, Feb 9, 9:00 PM ET" in game_context
+    assert article_date == "Mon, Feb 9, 9:00 PM ET"
 
 
 def test_build_game_context_preserves_structured_bet_example_data():
@@ -48,7 +51,7 @@ def test_build_game_context_preserves_structured_bet_example_data():
         },
     )
 
-    _, bet_example, bet_example_data = _build_game_context(context)
+    _, bet_example, bet_example_data, _ = _build_game_context(context)
 
     assert "Suppose I place a $100 first bet" in bet_example
     assert bet_example_data["bet_amount"] == 100
@@ -64,8 +67,9 @@ def test_build_game_context_supports_custom_non_team_event():
         network="ESPN+",
     )
 
-    game_context, _, _ = _build_game_context(context)
+    game_context, _, _, article_date = _build_game_context(context)
 
     assert "Featured event: UFC 325 Main Card" in game_context
     assert "Game time:" in game_context
     assert "Network: ESPN+" in game_context
+    assert article_date == "Friday, February 13, 2026"

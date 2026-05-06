@@ -101,7 +101,16 @@ def _extract_state_codes_from_fragment(fragment: str) -> list[str]:
     for match in _STATE_CODE_PATTERN.finditer(fragment):
         found.append(match.group(1).upper())
 
-    normalized = re.sub(r"[^\w\s]", " ", fragment.lower())
+    normalized = fragment.lower()
+    # Normalize Washington, DC variants before generic state-name matching so
+    # "Washington, DC" does not incorrectly produce both DC and WA.
+    normalized = re.sub(
+        r"\bwashington\s*,?\s*d\.?\s*c\.?\b",
+        " district of columbia ",
+        normalized,
+    )
+    normalized = re.sub(r"\bd\.?\s*c\.?\b", " district of columbia ", normalized)
+    normalized = re.sub(r"[^\w\s]", " ", normalized)
     normalized = re.sub(r"\s+", " ", normalized).strip()
     if normalized:
         for name, code in _STATE_NAME_ITEMS:
@@ -150,6 +159,33 @@ def extract_states_from_terms(terms: str | None) -> list[str]:
     )
     if has_positive_available or any(cue in lower for cue in positive_cues):
         return _extract_state_codes_from_fragment(text)
+    for sentence in re.split(r"[.;]", text):
+        if "only" not in sentence.lower():
+            continue
+        codes = _extract_state_codes_from_fragment(sentence)
+        if codes:
+            return codes
+    return []
+
+
+def extract_excluded_states_from_terms(terms: str | None) -> list[str]:
+    """Extract explicitly excluded states from terms text."""
+    if not terms:
+        return []
+
+    text = str(terms)
+    lower = text.lower()
+    patterns = [
+        r"\bnot available in\s+(.+?)(?:\.|;|$)",
+        r"\bexcluding\s+(.+?)(?:\.|;|$)",
+        r"\bexcept in\s+(.+?)(?:\.|;|$)",
+    ]
+    for pattern in patterns:
+        for match in re.finditer(pattern, lower, flags=re.IGNORECASE):
+            fragment = text[match.start(1):match.end(1)]
+            codes = _extract_state_codes_from_fragment(fragment)
+            if codes:
+                return codes
     return []
 
 
@@ -378,9 +414,10 @@ def enrich_offer_dict(offer: dict) -> dict:
     offer_text = str(offer.get("offer_text") or offer.get("affiliate_offer") or "")
     terms = str(offer.get("terms") or "")
     states = offer.get("states") or offer.get("states_list") or ""
+    terms_states = extract_states_from_terms(terms)
 
     enriched = dict(offer)
-    enriched["states_list"] = parse_states(states) or extract_states_from_terms(terms)
+    enriched["states_list"] = terms_states or parse_states(states)
     enriched["bonus_expiration_days"] = offer.get("bonus_expiration_days") or extract_bonus_expiration_days(terms)
     enriched["minimum_odds"] = offer.get("minimum_odds") or extract_minimum_odds(terms)
     enriched["wagering_requirement"] = offer.get("wagering_requirement") or extract_wagering_requirement(terms)
