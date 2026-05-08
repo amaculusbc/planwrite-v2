@@ -7,6 +7,7 @@ Supports multiple properties (Action Network, VegasInsider, etc.).
 import hashlib
 import pickle
 import re
+import asyncio
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
@@ -25,6 +26,12 @@ settings = get_settings()
 # BAM API configuration
 BAM_CONTEXT = "web-article-top-stories"
 CACHE_DURATION = timedelta(hours=6)
+BAM_CACHE_SCHEMA_VERSION = "v2"
+BAM_CATALOG_LOCATIONS = (
+    "AZ", "CO", "CT", "DC", "IA", "IL", "IN", "KS", "KY",
+    "LA", "MA", "MD", "MI", "NC", "NJ", "NY", "OH", "ON",
+    "PA", "TN", "VA", "WV", "WY",
+)
 
 # Property configurations (parity with v1)
 PROPERTIES = {
@@ -77,6 +84,85 @@ DEFAULT_PROPERTY = "action_network"
 # Last fetch timestamp (per property)
 _last_fetch: dict[str, datetime] = {}
 _cached_offers: dict[str, list[dict]] = {}
+
+
+def _build_cache_scope_key(
+    property_key: str,
+    *,
+    context: str,
+    location: str = "",
+    country_code: str = "",
+    subdivision_id: str = "",
+) -> str:
+    """Build a stable cache key for a BAM request scope."""
+    parts = [
+        BAM_CACHE_SCHEMA_VERSION,
+        property_key.strip().lower(),
+        context.strip().lower(),
+        location.strip().upper(),
+        country_code.strip().upper(),
+        subdivision_id.strip().upper(),
+    ]
+    return "__".join(part or "none" for part in parts)
+
+
+def _build_catalog_scope_key(property_key: str, *, context: str) -> str:
+    return _build_cache_scope_key(property_key, context=context, location="CATALOG")
+
+
+def _geo_params_for_state(state: str | None) -> dict[str, str]:
+    """Translate app state selection to BAM geo override params."""
+    state_code = str(state or "").strip().upper()
+    if not state_code or state_code == "ALL":
+        return {}
+
+    params = {"location": state_code}
+    # BAM expects country_code for non-US regional overrides such as Ontario.
+    if state_code == "ON":
+        params["country_code"] = "CA"
+    return params
+
+
+def _merge_offer_variants(existing: dict, incoming: dict, *, source_location: str = "") -> dict:
+    """Merge duplicate offer variants from multiple BAM location overrides."""
+    merged = dict(existing or {})
+    incoming = dict(incoming or {})
+
+    for key, value in incoming.items():
+        if key == "source_locations":
+            continue
+        if not merged.get(key) and value:
+            merged[key] = value
+
+    merged_states = parse_states(merged.get("states") or merged.get("states_list") or [])
+    incoming_states = parse_states(incoming.get("states") or incoming.get("states_list") or [])
+    if incoming_states and (not merged_states or merged_states == ["ALL"]):
+        merged["states"] = incoming_states
+        merged["states_list"] = incoming_states
+
+    locations = list(merged.get("source_locations") or [])
+    location_value = source_location or ",".join(incoming.get("source_locations") or [])
+    for loc in [part.strip().upper() for part in location_value.split(",") if part.strip()]:
+        if loc not in locations:
+            locations.append(loc)
+    if locations:
+        merged["source_locations"] = locations
+    return merged
+
+
+def _normalize_catalog_offer_states(offer: dict) -> dict:
+    """Replace placeholder ALL state with known location-union states when available."""
+    normalized = dict(offer or {})
+    source_locations = [
+        str(loc).strip().upper()
+        for loc in normalized.get("source_locations") or []
+        if str(loc).strip()
+    ]
+    states = parse_states(normalized.get("states") or normalized.get("states_list") or [])
+    if source_locations and (not states or states == ["ALL"]):
+        normalized["states"] = source_locations
+        normalized["states_list"] = source_locations
+    return enrich_offer_dict(normalized)
 
 
 def _generate_offer_id(
@@ -279,8 +365,8 @@ def _parse_promotion(promo: dict, property_config: dict, context: str) -> dict:
     return enrich_offer_dict(offer)
 
 
-def _cache_file(property_key: str) -> Any:
-    return settings.storage_dir / f"bam_offers_{property_key}.pkl"
+def _cache_file(scope_key: str) -> Any:
+    return settings.storage_dir / f"bam_offers_{scope_key}.pkl"
 
 
 def _normalize_cached_offers(offers: list[dict]) -> list[dict]:
@@ -288,9 +374,9 @@ def _normalize_cached_offers(offers: list[dict]) -> list[dict]:
     return [enrich_offer_dict(dict(offer or {})) for offer in (offers or []) if offer]
 
 
-def _load_cache(property_key: str) -> tuple[Optional[datetime], list[dict]]:
+def _load_cache(scope_key: str) -> tuple[Optional[datetime], list[dict]]:
     """Load cached offers from disk."""
-    cache_file = _cache_file(property_key)
+    cache_file = _cache_file(scope_key)
     if not cache_file.exists():
         return None, []
 
@@ -302,10 +388,10 @@ def _load_cache(property_key: str) -> tuple[Optional[datetime], list[dict]]:
         return None, []
 
 
-def _save_cache(property_key: str, offers: list[dict]) -> None:
+def _save_cache(scope_key: str, offers: list[dict]) -> None:
     """Save offers to disk cache."""
     try:
-        cache_file = _cache_file(property_key)
+        cache_file = _cache_file(scope_key)
         cache_file.parent.mkdir(parents=True, exist_ok=True)
         with open(cache_file, "wb") as f:
             pickle.dump({
@@ -320,6 +406,10 @@ async def fetch_offers_from_bam(
     force_refresh: bool = False,
     property_key: str | None = None,
     context: str | None = None,
+    *,
+    location: str | None = None,
+    country_code: str | None = None,
+    subdivision_id: str | None = None,
 ) -> list[dict]:
     """Fetch offers from BAM API with caching.
 
@@ -339,6 +429,16 @@ async def fetch_offers_from_bam(
         DEFAULT_PROPERTY,
     )
     context = context or property_config.get("default_context", BAM_CONTEXT)
+    location = str(location or "").strip().upper()
+    country_code = str(country_code or "").strip().upper()
+    subdivision_id = str(subdivision_id or "").strip().upper()
+    scope_key = _build_cache_scope_key(
+        property_key,
+        context=context,
+        location=location,
+        country_code=country_code,
+        subdivision_id=subdivision_id,
+    )
     api_url = (
         f"https://b.bet-links.com/v1/affiliate/properties/"
         f"{property_config['property_id']}/placements/"
@@ -346,27 +446,34 @@ async def fetch_offers_from_bam(
     )
 
     # Check memory cache first
-    if not force_refresh and _cached_offers.get(property_key) and _last_fetch.get(property_key):
-        if datetime.utcnow() - _last_fetch[property_key] < CACHE_DURATION:
-            _cached_offers[property_key] = _normalize_cached_offers(_cached_offers[property_key])
-            return _cached_offers[property_key]
+    if not force_refresh and _cached_offers.get(scope_key) and _last_fetch.get(scope_key):
+        if datetime.utcnow() - _last_fetch[scope_key] < CACHE_DURATION:
+            _cached_offers[scope_key] = _normalize_cached_offers(_cached_offers[scope_key])
+            return _cached_offers[scope_key]
 
     # Check disk cache
     if not force_refresh:
-        cache_time, cached = _load_cache(property_key)
+        cache_time, cached = _load_cache(scope_key)
         if cache_time and datetime.utcnow() - cache_time < CACHE_DURATION:
-            _last_fetch[property_key] = cache_time
-            _cached_offers[property_key] = cached
+            _last_fetch[scope_key] = cache_time
+            _cached_offers[scope_key] = cached
             return cached
 
     # Fetch from API
     try:
+        params = {
+            "user_parent_book_ids": "",
+            "context": context,
+        }
+        if location:
+            params["location"] = location
+        if country_code:
+            params["country_code"] = country_code
+        if subdivision_id:
+            params["subdivision_id"] = subdivision_id
         data = await get_json(
             api_url,
-            params={
-                "user_parent_book_ids": "",
-                "context": context,
-            },
+            params=params,
             headers={
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
             },
@@ -376,9 +483,9 @@ async def fetch_offers_from_bam(
     except Exception as e:
         print(f"BAM API fetch failed: {e}")
         # Fall back to cache
-        _, cached = _load_cache(property_key)
+        _, cached = _load_cache(scope_key)
         if cached:
-            _cached_offers[property_key] = cached
+            _cached_offers[scope_key] = cached
             return cached
         return []
 
@@ -404,9 +511,9 @@ async def fetch_offers_from_bam(
             continue
 
     # Update caches
-    _last_fetch[property_key] = datetime.utcnow()
-    _cached_offers[property_key] = offers
-    _save_cache(property_key, offers)
+    _last_fetch[scope_key] = datetime.utcnow()
+    _cached_offers[scope_key] = offers
+    _save_cache(scope_key, offers)
 
     return offers
 
@@ -428,7 +535,13 @@ async def get_offers_bam(
     Returns:
         List of offer dictionaries.
     """
-    offers = await fetch_offers_from_bam(force_refresh, property_key=property_key, context=context)
+    geo_params = _geo_params_for_state(state)
+    offers = await fetch_offers_from_bam(
+        force_refresh,
+        property_key=property_key,
+        context=context,
+        **geo_params,
+    )
 
     if brand:
         brand_lower = brand.lower()
@@ -442,13 +555,134 @@ async def get_offers_bam(
     return offers
 
 
+async def get_offer_catalog_bam(
+    *,
+    state: str | None = None,
+    brand: str | None = None,
+    force_refresh: bool = False,
+    property_key: str | None = None,
+    context: str | None = None,
+) -> list[dict]:
+    """Return a union catalog of offers across BAM location overrides.
+
+    This is used by the picker so operators gated behind BAM geo overrides
+    still appear even when they are absent from the base placement response.
+    """
+    property_config = _get_property_config(property_key)
+    property_key = next(
+        (k for k, v in PROPERTIES.items() if v == property_config),
+        DEFAULT_PROPERTY,
+    )
+    context = context or property_config.get("default_context", BAM_CONTEXT)
+    scope_key = _build_catalog_scope_key(property_key, context=context)
+
+    if not force_refresh and _cached_offers.get(scope_key) and _last_fetch.get(scope_key):
+        if datetime.utcnow() - _last_fetch[scope_key] < CACHE_DURATION:
+            _cached_offers[scope_key] = _normalize_cached_offers(_cached_offers[scope_key])
+            offers = list(_cached_offers[scope_key])
+        else:
+            offers = []
+    else:
+        offers = []
+
+    if not offers and not force_refresh:
+        cache_time, cached = _load_cache(scope_key)
+        if cache_time and datetime.utcnow() - cache_time < CACHE_DURATION:
+            _last_fetch[scope_key] = cache_time
+            _cached_offers[scope_key] = cached
+            offers = list(cached)
+
+    if not offers:
+        requested_state = str(state or "").strip().upper()
+        locations: list[str] = []
+        if requested_state and requested_state != "ALL":
+            locations.append(requested_state)
+        for location in BAM_CATALOG_LOCATIONS:
+            if location not in locations:
+                locations.append(location)
+
+        base_offers = await fetch_offers_from_bam(
+            force_refresh,
+            property_key=property_key,
+            context=context,
+        )
+        scoped_results = await asyncio.gather(
+            *[
+                fetch_offers_from_bam(
+                    force_refresh,
+                    property_key=property_key,
+                    context=context,
+                    **_geo_params_for_state(location),
+                )
+                for location in locations
+            ]
+        )
+
+        merged_by_id: dict[str, dict] = {}
+        for offer in base_offers:
+            offer_id = str(offer.get("id") or "")
+            if not offer_id:
+                continue
+            merged_by_id[offer_id] = _merge_offer_variants({}, offer)
+
+        for location, scoped_offers in zip(locations, scoped_results):
+            for offer in scoped_offers:
+                offer_id = str(offer.get("id") or "")
+                if not offer_id:
+                    continue
+                merged_by_id[offer_id] = _merge_offer_variants(
+                    merged_by_id.get(offer_id, {}),
+                    offer,
+                    source_location=location,
+                )
+
+        offers = [_normalize_catalog_offer_states(offer) for offer in merged_by_id.values()]
+        _last_fetch[scope_key] = datetime.utcnow()
+        _cached_offers[scope_key] = offers
+        _save_cache(scope_key, offers)
+
+    if brand:
+        brand_lower = brand.lower()
+        offers = [o for o in offers if o.get("brand", "").lower() == brand_lower]
+
+    requested_state = str(state or "").strip().upper()
+    if requested_state and requested_state != "ALL":
+        def _catalog_sort_key(offer: dict) -> tuple[int, tuple[int, int, float, str]]:
+            source_locations = {str(loc).upper() for loc in offer.get("source_locations") or []}
+            is_direct_location_hit = 0 if requested_state in source_locations else 1
+            return (is_direct_location_hit, _offer_state_sort_key(offer, requested_state))
+
+        offers.sort(key=_catalog_sort_key)
+
+    return offers
+
+
 async def get_offer_by_id_bam(
     offer_id: str,
     property_key: str | None = None,
     context: str | None = None,
+    state: str | None = None,
 ) -> Optional[dict]:
     """Get a single offer by its ID."""
-    offers = await fetch_offers_from_bam(property_key=property_key, context=context)
+    geo_params = _geo_params_for_state(state)
+    offers = await fetch_offers_from_bam(
+        property_key=property_key,
+        context=context,
+        **geo_params,
+    )
+    for offer in offers:
+        if offer.get("id") == offer_id:
+            if not state or str(state).strip().upper() == "ALL":
+                break
+            return offer
+    catalog_offers = await get_offer_catalog_bam(
+        state=state,
+        property_key=property_key,
+        context=context,
+    )
+    for offer in catalog_offers:
+        if offer.get("id") == offer_id:
+            return offer
     for offer in offers:
         if offer.get("id") == offer_id:
             return offer

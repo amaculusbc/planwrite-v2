@@ -923,6 +923,8 @@ function articleWizard() {
         outlineGeneratedForTitle: '',
         outlineStale: false,
         outlineManualEdits: false,
+        currentRunId: '',
+        lastSourceFacts: null,
         secondaryKeywordsInput: '',
         loadingLinkOptions: false,
         linkOptions: [],
@@ -1773,6 +1775,8 @@ function articleWizard() {
                 const data = await resp.json();
                 this.outline = data.outline_text || (data.outline || []).join('\n');
                 this.outlineStructured = data.outline_structured || null;
+                this.currentRunId = data.run_id || '';
+                this.lastSourceFacts = data.source_facts || null;
                 this.outlineGeneratedForTitle = (this.form.title || '').trim();
                 this.outlineStale = false;
                 this.outlineManualEdits = false;
@@ -1824,6 +1828,7 @@ function articleWizard() {
                     body: JSON.stringify({
                         keyword: this.form.keyword,
                         title: this.form.title,
+                        run_id: this.currentRunId || null,
                         outline_tokens: tokens,
                         outline_text: this.outline,
                         outline_structured: this.outlineStructured,
@@ -1840,6 +1845,8 @@ function articleWizard() {
 
                 const data = await resp.json();
                 this.draft = data.draft;
+                this.currentRunId = data.run_id || this.currentRunId || '';
+                this.lastSourceFacts = data.source_facts || this.lastSourceFacts;
                 this.wordCount = data.word_count || this.draft.split(/\s+/).filter(w => w).length;
                 this.step = 3;
                 this.showStatus('Draft generated!', 'info');
@@ -1863,7 +1870,8 @@ function articleWizard() {
                         state: this.form.state,
                         keyword: this.form.keyword,
                         offer_id: this.form.offer_id,
-                        offer_property: this.form.offer_property
+                        offer_property: this.form.offer_property,
+                        run_id: this.currentRunId || null
                     })
                 });
 

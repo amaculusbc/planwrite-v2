@@ -29,6 +29,11 @@ from app.services.internal_links import (
     get_required_links_for_property,
     suggest_links_for_section,
 )
+from app.services.generation_artifacts import (
+    build_source_facts,
+    create_generation_run,
+    load_generation_run,
+)
 
 router = APIRouter()
 
@@ -183,9 +188,17 @@ async def _stream_outline(request: OutlineRequest, db: AsyncSession) -> AsyncGen
     offer = None
     alt_offers: list[dict] = []
     if request.offer_id:
-        offer = await get_offer_by_id_bam(request.offer_id, property_key=request.offer_property)
+        offer = await get_offer_by_id_bam(
+            request.offer_id,
+            property_key=request.offer_property,
+            state=request.state,
+        )
     for alt_id in request.alt_offer_ids or []:
-        alt = await get_offer_by_id_bam(alt_id, property_key=request.offer_property)
+        alt = await get_offer_by_id_bam(
+            alt_id,
+            property_key=request.offer_property,
+            state=request.state,
+        )
         if alt:
             alt_offers.append(alt)
 
@@ -223,9 +236,17 @@ async def _stream_draft(request: DraftRequest, db: AsyncSession) -> AsyncGenerat
     offer_dict = None
     alt_offers: list[dict] = []
     if request.offer_id:
-        offer_dict = await get_offer_by_id_bam(request.offer_id, property_key=request.offer_property)
+        offer_dict = await get_offer_by_id_bam(
+            request.offer_id,
+            property_key=request.offer_property,
+            state=request.state,
+        )
     for alt_id in request.alt_offer_ids or []:
-        alt = await get_offer_by_id_bam(alt_id, property_key=request.offer_property)
+        alt = await get_offer_by_id_bam(
+            alt_id,
+            property_key=request.offer_property,
+            state=request.state,
+        )
         if alt:
             alt_offers.append(alt)
 
@@ -279,9 +300,17 @@ async def generate_outline_sync(
     offer = None
     alt_offers: list[dict] = []
     if request.offer_id:
-        offer = await get_offer_by_id_bam(request.offer_id, property_key=request.offer_property)
+        offer = await get_offer_by_id_bam(
+            request.offer_id,
+            property_key=request.offer_property,
+            state=request.state,
+        )
     for alt_id in request.alt_offer_ids or []:
-        alt = await get_offer_by_id_bam(alt_id, property_key=request.offer_property)
+        alt = await get_offer_by_id_bam(
+            alt_id,
+            property_key=request.offer_property,
+            state=request.state,
+        )
         if alt:
             alt_offers.append(alt)
 
@@ -289,6 +318,36 @@ async def generate_outline_sync(
     if request.competitor_urls:
         competitor_context = await scrape_competitors(request.competitor_urls, max_chars_per_url=1500)
     game_context_str, bet_example_str, _, article_date = _build_game_context(request.game_context)
+    prefs = _preferences_dict(request.article_preferences)
+    source_facts = build_source_facts(
+        keyword=request.keyword,
+        title=request.title,
+        state=request.state,
+        offer_property=request.offer_property,
+        offer=offer,
+        alt_offers=alt_offers,
+        event_context=game_context_str,
+        article_date=article_date,
+        bet_example=bet_example_str,
+        competitor_urls=request.competitor_urls,
+        competitor_context=competitor_context,
+        article_preferences=prefs,
+    )
+    artifact_run = create_generation_run(
+        keyword=request.keyword,
+        title=request.title,
+        state=request.state,
+        offer_property=request.offer_property,
+    )
+    artifact_run.write_stage(
+        "request",
+        {
+            "request_type": "outline",
+            "payload": request.model_dump(exclude_none=True),
+        },
+        file_name="00_request.json",
+    )
+    artifact_run.write_stage("source_facts", source_facts, file_name="10_source_facts.json")
 
     outline_structured = await generate_structured_outline(
         keyword=request.keyword,
@@ -298,16 +357,27 @@ async def generate_outline_sync(
         article_date=article_date,
         bet_example=bet_example_str,
         competitor_context=competitor_context,
-        article_preferences=_preferences_dict(request.article_preferences),
+        article_preferences=prefs,
     )
     outline_structured = _inject_alt_shortcodes(outline_structured, len(alt_offers))
     tokens = structured_to_tokens(outline_structured)
     outline_text = outline_to_text(outline_structured)
+    artifact_run.write_stage(
+        "outline",
+        {
+            "outline": tokens,
+            "outline_text": outline_text,
+            "outline_structured": outline_structured,
+        },
+        file_name="20_outline.json",
+    )
 
     return {
         "outline": tokens,
         "outline_text": outline_text,
         "outline_structured": outline_structured,
+        "source_facts": source_facts,
+        **artifact_run.response_meta(),
     }
 
 
@@ -337,14 +407,62 @@ async def generate_draft_sync(
     offer_dict = None
     alt_offers: list[dict] = []
     if request.offer_id:
-        offer_dict = await get_offer_by_id_bam(request.offer_id, property_key=request.offer_property)
+        offer_dict = await get_offer_by_id_bam(
+            request.offer_id,
+            property_key=request.offer_property,
+            state=request.state,
+        )
     for alt_id in request.alt_offer_ids or []:
-        alt = await get_offer_by_id_bam(alt_id, property_key=request.offer_property)
+        alt = await get_offer_by_id_bam(
+            alt_id,
+            property_key=request.offer_property,
+            state=request.state,
+        )
         if alt:
             alt_offers.append(alt)
 
     outline = _resolve_outline_from_request(request)
     game_context_str, bet_example_str, bet_example_data, article_date = _build_game_context(request.game_context)
+    prefs = _preferences_dict(request.article_preferences)
+    source_facts = build_source_facts(
+        keyword=request.keyword,
+        title=request.title,
+        state=request.state,
+        offer_property=request.offer_property,
+        offer=offer_dict,
+        alt_offers=alt_offers,
+        event_context=game_context_str,
+        article_date=article_date,
+        bet_example=bet_example_str,
+        bet_example_data=bet_example_data,
+        article_preferences=prefs,
+    )
+    artifact_run = create_generation_run(
+        keyword=request.keyword,
+        title=request.title,
+        state=request.state,
+        offer_property=request.offer_property,
+        run_id=request.run_id,
+    )
+    artifact_run.write_stage(
+        "request",
+        {
+            "request_type": "draft",
+            "payload": request.model_dump(exclude_none=True),
+        },
+        file_name="00_request_draft.json" if request.run_id else "00_request.json",
+    )
+    artifact_run.write_stage("source_facts", source_facts, file_name="10_source_facts.json")
+    artifact_run.write_stage(
+        "outline_input",
+        {
+            "outline_text": request.outline_text,
+            "outline_structured": request.outline_structured,
+            "outline_tokens": request.outline_tokens,
+            "resolved_outline": outline,
+        },
+        file_name="20_outline.json",
+    )
 
     draft = await generate_draft_from_outline(
         outline=outline,
@@ -359,10 +477,20 @@ async def generate_draft_sync(
         bet_example=bet_example_str,
         bet_example_data=bet_example_data,
         output_format="html",
-        article_preferences=_preferences_dict(request.article_preferences),
+        article_preferences=prefs,
+    )
+    artifact_run.write_stage(
+        "draft",
+        {"draft": draft, "word_count": len(draft.split())},
+        file_name="30_draft.json",
     )
 
-    return {"draft": draft, "word_count": len(draft.split())}
+    return {
+        "draft": draft,
+        "word_count": len(draft.split()),
+        "source_facts": source_facts,
+        **artifact_run.response_meta(),
+    }
 
 
 @router.post("/validate")
@@ -372,11 +500,16 @@ async def validate_content_endpoint(
     keyword: str | None = Body(None, embed=True),
     offer_id: str | None = Body(None, embed=True),
     offer_property: str | None = Body(None, embed=True),
+    run_id: str | None = Body(None, embed=True),
 ):
     """Validate content for compliance issues."""
     offer_dict = None
     if offer_id:
-        offer_dict = await get_offer_by_id_bam(offer_id, property_key=offer_property)
+        offer_dict = await get_offer_by_id_bam(
+            offer_id,
+            property_key=offer_property,
+            state=state,
+        )
 
     result = validate_content_svc(
         content,
@@ -384,7 +517,35 @@ async def validate_content_endpoint(
         keyword=keyword,
         offer=offer_dict,
     )
-    return result.to_dict()
+    payload = result.to_dict()
+    if run_id:
+        artifact_run = create_generation_run(
+            keyword=keyword or "validation",
+            title=keyword or "validation",
+            state=state,
+            offer_property=offer_property,
+            run_id=run_id,
+        )
+        artifact_run.write_stage(
+            "validation",
+            {
+                "state": state,
+                "keyword": keyword,
+                "result": payload,
+            },
+            file_name="40_validation.json",
+        )
+        payload.update(artifact_run.response_meta())
+    return payload
+
+
+@router.get("/runs/{run_id}")
+async def get_generation_run(run_id: str):
+    """Return saved artifact metadata for a generation run."""
+    manifest = load_generation_run(run_id)
+    if not manifest:
+        raise HTTPException(status_code=404, detail="Generation run not found")
+    return manifest
 
 
 @router.get("/link-options")

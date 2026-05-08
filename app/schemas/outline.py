@@ -54,6 +54,7 @@ class OutlineRequest(BaseModel):
 class DraftRequest(BaseModel):
     """Request schema for draft generation."""
 
+    run_id: Optional[str] = None
     keyword: str
     title: str
     outline_tokens: Optional[list[str]] = None

@@ -9,6 +9,7 @@ from app.services.bam_offers import (
     fetch_offers_from_bam,
     get_all_brands,
     get_offer_by_id_bam,
+    get_offer_catalog_bam,
     get_offers_bam,
     get_available_properties,
 )
@@ -31,7 +32,7 @@ async def list_offers(
         force_refresh: Bypass cache and fetch fresh data
         property: BAM property key (if source=bam)
     """
-    return await get_offers_bam(
+    return await get_offer_catalog_bam(
         state=state,
         brand=brand,
         force_refresh=force_refresh,
@@ -81,9 +82,10 @@ async def sync_offers_endpoint(
 async def get_offer(
     offer_id: str,
     property: str | None = Query(None, description="BAM property key"),
+    state: str | None = Query(None, description="State code for BAM geo override"),
 ):
     """Get a single offer by ID."""
-    offer = await get_offer_by_id_bam(offer_id, property_key=property)
+    offer = await get_offer_by_id_bam(offer_id, property_key=property, state=state)
 
     if not offer:
         raise HTTPException(status_code=404, detail="Offer not found")

@@ -87,3 +87,114 @@ async def test_get_offers_bam_prefers_direct_bonus_offer_over_safety_net_for_gen
         "Bet $10 Get $50 in Bonus Bets!",
         "Get a First Bet Safety Net up to $1,000 in Bonus Bets!",
     ]
+
+
+@pytest.mark.asyncio
+async def test_get_offers_bam_passes_state_to_bam_location_override(monkeypatch):
+    captured: dict = {}
+
+    async def fake_fetch_offers_from_bam(*args, **kwargs):
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(bam_offers, "fetch_offers_from_bam", fake_fetch_offers_from_bam)
+
+    await bam_offers.get_offers_bam(
+        state="NJ",
+        property_key="action_network",
+        context="web-article-top-stories",
+    )
+
+    assert captured["location"] == "NJ"
+    assert "country_code" not in captured or captured["country_code"] == ""
+
+
+@pytest.mark.asyncio
+async def test_get_offer_by_id_bam_uses_state_scoped_feed(monkeypatch):
+    captured: dict = {}
+
+    async def fake_fetch_offers_from_bam(*args, **kwargs):
+        captured.update(kwargs)
+        return [
+            {"id": "generic", "brand": "Novig", "offer_text": "Generic"},
+            {"id": "nj", "brand": "Novig", "offer_text": "NJ scoped"},
+        ]
+
+    monkeypatch.setattr(bam_offers, "fetch_offers_from_bam", fake_fetch_offers_from_bam)
+
+    offer = await bam_offers.get_offer_by_id_bam(
+        "nj",
+        property_key="action_network",
+        state="NJ",
+    )
+
+    assert offer["offer_text"] == "NJ scoped"
+    assert captured["location"] == "NJ"
+
+
+@pytest.mark.asyncio
+async def test_get_offer_catalog_bam_unions_location_scoped_offers(monkeypatch):
+    async def fake_fetch_offers_from_bam(*args, **kwargs):
+        location = kwargs.get("location", "")
+        if not location:
+            return [{"id": "base", "brand": "bet365", "offer_text": "Base offer", "states": ["ALL"]}]
+        if location == "NJ":
+            return [{"id": "novig", "brand": "Novig", "offer_text": "Spend $5, Get $50", "states": ["ALL"]}]
+        if location == "IL":
+            return [{"id": "rebet", "brand": "Rebet", "offer_text": "Match up to $100", "states": ["ALL"]}]
+        return []
+
+    monkeypatch.setattr(bam_offers, "fetch_offers_from_bam", fake_fetch_offers_from_bam)
+
+    offers = await bam_offers.get_offer_catalog_bam(
+        state="ALL",
+        property_key="action_network",
+        force_refresh=True,
+    )
+
+    assert {offer["brand"] for offer in offers} >= {"bet365", "Novig", "Rebet"}
+
+
+@pytest.mark.asyncio
+async def test_get_offer_by_id_bam_falls_back_to_catalog_when_state_feed_misses(monkeypatch):
+    async def fake_fetch_offers_from_bam(*args, **kwargs):
+        location = kwargs.get("location", "")
+        if location == "NJ":
+            return []
+        if location == "IL":
+            return [{"id": "novig", "brand": "Novig", "offer_text": "Spend $5, Get $50", "states": ["ALL"]}]
+        return []
+
+    monkeypatch.setattr(bam_offers, "fetch_offers_from_bam", fake_fetch_offers_from_bam)
+
+    offer = await bam_offers.get_offer_by_id_bam(
+        "novig",
+        property_key="action_network",
+        state="NJ",
+    )
+
+    assert offer["brand"] == "Novig"
+
+
+@pytest.mark.asyncio
+async def test_get_offer_by_id_bam_all_state_prefers_catalog_state_union(monkeypatch):
+    async def fake_fetch_offers_from_bam(*args, **kwargs):
+        location = kwargs.get("location", "")
+        if not location:
+            return [{"id": "novig", "brand": "Novig", "offer_text": "Spend $5, Get $50", "states": ["ALL"]}]
+        if location in {"NJ", "PA", "IL"}:
+            return [{"id": "novig", "brand": "Novig", "offer_text": "Spend $5, Get $50", "states": ["ALL"]}]
+        return []
+
+    monkeypatch.setattr(bam_offers, "fetch_offers_from_bam", fake_fetch_offers_from_bam)
+    monkeypatch.setattr(bam_offers, "_load_cache", lambda *args, **kwargs: (None, []))
+    bam_offers._cached_offers.clear()
+    bam_offers._last_fetch.clear()
+
+    offer = await bam_offers.get_offer_by_id_bam(
+        "novig",
+        property_key="action_network",
+        state="ALL",
+    )
+
+    assert set(offer["states_list"]) == {"NJ", "PA", "IL"}
