@@ -62,6 +62,10 @@ def _normalize(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", (value or "").lower()).strip()
 
 
+def _compact_normalize(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", (value or "").lower())
+
+
 def _tokenize(value: str) -> set[str]:
     return {token for token in re.findall(r"[a-z0-9']+", (value or "").lower()) if len(token) >= 2}
 
@@ -201,6 +205,8 @@ async def build_operator_context(source_facts: dict) -> tuple[dict, str]:
         }, "No offer brand supplied"
 
     requested_brand = _normalize(brand)
+    requested_brand_compact = _compact_normalize(brand)
+    requested_tokens = _tokenize(brand)
     try:
         sportsbook_payload = await _get_json("/sportsbooks")
     except httpx.HTTPError as exc:
@@ -227,9 +233,21 @@ async def build_operator_context(source_facts: dict) -> tuple[dict, str]:
             parent.get("name", ""),
         ]
         normalized_values = {_normalize(value) for value in values if value}
+        compact_values = {_compact_normalize(value) for value in values if value}
+        if requested_brand_compact and requested_brand_compact in compact_values:
+            return True
         if requested_brand in normalized_values:
             return True
-        return any(requested_brand in value or value in requested_brand for value in normalized_values if value)
+        significant_values = {value for value in normalized_values if len(value) >= 3}
+        if any(requested_brand == value for value in significant_values):
+            return True
+        if requested_tokens:
+            for value in significant_values:
+                value_tokens = _tokenize(value)
+                overlap = requested_tokens & value_tokens
+                if overlap and (overlap == requested_tokens or overlap == value_tokens):
+                    return True
+        return False
 
     candidates = [item for item in sportsbooks if matches(item)]
     best = _pick_best_sportsbook(candidates, requested_state)
