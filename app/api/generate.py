@@ -1,6 +1,7 @@
 """Content generation endpoints with SSE streaming."""
 
 import json
+import asyncio
 from datetime import datetime
 from typing import AsyncGenerator
 from zoneinfo import ZoneInfo
@@ -154,8 +155,10 @@ async def _enrich_with_bc_core(
 ) -> tuple[dict, str]:
     """Attach BC Core context and merge prompt-facing notes into event context."""
     try:
-        operator_context, _ = await build_operator_context(source_facts)
-        bc_event_context, _ = await build_bc_core_event_context(source_facts)
+        (operator_context, _), (bc_event_context, _) = await asyncio.gather(
+            build_operator_context(source_facts),
+            build_bc_core_event_context(source_facts),
+        )
         expertise_context, _ = await build_expertise_context(
             source_facts,
             {

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import atexit
 import re
 from typing import Any
 
@@ -9,6 +10,7 @@ import httpx
 from app.config import get_settings
 
 settings = get_settings()
+_shared_client: httpx.AsyncClient | None = None
 
 DEFAULT_BC_CORE_BASE_URL = "https://core-external-api.actionnetwork.com"
 
@@ -95,13 +97,50 @@ def _season_year_from_name(season_name: str, scheduled_date: str) -> int | None:
 
 
 async def _get_json(path: str, *, params: dict | None = None) -> dict:
-    client_kwargs: dict[str, Any] = {"timeout": settings.bc_core_timeout_seconds}
+    client = _get_shared_client()
+    response = await client.get(f"{_base_url()}{path}", headers=_headers(), params=params)
+    response.raise_for_status()
+    return response.json()
+
+
+def _get_shared_client() -> httpx.AsyncClient:
+    global _shared_client
+    if _shared_client is not None:
+        return _shared_client
+
+    client_kwargs: dict[str, Any] = {
+        "timeout": settings.bc_core_timeout_seconds,
+        "limits": httpx.Limits(max_connections=20, max_keepalive_connections=10, keepalive_expiry=120.0),
+    }
     if settings.bc_core_socks_proxy:
         client_kwargs["proxy"] = settings.bc_core_socks_proxy
-    async with httpx.AsyncClient(**client_kwargs) as client:
-        response = await client.get(f"{_base_url()}{path}", headers=_headers(), params=params)
-        response.raise_for_status()
-        return response.json()
+    _shared_client = httpx.AsyncClient(**client_kwargs)
+    return _shared_client
+
+
+def _close_shared_client() -> None:
+    global _shared_client
+    if _shared_client is None:
+        return
+    try:
+        import asyncio
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            loop.create_task(_shared_client.aclose())
+        else:
+            asyncio.run(_shared_client.aclose())
+    except Exception:
+        pass
+    finally:
+        _shared_client = None
+
+
+atexit.register(_close_shared_client)
 
 
 async def fetch_bc_core_json(path: str, *, params: dict | None = None) -> dict:
