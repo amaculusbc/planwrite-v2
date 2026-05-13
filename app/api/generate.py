@@ -29,6 +29,12 @@ from app.services.internal_links import (
     get_required_links_for_property,
     suggest_links_for_section,
 )
+from app.services.bc_core import (
+    build_event_context as build_bc_core_event_context,
+    build_operator_context,
+    summarize_bc_core_context,
+)
+from app.services.expertise_context import build_expertise_context
 from app.services.generation_artifacts import (
     build_source_facts,
     create_generation_run,
@@ -124,6 +130,62 @@ def _build_game_context(game_context) -> tuple[str, str, dict, str]:
     return ". ".join(parts), game_context.bet_example or "", dict(game_context.bet_example_data or {}), article_date
 
 
+def _serialize_game_context(game_context) -> dict:
+    """Serialize structured game context for source-facts and BC Core matching."""
+    if not game_context:
+        return {}
+    return {
+        "event_type": str(getattr(game_context, "event_type", "") or "").strip(),
+        "custom_event": str(getattr(game_context, "custom_event", "") or "").strip(),
+        "event_date": str(getattr(game_context, "event_date", "") or "").strip(),
+        "sport": str(getattr(game_context, "sport", "") or "").strip().lower(),
+        "away_team": str(getattr(game_context, "away_team", "") or "").strip(),
+        "home_team": str(getattr(game_context, "home_team", "") or "").strip(),
+        "start_time": str(getattr(game_context, "start_time", "") or "").strip(),
+        "network": str(getattr(game_context, "network", "") or "").strip(),
+        "headline": str(getattr(game_context, "headline", "") or "").strip(),
+    }
+
+
+async def _enrich_with_bc_core(
+    *,
+    source_facts: dict,
+    event_context: str,
+) -> tuple[dict, str]:
+    """Attach BC Core context and merge prompt-facing notes into event context."""
+    try:
+        operator_context, _ = await build_operator_context(source_facts)
+        bc_event_context, _ = await build_bc_core_event_context(source_facts)
+        expertise_context, _ = await build_expertise_context(
+            source_facts,
+            {
+                "bc_core_event": bc_event_context,
+                "source_urls": bc_event_context.get("source_urls", []),
+            },
+        )
+        source_facts["bc_core"] = {
+            "operator": operator_context,
+            "event": bc_event_context,
+            "expertise": expertise_context,
+        }
+        bc_notes = summarize_bc_core_context(
+            operator_context=operator_context,
+            event_context=bc_event_context,
+            expertise_context=expertise_context,
+        )
+        if bc_notes:
+            merged = (event_context or "").strip()
+            merged = f"{merged}\n\n{bc_notes}" if merged else bc_notes
+            return source_facts, merged
+    except Exception as exc:
+        source_facts["bc_core"] = {
+            "operator": {"matched": False, "provider": "fallback", "reason": str(exc)},
+            "event": {"matched": False, "provider": "fallback", "reason": str(exc)},
+            "expertise": {"matched": False, "provider": "fallback", "reason": str(exc)},
+        }
+    return source_facts, event_context
+
+
 def _inject_alt_shortcodes(outline: list[dict], alt_offer_count: int) -> list[dict]:
     """Insert [SHORTCODE_1]/[SHORTCODE_2] placeholders for multi-offer modules."""
     if alt_offer_count <= 0:
@@ -206,6 +268,26 @@ async def _stream_outline(request: OutlineRequest, db: AsyncSession) -> AsyncGen
     if request.competitor_urls:
         competitor_context = await scrape_competitors(request.competitor_urls, max_chars_per_url=1500)
     game_context_str, bet_example_str, _, article_date = _build_game_context(request.game_context)
+    prefs = _preferences_dict(request.article_preferences)
+    source_facts = build_source_facts(
+        keyword=request.keyword,
+        title=request.title,
+        state=request.state,
+        offer_property=request.offer_property,
+        offer=offer,
+        alt_offers=alt_offers,
+        event_context=game_context_str,
+        article_date=article_date,
+        bet_example=bet_example_str,
+        game_context_data=_serialize_game_context(request.game_context),
+        competitor_urls=request.competitor_urls,
+        competitor_context=competitor_context,
+        article_preferences=prefs,
+    )
+    source_facts, enriched_event_context = await _enrich_with_bc_core(
+        source_facts=source_facts,
+        event_context=game_context_str,
+    )
 
     try:
         yield f"data: {json.dumps({'type': 'status', 'message': 'Generating structured outline...'})}\n\n"
@@ -213,11 +295,11 @@ async def _stream_outline(request: OutlineRequest, db: AsyncSession) -> AsyncGen
             keyword=request.keyword,
             title=request.title,
             offer=offer or {},
-            event_context=game_context_str,
+            event_context=enriched_event_context,
             article_date=article_date,
             bet_example=bet_example_str,
             competitor_context=competitor_context,
-            article_preferences=_preferences_dict(request.article_preferences),
+            article_preferences=prefs,
         )
         outline_structured = _inject_alt_shortcodes(outline_structured, len(alt_offers))
         tokens = structured_to_tokens(outline_structured)
@@ -252,6 +334,25 @@ async def _stream_draft(request: DraftRequest, db: AsyncSession) -> AsyncGenerat
 
     outline = _resolve_outline_from_request(request)
     game_context_str, bet_example_str, bet_example_data, article_date = _build_game_context(request.game_context)
+    prefs = _preferences_dict(request.article_preferences)
+    source_facts = build_source_facts(
+        keyword=request.keyword,
+        title=request.title,
+        state=request.state,
+        offer_property=request.offer_property,
+        offer=offer_dict,
+        alt_offers=alt_offers,
+        event_context=game_context_str,
+        article_date=article_date,
+        bet_example=bet_example_str,
+        bet_example_data=bet_example_data,
+        game_context_data=_serialize_game_context(request.game_context),
+        article_preferences=prefs,
+    )
+    source_facts, enriched_event_context = await _enrich_with_bc_core(
+        source_facts=source_facts,
+        event_context=game_context_str,
+    )
 
     try:
         async for update in generate_draft_from_outline_streaming(
@@ -262,12 +363,12 @@ async def _stream_draft(request: DraftRequest, db: AsyncSession) -> AsyncGenerat
             alt_offers=alt_offers,
             state=request.state,
             offer_property=request.offer_property or "action_network",
-            event_context=game_context_str,
+            event_context=enriched_event_context,
             article_date=article_date,
             bet_example=bet_example_str,
             bet_example_data=bet_example_data,
             output_format="markdown",
-            article_preferences=_preferences_dict(request.article_preferences),
+            article_preferences=prefs,
         ):
             yield f"data: {json.dumps(update)}\n\n"
     except Exception as e:
@@ -329,9 +430,14 @@ async def generate_outline_sync(
         event_context=game_context_str,
         article_date=article_date,
         bet_example=bet_example_str,
+        game_context_data=_serialize_game_context(request.game_context),
         competitor_urls=request.competitor_urls,
         competitor_context=competitor_context,
         article_preferences=prefs,
+    )
+    source_facts, enriched_event_context = await _enrich_with_bc_core(
+        source_facts=source_facts,
+        event_context=game_context_str,
     )
     artifact_run = create_generation_run(
         keyword=request.keyword,
@@ -353,7 +459,7 @@ async def generate_outline_sync(
         keyword=request.keyword,
         title=request.title,
         offer=offer or {},
-        event_context=game_context_str,
+        event_context=enriched_event_context,
         article_date=article_date,
         bet_example=bet_example_str,
         competitor_context=competitor_context,
@@ -435,7 +541,12 @@ async def generate_draft_sync(
         article_date=article_date,
         bet_example=bet_example_str,
         bet_example_data=bet_example_data,
+        game_context_data=_serialize_game_context(request.game_context),
         article_preferences=prefs,
+    )
+    source_facts, enriched_event_context = await _enrich_with_bc_core(
+        source_facts=source_facts,
+        event_context=game_context_str,
     )
     artifact_run = create_generation_run(
         keyword=request.keyword,
@@ -472,7 +583,7 @@ async def generate_draft_sync(
         alt_offers=alt_offers,
         state=request.state,
         offer_property=request.offer_property or "action_network",
-        event_context=game_context_str,
+        event_context=enriched_event_context,
         article_date=article_date,
         bet_example=bet_example_str,
         bet_example_data=bet_example_data,

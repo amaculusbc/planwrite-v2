@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     # Odds (Charlotte/RotoGrinders)
     odds_api_key: str = ""
 
+    # BC Core
+    bc_core_base_url: str = ""
+    bc_core_socks_proxy: str = ""
+    bc_core_api_key: str = ""
+
     # Paths
     @property
     def base_dir(self) -> Path:

@@ -57,6 +57,8 @@ async def test_outline_sync_persists_manifest_and_source_facts(client, monkeypat
     assert data["run_id"]
     assert data["source_facts"]["state"] == "NJ"
     assert data["source_facts"]["primary_offer"]["bonus_code"] == "TOPACTION"
+    assert data["source_facts"]["event"]["away_team"] == "Boston Celtics"
+    assert data["source_facts"]["event"]["sport"] == ""
 
     manifest_path = _artifact_path(tmp_path, data["artifact_manifest"])
     assert manifest_path.exists()
@@ -68,6 +70,84 @@ async def test_outline_sync_persists_manifest_and_source_facts(client, monkeypat
     assert "request" in stages
     assert "source_facts" in stages
     assert "outline" in stages
+
+
+@pytest.mark.asyncio
+async def test_outline_sync_includes_bc_core_context_for_any_property(client, monkeypatch, tmp_path):
+    captured: dict[str, str] = {}
+
+    async def fake_offer(*args, **kwargs):
+        return {
+            "id": "offer-1",
+            "brand": "bet365",
+            "offer_text": "Bet $10, Get $200 in Bonus Bets Win or Lose!",
+            "bonus_code": "TOPACTION",
+            "states": ["NJ"],
+        }
+
+    async def fake_outline(**kwargs):
+        captured["event_context"] = kwargs.get("event_context", "")
+        return [
+            {"level": "intro", "title": "", "talking_points": ["Lead with offer"], "avoid": []},
+            {"level": "h2", "title": "What Stands Out for Celtics vs. Spurs", "talking_points": ["Angle"], "avoid": []},
+            {"level": "h2", "title": "How to Sign Up Before Celtics vs. Spurs", "talking_points": ["Steps"], "avoid": []},
+        ]
+
+    async def fake_operator_context(source_facts):
+        return ({
+            "matched": True,
+            "parent_name": "bet365",
+            "requested_state_supported": True,
+            "states": ["NJ", "PA"],
+            "coverage": {"checked": True, "supported": True},
+        }, "")
+
+    async def fake_event_context(source_facts):
+        return ({
+            "matched": True,
+            "event_name": "Boston Celtics at San Antonio Spurs",
+            "scheduled_date": "2026-05-08T20:00:00-04:00",
+            "network": "ESPN",
+            "source_urls": ["https://core.example/events"],
+        }, "")
+
+    async def fake_expertise_context(source_facts, sports_context):
+        return ({
+            "matched": True,
+            "editorial_points": ["Boston averaged 118.2 points per game.", "San Antonio allowed 114.7 points per game."],
+        }, "")
+
+    monkeypatch.setattr("app.api.generate.get_offer_by_id_bam", fake_offer)
+    monkeypatch.setattr("app.api.generate.generate_structured_outline", fake_outline)
+    monkeypatch.setattr("app.api.generate.build_operator_context", fake_operator_context)
+    monkeypatch.setattr("app.api.generate.build_bc_core_event_context", fake_event_context)
+    monkeypatch.setattr("app.api.generate.build_expertise_context", fake_expertise_context)
+    monkeypatch.setattr("app.services.generation_artifacts.get_settings", lambda: SimpleNamespace(storage_dir=tmp_path))
+
+    response = await client.post(
+        "/api/generate/outline/sync",
+        json={
+            "keyword": "bet365 bonus code",
+            "title": "bet365 bonus code: Celtics vs. Spurs",
+            "offer_id": "offer-1",
+            "offer_property": "sportshandle",
+            "state": "NJ",
+            "game_context": {
+                "sport": "nba",
+                "away_team": "Boston Celtics",
+                "home_team": "San Antonio Spurs",
+                "start_time": "2026-05-08T20:00:00-04:00",
+                "network": "ESPN",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["source_facts"]["bc_core"]["operator"]["matched"] is True
+    assert data["source_facts"]["bc_core"]["event"]["matched"] is True
+    assert "BC CORE OPERATOR CONTEXT:" in captured["event_context"]
+    assert "BC CORE EXPERTISE NOTES:" in captured["event_context"]
 
 
 @pytest.mark.asyncio
@@ -146,3 +226,83 @@ async def test_draft_and_validate_append_to_same_run(client, monkeypatch, tmp_pa
     stages = [item["stage"] for item in manifest["artifacts"]]
     assert "draft" in stages
     assert "validation" in stages
+
+
+@pytest.mark.asyncio
+async def test_draft_sync_includes_bc_core_context_for_any_property(client, monkeypatch, tmp_path):
+    captured: dict[str, str] = {}
+
+    async def fake_offer(*args, **kwargs):
+        return {
+            "id": "offer-1",
+            "brand": "Novig",
+            "offer_text": "Spend $5, Get $50 in Novig Coins!",
+            "bonus_code": "",
+            "states": ["NJ", "PA"],
+            "terms": "Available in NJ and PA only.",
+        }
+
+    async def fake_draft(**kwargs):
+        captured["event_context"] = kwargs.get("event_context", "")
+        return "<h1>Novig promo code: Celtics vs. Spurs</h1><p>States Available: NJ, PA.</p>"
+
+    async def fake_operator_context(source_facts):
+        return ({
+            "matched": True,
+            "parent_name": "Novig",
+            "requested_state_supported": True,
+            "states": ["NJ", "PA"],
+            "coverage": {"checked": True, "supported": True},
+        }, "")
+
+    async def fake_event_context(source_facts):
+        return ({
+            "matched": True,
+            "event_name": "Boston Celtics at San Antonio Spurs",
+            "scheduled_date": "2026-05-08T20:00:00-04:00",
+            "network": "ESPN",
+            "source_urls": ["https://core.example/events"],
+        }, "")
+
+    async def fake_expertise_context(source_facts, sports_context):
+        return ({
+            "matched": True,
+            "editorial_points": ["Boston entered on a 4-1 run.", "San Antonio allowed 114.7 points per game."],
+        }, "")
+
+    monkeypatch.setattr("app.api.generate.get_offer_by_id_bam", fake_offer)
+    monkeypatch.setattr("app.api.generate.generate_draft_from_outline", fake_draft)
+    monkeypatch.setattr("app.api.generate.build_operator_context", fake_operator_context)
+    monkeypatch.setattr("app.api.generate.build_bc_core_event_context", fake_event_context)
+    monkeypatch.setattr("app.api.generate.build_expertise_context", fake_expertise_context)
+    monkeypatch.setattr("app.services.generation_artifacts.get_settings", lambda: SimpleNamespace(storage_dir=tmp_path))
+
+    response = await client.post(
+        "/api/generate/draft/sync",
+        json={
+            "keyword": "novig promo code",
+            "title": "novig promo code: Celtics vs. Spurs",
+            "offer_id": "offer-1",
+            "offer_property": "fantasy_labs",
+            "state": "NJ",
+            "outline_structured": [
+                {"level": "intro", "title": "", "talking_points": ["Lead with offer"], "avoid": []},
+                {"level": "h2", "title": "How Novig fits Celtics vs. Spurs", "talking_points": ["Angle"], "avoid": []},
+            ],
+            "game_context": {
+                "sport": "nba",
+                "away_team": "Boston Celtics",
+                "home_team": "San Antonio Spurs",
+                "start_time": "2026-05-08T20:00:00-04:00",
+                "network": "ESPN",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["source_facts"]["bc_core"]["operator"]["matched"] is True
+    assert data["source_facts"]["bc_core"]["expertise"]["matched"] is True
+    assert "BC CORE OPERATOR CONTEXT:" in captured["event_context"]
+    assert "BC CORE EVENT CONTEXT:" in captured["event_context"]
+    assert "BC CORE EXPERTISE NOTES:" in captured["event_context"]
