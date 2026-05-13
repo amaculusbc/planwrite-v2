@@ -1,0 +1,28 @@
+[Unit]
+Description=BC Core proxy (tailnet-only, fronts BC Core via tun0)
+After=network-online.target openvpn-client@bc.service tailscaled.service
+Wants=network-online.target openvpn-client@bc.service tailscaled.service
+Requires=openvpn-client@bc.service
+
+[Service]
+Type=exec
+User=bc-proxy
+Group=bc-proxy
+WorkingDirectory=/srv/bc-proxy
+EnvironmentFile=/etc/bc-proxy/env
+ExecStart=/srv/bc-proxy/start.sh
+Restart=on-failure
+RestartSec=5
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictNamespaces=true
+
+[Install]
+WantedBy=multi-user.target
