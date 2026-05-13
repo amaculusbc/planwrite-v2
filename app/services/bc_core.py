@@ -95,7 +95,7 @@ def _season_year_from_name(season_name: str, scheduled_date: str) -> int | None:
 
 
 async def _get_json(path: str, *, params: dict | None = None) -> dict:
-    client_kwargs: dict[str, Any] = {"timeout": 20.0}
+    client_kwargs: dict[str, Any] = {"timeout": settings.bc_core_timeout_seconds}
     if settings.bc_core_socks_proxy:
         client_kwargs["proxy"] = settings.bc_core_socks_proxy
     async with httpx.AsyncClient(**client_kwargs) as client:
