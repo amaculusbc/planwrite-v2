@@ -48,9 +48,14 @@ def get_bc_core_base_url() -> str:
 
 
 def _headers() -> dict[str, str]:
-    if settings.bc_core_api_key:
-        return {"x-api-key": settings.bc_core_api_key}
-    return {}
+    headers: dict[str, str] = {}
+    api_key = (settings.bc_core_api_key or "").strip()
+    proxy_bearer = (settings.bc_core_proxy_bearer or "").strip()
+    if api_key:
+        headers["x-api-key"] = api_key
+    if proxy_bearer:
+        headers["authorization"] = f"Bearer {proxy_bearer}"
+    return headers
 
 
 def _normalize(value: str) -> str:
@@ -112,8 +117,9 @@ def _get_shared_client() -> httpx.AsyncClient:
         "timeout": settings.bc_core_timeout_seconds,
         "limits": httpx.Limits(max_connections=20, max_keepalive_connections=10, keepalive_expiry=120.0),
     }
-    if settings.bc_core_socks_proxy:
-        client_kwargs["proxy"] = settings.bc_core_socks_proxy
+    socks_proxy = (settings.bc_core_socks_proxy or "").strip()
+    if socks_proxy:
+        client_kwargs["proxy"] = socks_proxy
     _shared_client = httpx.AsyncClient(**client_kwargs)
     return _shared_client
 

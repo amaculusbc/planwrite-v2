@@ -11,6 +11,7 @@ from fastapi import FastAPI, HTTPException, Request, Response
 UPSTREAM_HOST = os.environ.get("BC_CORE_UPSTREAM", "core-external-api.actionnetwork.com")
 UPSTREAM_BASE = f"https://{UPSTREAM_HOST}"
 BC_API_KEY = (os.environ.get("BC_CORE_API_KEY") or "").strip()
+PROXY_BEARER = (os.environ.get("BC_PROXY_BEARER") or "").strip()
 UPSTREAM_TIMEOUT = float(os.environ.get("BC_CORE_TIMEOUT_SECONDS") or "30")
 
 if not BC_API_KEY:
@@ -25,13 +26,23 @@ HOP_BY_HOP = {
 app = FastAPI(title="BC Core proxy", docs_url=None, redoc_url=None, openapi_url=None)
 
 
+def _require_bearer(request: Request) -> None:
+    if not PROXY_BEARER:
+        return
+    auth = (request.headers.get("authorization") or "").strip()
+    expected = f"Bearer {PROXY_BEARER}"
+    if auth != expected:
+        raise HTTPException(status_code=401, detail="unauthorized")
+
+
 @app.get("/healthz")
 async def healthz() -> dict[str, Any]:
     return {"status": "ok"}
 
 
 @app.get("/healthz/upstream")
-async def healthz_upstream() -> dict[str, Any]:
+async def healthz_upstream(request: Request) -> dict[str, Any]:
+    _require_bearer(request)
     async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT) as client:
         try:
             r = await client.get(
@@ -47,6 +58,7 @@ async def healthz_upstream() -> dict[str, Any]:
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"])
 async def proxy(path: str, request: Request) -> Response:
+    _require_bearer(request)
     forward_headers = {
         k: v for k, v in request.headers.items() if k.lower() not in HOP_BY_HOP
     }

@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     bc_core_base_url: str = ""
     bc_core_socks_proxy: str = ""
     bc_core_api_key: str = ""
+    bc_core_proxy_bearer: str = ""
     bc_core_timeout_seconds: float = 60.0
 
     # Paths
