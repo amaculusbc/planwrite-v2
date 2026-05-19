@@ -371,7 +371,14 @@ def _team_alignment(source_facts: dict, event: dict) -> tuple[int, int]:
             if requested == candidate:
                 return 10
             if requested in candidate or candidate in requested:
-                return 5
+                return 7
+            requested_tokens = _tokenize(requested)
+            candidate_tokens = _tokenize(candidate)
+            overlap = requested_tokens & candidate_tokens
+            if overlap:
+                if overlap == requested_tokens or overlap == candidate_tokens:
+                    return 6
+                return min(5, len(overlap) * 2)
         return 0
 
     return value(away_requested, away_team), value(home_requested, home_team)
@@ -415,10 +422,20 @@ async def build_event_context(source_facts: dict) -> tuple[dict, str]:
             "source_urls": [source_url],
         }, "No BC Core events returned"
 
-    scored = [(event, _score_event(source_facts, event)) for event in events]
-    scored.sort(key=lambda item: item[1], reverse=True)
-    best, best_score = scored[0]
-    away_value, home_value = _team_alignment(source_facts, best)
+    scored: list[tuple[dict, int, int, int]] = []
+    for event in events:
+        event_score = _score_event(source_facts, event)
+        away_value, home_value = _team_alignment(source_facts, event)
+        scored.append((event, event_score, away_value, home_value))
+    scored.sort(
+        key=lambda item: (
+            1 if item[2] > 0 and item[3] > 0 else 0,
+            item[2] + item[3],
+            item[1],
+        ),
+        reverse=True,
+    )
+    best, best_score, away_value, home_value = scored[0]
 
     if requested_event.get("away_team") and requested_event.get("home_team") and (away_value == 0 or home_value == 0):
         return {

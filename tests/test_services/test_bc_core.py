@@ -76,3 +76,63 @@ async def test_build_operator_context_matches_compact_brand_equivalent(monkeypat
     assert context["matched"] is True
     assert context["parent_name"] == "BetMGM"
     assert any(path == "/sportsbooks/coverage" for path, _ in calls)
+
+
+@pytest.mark.asyncio
+async def test_build_event_context_prefers_event_matching_both_requested_teams(monkeypatch):
+    async def fake_get_json(path: str, *, params=None):
+        assert path == "/nba/events"
+        return {
+            "results": [
+                {
+                    "id": 1,
+                    "leagueId": 2,
+                    "name": "Indiana Pacers at New York Knicks",
+                    "scheduledDate": "2026-05-20T00:00:00Z",
+                    "teams": [
+                        {"id": 501, "name": "Indiana Pacers", "side": "AWAY"},
+                        {"id": 502, "name": "New York Knicks", "side": "HOME"},
+                    ],
+                    "players": [],
+                    "eventStatus": {"name": "Scheduled"},
+                    "season": {"name": "2026 NBA Playoffs"},
+                    "seasonSchedule": {"scheduleType": "Postseason"},
+                    "broadcast": {"network": "ESPN"},
+                },
+                {
+                    "id": 2,
+                    "leagueId": 2,
+                    "name": "Cleveland Cavaliers at New York Knicks",
+                    "scheduledDate": "2026-05-20T00:00:00Z",
+                    "teams": [
+                        {"id": 601, "name": "Cleveland Cavaliers", "side": "AWAY"},
+                        {"id": 602, "name": "New York Knicks", "side": "HOME"},
+                    ],
+                    "players": [],
+                    "eventStatus": {"name": "Scheduled"},
+                    "season": {"name": "2026 NBA Playoffs"},
+                    "seasonSchedule": {"scheduleType": "Postseason"},
+                    "broadcast": {"network": "ESPN"},
+                },
+            ]
+        }
+
+    monkeypatch.setattr(bc_core, "_get_json", fake_get_json)
+    monkeypatch.setattr(bc_core, "bc_core_configured", lambda: True)
+
+    context, reason = await bc_core.build_event_context(
+        {
+            "title": "bet365 bonus code: Cavaliers vs. Knicks",
+            "event": {
+                "sport": "nba",
+                "headline": "Cleveland Cavaliers vs. New York Knicks",
+                "away_team": "Cleveland Cavaliers",
+                "home_team": "New York Knicks",
+            },
+        }
+    )
+
+    assert reason == ""
+    assert context["matched"] is True
+    assert context["event_id"] == 2
+    assert context["away_team"] == "Cleveland Cavaliers"
