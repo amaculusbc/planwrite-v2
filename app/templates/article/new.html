@@ -235,13 +235,13 @@
                     </div>
 
                       <!-- Odds Display Panel -->
-                      <div x-show="selectedGame && odds" x-transition class="mt-4 bw-card p-4">
-                          <div class="flex items-center justify-between mb-3">
+                    <div x-show="showExampleBuilderPanel()" x-transition class="mt-4 bw-card p-4">
+                          <div class="flex items-center justify-between mb-3" x-show="selectedGame">
                               <h4 class="text-sm font-medium text-gray-900" x-text="selectedGame ? selectedGame.headline : ''"></h4>
                               <span class="text-xs text-gray-500" x-text="selectedGame ? selectedGame.time_display : ''"></span>
                           </div>
 
-                          <div class="mb-3">
+                          <div class="mb-3" x-show="selectedGame && availableBooks.length">
                               <label class="block text-xs text-gray-500">Book</label>
                               <select x-model="selectedBook"
                                       class="mt-1 block w-full rounded-md border-gray-300 bg-white shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm">
@@ -252,7 +252,7 @@
                           </div>
 
                           <!-- Odds grid (selected book; both teams) -->
-                          <div class="grid grid-cols-4 gap-2 text-xs" x-show="availableBooks.length && selectedBook">
+                          <div class="grid grid-cols-4 gap-2 text-xs" x-show="selectedGame && availableBooks.length && selectedBook">
                               <div class="font-medium text-gray-500">Team</div>
                               <div class="font-medium text-gray-500">Spread</div>
                               <div class="font-medium text-gray-500">ML</div>
@@ -269,40 +269,44 @@
                               <div class="text-gray-600" x-text="formatTotalDisplay(selectedBook, 'home')"></div>
                           </div>
 
-                          <p x-show="!availableBooks.length" class="text-sm text-gray-500">No odds available for this game</p>
+                          <p x-show="selectedGame && !availableBooks.length && currentContentMode() === 'sportsbook'" class="text-sm text-gray-500">No odds available for this game</p>
+                          <p x-show="currentContentMode() !== 'sportsbook'" class="text-sm text-gray-500">
+                              Use the example builder below for prediction market and DFS examples. Live sportsbook odds are not required for those modes.
+                          </p>
 
                         <!-- Bet Example Builder -->
                         <div class="mt-4 pt-4 border-t border-gray-200">
                             <h4 class="text-sm font-medium text-gray-900 mb-2">Bet Example Builder</h4>
                             <div class="grid grid-cols-3 gap-3">
                                 <div>
-                                    <label class="block text-xs text-gray-500">Bet Amount</label>
+                                    <label class="block text-xs text-gray-500" x-text="betBuilderAmountLabel()"></label>
                                     <input type="number" x-model="betBuilder.amount" min="1" max="1000"
                                            class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
                                            placeholder="100">
                                 </div>
                                 <div>
-                                    <label class="block text-xs text-gray-500">Bet Type</label>
+                                    <label class="block text-xs text-gray-500" x-text="betBuilderTypeLabel()"></label>
                                     <select x-model="betBuilder.type"
                                             class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm">
-                                        <option value="spread">Spread</option>
-                                        <option value="moneyline">Moneyline</option>
-                                        <option value="total">Total</option>
+                                        <template x-for="opt in betBuilderTypeOptions()" :key="opt.value">
+                                            <option :value="opt.value" x-text="opt.label"></option>
+                                        </template>
                                     </select>
                                 </div>
                                 <div>
-                                    <label class="block text-xs text-gray-500">Team</label>
+                                    <label class="block text-xs text-gray-500" x-text="betBuilderSelectionLabel()"></label>
                                     <select x-model="betBuilder.team"
                                             class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm">
-                                        <option value="away" x-text="selectedGame?.away_team || 'Away'"></option>
-                                        <option value="home" x-text="selectedGame?.home_team || 'Home'"></option>
+                                        <template x-for="opt in betBuilderSelectionOptions()" :key="opt.value">
+                                            <option :value="opt.value" x-text="opt.label"></option>
+                                        </template>
                                     </select>
                                 </div>
                             </div>
                             <div class="mt-2">
                                 <button type="button" @click="generateBetExample()"
                                         class="text-xs text-primary-600 hover:text-primary-800 font-medium">
-                                    Generate bet example text &rarr;
+                                    <span x-text="generateExampleButtonLabel()"></span> &rarr;
                                 </button>
                             </div>
                             <div x-show="betExample" x-transition class="mt-2 p-2 bw-card text-sm text-gray-700">
@@ -1052,6 +1056,82 @@ function articleWizard() {
             if (!this.form.offer_id) return null;
             return this.offersRaw.find(o => (o.id || o.offer_id) === this.form.offer_id) || null;
         },
+        currentContentMode() {
+            const offer = this.selectedOffer();
+            const brand = String(offer?.brand || '').trim().toLowerCase();
+            const keyword = String(this.form.keyword || '').trim().toLowerCase();
+            if (['kalshi', 'polymarket', 'novig'].includes(brand) || /(kalshi|polymarket|novig)/.test(keyword)) {
+                return 'prediction_market';
+            }
+            if (['underdog', 'sleeper', 'dabble'].includes(brand) || /(underdog|sleeper|dabble)/.test(keyword)) {
+                return 'dfs';
+            }
+            return 'sportsbook';
+        },
+        showExampleBuilderPanel() {
+            const hasEvent = !!this.selectedEventLabel();
+            if (!hasEvent) return false;
+            if (this.currentContentMode() !== 'sportsbook') return true;
+            return !!(this.selectedGame && this.odds);
+        },
+        betBuilderAmountLabel() {
+            if (this.currentContentMode() === 'prediction_market') return 'Position Amount';
+            if (this.currentContentMode() === 'dfs') return 'Entry Amount';
+            return 'Bet Amount';
+        },
+        betBuilderTypeLabel() {
+            if (this.currentContentMode() === 'prediction_market') return 'Position Type';
+            if (this.currentContentMode() === 'dfs') return 'Contest Type';
+            return 'Bet Type';
+        },
+        betBuilderSelectionLabel() {
+            if (this.currentContentMode() === 'prediction_market') return 'Market Side';
+            if (this.currentContentMode() === 'dfs') return 'Contest Focus';
+            return 'Team';
+        },
+        betBuilderTypeOptions() {
+            if (this.currentContentMode() === 'prediction_market') {
+                return [
+                    { value: 'yes', label: 'Yes Position' },
+                    { value: 'no', label: 'No Position' }
+                ];
+            }
+            if (this.currentContentMode() === 'dfs') {
+                return [
+                    { value: 'pickem', label: "Pick'em Entry" },
+                    { value: 'lineup', label: 'DFS Contest' }
+                ];
+            }
+            return [
+                { value: 'spread', label: 'Spread' },
+                { value: 'moneyline', label: 'Moneyline' },
+                { value: 'total', label: 'Total' }
+            ];
+        },
+        betBuilderSelectionOptions() {
+            const eventLabel = this.selectedEventLabel() || 'Featured Event';
+            if (this.currentContentMode() === 'prediction_market') {
+                return [
+                    { value: 'away', label: this.selectedGame?.away_team || `Yes on ${eventLabel}` },
+                    { value: 'home', label: this.selectedGame?.home_team || `No on ${eventLabel}` }
+                ];
+            }
+            if (this.currentContentMode() === 'dfs') {
+                return [
+                    { value: 'away', label: this.selectedGame?.away_team || eventLabel },
+                    { value: 'home', label: this.selectedGame?.home_team || `Alternate build for ${eventLabel}` }
+                ];
+            }
+            return [
+                { value: 'away', label: this.selectedGame?.away_team || 'Away' },
+                { value: 'home', label: this.selectedGame?.home_team || 'Home' }
+            ];
+        },
+        generateExampleButtonLabel() {
+            if (this.currentContentMode() === 'prediction_market') return 'Generate market example';
+            if (this.currentContentMode() === 'dfs') return 'Generate DFS example';
+            return 'Generate bet example text';
+        },
         preferredSportsbookKey() {
             const offer = this.selectedOffer();
             if (!offer) return '';
@@ -1158,7 +1238,7 @@ function articleWizard() {
             try {
                 const params = new URLSearchParams({
                     property,
-                    limit: '8'
+                    limit: '16'
                 });
                 if (keyword) params.set('keyword', keyword);
                 if (brand) params.set('brand', brand);
@@ -1494,6 +1574,22 @@ function articleWizard() {
 
         // Generate bet example text
         async generateBetExample() {
+            if (!this.showExampleBuilderPanel()) {
+                this.betExample = '';
+                this.betExampleData = null;
+                return;
+            }
+
+            if (this.currentContentMode() === 'prediction_market') {
+                this.generatePredictionMarketExampleLocally();
+                return;
+            }
+
+            if (this.currentContentMode() === 'dfs') {
+                this.generateDfsExampleLocally();
+                return;
+            }
+
             if (!this.selectedGame || !this.odds) {
                 this.betExample = '';
                 this.betExampleData = null;
@@ -1579,6 +1675,62 @@ function articleWizard() {
             if (!this.selectedGame) return '';
             if (this.selectedGame.start_time_display) return this.selectedGame.start_time_display;
             return this.formatGameTime(this.selectedGame.start_time) || this.selectedGame.start_time || '';
+        },
+
+        parseOfferAmounts() {
+            const offer = this.selectedOffer();
+            const text = String(offer?.offer_text || '').replace(/,/g, '');
+            const matches = [...text.matchAll(/\$(\d+(?:\.\d+)?)/g)].map(m => Number(m[1]));
+            return {
+                qualifyingAmount: matches[0] || (this.currentContentMode() === 'prediction_market' ? 25 : 5),
+                rewardAmount: matches[1] || 50
+            };
+        },
+
+        buildExampleEventLabel() {
+            return this.selectedEventLabel() || 'the featured event';
+        },
+
+        generatePredictionMarketExampleLocally() {
+            const amounts = this.parseOfferAmounts();
+            const positionAmount = parseInt(this.betBuilder.amount) || 10;
+            const entryPrice = 0.50;
+            const settlementPrice = 1.00;
+            const contracts = positionAmount / entryPrice;
+            const payout = contracts * settlementPrice;
+            const profit = payout - positionAmount;
+            const eventLabel = this.buildExampleEventLabel();
+            const sideLabel = this.betBuilder.type === 'no' ? 'No' : 'Yes';
+            const selection = `${sideLabel} on ${eventLabel}`;
+            this.betExampleData = {
+                qualifying_amount: amounts.qualifyingAmount,
+                position_amount: positionAmount,
+                entry_price: entryPrice,
+                settlement_price: settlementPrice,
+                selection,
+                event_context: eventLabel,
+                reward_amount: amounts.rewardAmount
+            };
+            this.betExample = `If I complete the $${amounts.qualifyingAmount} qualifying action first, I can open a separate $${positionAmount} ${sideLabel} position on ${eventLabel}. At $${entryPrice.toFixed(2)} per contract, that buys about ${contracts.toFixed(0)} contracts. If it settles at $${settlementPrice.toFixed(2)}, the payout is about $${payout.toFixed(2)}, or roughly $${profit.toFixed(2)} in profit.`;
+        },
+
+        generateDfsExampleLocally() {
+            const amounts = this.parseOfferAmounts();
+            const entryAmount = parseInt(this.betBuilder.amount) || amounts.qualifyingAmount || 5;
+            const payoutMultiplier = 2;
+            const totalReturn = entryAmount * payoutMultiplier;
+            const eventLabel = this.buildExampleEventLabel();
+            const selection = this.betBuilder.type === 'lineup'
+                ? `a DFS contest built around ${eventLabel}`
+                : `a pick'em contest on ${eventLabel}`;
+            this.betExampleData = {
+                entry_amount: entryAmount,
+                payout_multiplier: payoutMultiplier,
+                selection,
+                event_context: eventLabel,
+                reward_amount: amounts.rewardAmount
+            };
+            this.betExample = `If I use a $${entryAmount} entry on ${selection}, that first play is the qualifier. If the contest returns ${payoutMultiplier}x, I get back $${totalReturn} total including the entry fee. If it misses, I am only out the $${entryAmount} entry fee, and the app still credits the promo once the qualifying play posts.`;
         },
 
         async fetchBatchOutline(item, gameContext) {

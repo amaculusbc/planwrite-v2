@@ -3,9 +3,11 @@
 import pytest
 
 from app.services.draft import (
+    _align_selected_link_anchors,
     _apply_generation_quality_postprocess,
     _build_signup_list,
     _clean_orphaned_keyword_page_references,
+    _enforce_secondary_keyword_mentions,
     _ensure_primary_keyword_internal_link,
     _ensure_keyword_in_first_paragraph,
     _extract_featured_label_from_event_context,
@@ -30,6 +32,7 @@ from app.services.draft import (
     _render_dfs_overview_section_deterministic,
     _render_dfs_example_section_deterministic,
     _render_bet_example_section_deterministic,
+    _render_terms_section_html,
     _remove_inline_compliance_fragments,
     _resolve_intro_age_conflicts,
     _soften_repetitive_intro_opener,
@@ -39,6 +42,7 @@ from app.services.draft import (
     _trim_dangling_paragraph_endings,
     _trim_repeated_phrase_in_html,
 )
+from app.services.internal_links import InternalLinkSpec
 
 
 def test_soften_repetitive_intro_opener_rewrites_put_the_to_work():
@@ -97,6 +101,56 @@ def test_apply_generation_quality_postprocess_combines_key_fixes():
     assert "Hawks vs. Hornets" in cleaned
     assert "see full terms" not in cleaned.lower()
     assert ", and</p>" not in cleaned.lower()
+
+
+def test_align_selected_link_anchors_rewrites_wrong_anchor_text_to_recommended_anchor():
+    html = '<p>Start with <a href="https://www.fantasylabs.com/articles/top-dfs-sites/">Best DFS Apps</a> before lineup lock.</p>'
+    links = [
+        InternalLinkSpec(
+            title="Best DFS Apps",
+            url="https://www.fantasylabs.com/articles/top-dfs-sites/",
+            recommended_anchors=["top dfs sites", "best dfs apps"],
+        )
+    ]
+    cleaned = _align_selected_link_anchors(html, links)
+    assert '>top dfs sites<' in cleaned.lower()
+
+
+def test_enforce_secondary_keyword_mentions_repeats_keywords_without_terms_section_pollution():
+    html = (
+        "<p>Main intro for the article.</p>"
+        "<h2>Section One</h2><p>Body copy about the offer.</p>"
+        "<h2>Section Two</h2><p>More body copy for the example.</p>"
+        "<h2>Terms</h2><p>States Available: NJ, PA.</p>"
+    )
+    cleaned = _enforce_secondary_keyword_mentions(html, ["best dfs apps"])
+    assert cleaned.lower().count("best dfs apps") >= 2
+    assert "States Available: NJ, PA." in cleaned
+
+
+def test_render_terms_section_html_uses_current_state_for_multi_offer_headers():
+    html = _render_terms_section_html(
+        offers=[
+            {
+                "brand": "bet365",
+                "bonus_code": "ACTION365",
+                "states": ["NJ", "PA"],
+                "terms": "Available in NJ only.",
+            },
+            {
+                "brand": "FanDuel",
+                "bonus_code": "",
+                "states": ["NJ", "PA"],
+                "terms": "Available in NJ and PA only.",
+            },
+        ],
+        terms="",
+        expiration_days=None,
+        min_odds="",
+        wagering="",
+        state="NJ",
+    )
+    assert "States Available: NJ" in html
 
 
 def test_remove_inline_compliance_fragments_strips_standalone_21_plus():

@@ -8,6 +8,7 @@ import hashlib
 import re
 import markdown
 from datetime import datetime
+from html import escape
 from typing import AsyncGenerator, Any
 from uuid import uuid4
 from zoneinfo import ZoneInfo
@@ -809,6 +810,56 @@ def _keep_selected_non_switchboard_links(
     return anchor_pattern.sub(_replace, html)
 
 
+def _align_selected_link_anchors(
+    html: str,
+    selected_links: list[Any] | None,
+) -> str:
+    """Force selected internal links to use their preferred anchor text."""
+    if not html or not selected_links:
+        return html
+
+    anchor_map: dict[str, str] = {}
+    for link in selected_links:
+        url = str(getattr(link, "url", "") or "").strip().lower()
+        anchors = [str(a).strip() for a in (getattr(link, "recommended_anchors", []) or []) if str(a).strip()]
+        if not url or not anchors:
+            continue
+        anchor_map[url] = anchors[0]
+
+    if not anchor_map:
+        return html
+
+    anchor_pattern = re.compile(
+        r'<a\b([^>]*)href\s*=\s*(["\'])(https?://[^"\']+)\2([^>]*)>(.*?)</a>',
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+    def _replace(match: re.Match[str]) -> str:
+        before_attrs = match.group(1) or ""
+        quote = match.group(2) or '"'
+        url_raw = match.group(3) or ""
+        after_attrs = match.group(4) or ""
+        inner = match.group(5) or ""
+        attrs_text = f"{before_attrs} {after_attrs}".lower()
+        if _is_switchboard_link(url_raw, attrs_text):
+            return match.group(0)
+        preferred_anchor = anchor_map.get(url_raw.strip().lower())
+        if not preferred_anchor:
+            return match.group(0)
+        plain_inner = re.sub(r"<[^>]+>", "", inner).strip().lower()
+        accepted = {a.strip().lower() for a in [preferred_anchor] if a.strip()}
+        if plain_inner in accepted:
+            return match.group(0)
+        before = before_attrs
+        if before and not before.endswith(" "):
+            before = f"{before} "
+        elif not before:
+            before = " "
+        return f'<a{before}href={quote}{url_raw}{quote}{after_attrs}>{escape(preferred_anchor)}</a>'
+
+    return anchor_pattern.sub(_replace, html)
+
+
 def _offer_expiration_prompt_line(expiration_days: int | None) -> str:
     """Build a safe reward-expiration prompt line for source-of-truth sections."""
     if expiration_days is None:
@@ -1063,6 +1114,7 @@ def _render_terms_section_html(
     expiration_days: int | None,
     min_odds: str,
     wagering: str,
+    state: str = "ALL",
     prediction_market: bool = False,
     dfs_mode: bool = False,
 ) -> str:
@@ -1079,7 +1131,7 @@ def _render_terms_section_html(
             code = str(offer.get("bonus_code") or "").strip()
             states_text = _offer_states_text(
                 offer,
-                "ALL",
+                state,
                 prediction_market=prediction_market,
                 dfs_mode=dfs_mode,
             )
@@ -1121,6 +1173,14 @@ def _render_terms_section_html(
         cleaned = terms.replace("\\n", "\n")
         paras = [p.strip() for p in cleaned.splitlines() if p.strip()]
         if paras:
+            states_text = _offer_states_text(
+                normalized_offers[0] if normalized_offers else {},
+                state,
+                prediction_market=prediction_market,
+                dfs_mode=dfs_mode,
+            )
+            if states_text and not any(re.search(r"states available|available in", p, flags=re.IGNORECASE) for p in paras):
+                paras.insert(0, f"States Available: {states_text}.")
             return "\n".join(f"<p>{p}</p>" for p in paras)
 
     points: list[str] = []
@@ -1688,6 +1748,61 @@ def _target_keyword_mentions(html: str, keyword: str) -> str:
         out.append(pattern.sub(_repl, token))
 
     return "".join(out)
+
+
+def _secondary_keyword_count(html: str, phrase: str) -> int:
+    if not html or not phrase:
+        return 0
+    plain = _html_to_plain_text(html)
+    return len(re.findall(re.escape(phrase), plain, flags=re.IGNORECASE))
+
+
+def _enforce_secondary_keyword_mentions(html: str, secondary_keywords: list[str] | None) -> str:
+    """Ensure secondary keywords appear repeatedly without stuffing one paragraph."""
+    phrases = [str(x).strip() for x in (secondary_keywords or []) if str(x).strip()]
+    if not html or not phrases:
+        return html
+
+    result = html
+    paragraph_pattern = re.compile(r"<p>(.*?)</p>", flags=re.IGNORECASE | re.DOTALL)
+    if not paragraph_pattern.search(result):
+        return result
+
+    phrase_templates = [
+        "It also ties into {phrase}.",
+        "That keeps {phrase} in the mix.",
+        "This is also relevant for {phrase}.",
+    ]
+
+    for phrase in phrases:
+        target_mentions = 2
+        current_mentions = _secondary_keyword_count(result, phrase)
+        if current_mentions >= target_mentions:
+            continue
+
+        needed = target_mentions - current_mentions
+        replacements = 0
+
+        def _replace(match: re.Match[str]) -> str:
+            nonlocal replacements
+            if replacements >= needed:
+                return match.group(0)
+            inner = match.group(1)
+            plain = re.sub(r"<[^>]+>", " ", inner)
+            plain_lower = re.sub(r"\s+", " ", plain).strip().lower()
+            if not plain_lower:
+                return match.group(0)
+            if phrase.lower() in plain_lower:
+                return match.group(0)
+            if "states available:" in plain_lower or "terms" in plain_lower or "1-800-gambler" in plain_lower:
+                return match.group(0)
+            sentence = phrase_templates[(sum(ord(ch) for ch in f"{phrase}|{replacements}") % len(phrase_templates))].format(phrase=phrase)
+            replacements += 1
+            return f"<p>{inner.strip()} {sentence}</p>"
+
+        result = paragraph_pattern.sub(_replace, result)
+
+    return _normalize_visible_punctuation(result)
 
 
 def _strip_formatting_from_headings(html: str) -> str:
@@ -2953,6 +3068,7 @@ async def generate_draft_from_outline(
         preferred_urls,
         fallback_primary_url=primary_internal_url,
     )
+    html_output = _align_selected_link_anchors(html_output, preferred_links)
     html_output = await _humanize_article_html(
         html_output,
         keyword=keyword,
@@ -2963,6 +3079,7 @@ async def generate_draft_from_outline(
     html_output = _apply_content_mode_language_guardrails(html_output, content_mode)
     html_output = _normalize_brand_keyword_text(html_output, brand)
     html_output = _target_keyword_mentions(html_output, keyword)
+    html_output = _enforce_secondary_keyword_mentions(html_output, prefs["secondary_keywords"])
     html_output = _clean_orphaned_keyword_page_references(html_output, keyword)
     html_output = _strip_formatting_from_headings(html_output)
 
@@ -3174,7 +3291,7 @@ DATE (include this): {date_str}
 {f"MULTI-OFFER SOURCE OF TRUTH (use correct brand/code pairings):{chr(10)}{multi_offer_context}{chr(10)}" if has_multiple_offers else ""}
 
 KEYWORD: {keyword}
-{f"SECONDARY KEYWORDS (optional, use at most one if it fits naturally):{chr(10)}{secondary_keywords_md}" if secondary_keywords_md else ""}
+{f"SECONDARY KEYWORDS (use these naturally across the article and aim for repeated coverage, not stuffing):{chr(10)}{secondary_keywords_md}" if secondary_keywords_md else ""}
 
 {points_md if points_md else ""}
 {f"WRITER NOTES:{chr(10)}{structure_notes_md}{chr(10)}" if structure_notes_md else ""}
@@ -3385,6 +3502,7 @@ async def _generate_body_section(
             expiration_days=expiration_days,
             min_odds=min_odds,
             wagering=wagering,
+            state=state,
             prediction_market=prediction_market,
             dfs_mode=dfs_mode,
         )
@@ -3623,7 +3741,7 @@ OFFER CONTEXT:
 
 {"TALKING POINTS:" + chr(10) + points_md + chr(10) if points_md else ""}
 {"DO NOT COVER (handled elsewhere):" + chr(10) + avoid_md + chr(10) if avoid_md else ""}
-{f"SECONDARY KEYWORDS (optional, use at most one if it fits naturally):{chr(10)}{secondary_keywords_md}{chr(10)}" if secondary_keywords_md else ""}
+{f"SECONDARY KEYWORDS (use these naturally across the article and aim for repeated coverage, not stuffing):{chr(10)}{secondary_keywords_md}{chr(10)}" if secondary_keywords_md else ""}
 {f"WRITER NOTES:{chr(10)}{structure_notes_md}{chr(10)}" if structure_notes_md else ""}
 
 OPTIONAL INTERNAL LINK SUPPORT:
@@ -3934,6 +4052,7 @@ async def generate_draft_from_outline_streaming(
         preferred_urls,
         fallback_primary_url=primary_internal_url,
     )
+    html_output = _align_selected_link_anchors(html_output, preferred_links)
     html_output = await _humanize_article_html(
         html_output,
         keyword=keyword,
@@ -3944,6 +4063,7 @@ async def generate_draft_from_outline_streaming(
     html_output = _apply_content_mode_language_guardrails(html_output, content_mode)
     html_output = _normalize_brand_keyword_text(html_output, brand)
     html_output = _target_keyword_mentions(html_output, keyword)
+    html_output = _enforce_secondary_keyword_mentions(html_output, prefs["secondary_keywords"])
     html_output = _clean_orphaned_keyword_page_references(html_output, keyword)
     html_output = _strip_formatting_from_headings(html_output)
 

@@ -667,10 +667,10 @@ async def list_link_options(
     property: str | None = None,
     keyword: str = "",
     brand: str = "",
-    limit: int = 12,
+    limit: int = 16,
 ):
     """Return writer-selectable internal link options for the current property."""
-    safe_limit = max(3, min(limit, 25))
+    safe_limit = max(6, min(limit, 30))
     suggested = await suggest_links_for_section(
         title=keyword or brand or "article",
         must_include=[keyword, brand],
