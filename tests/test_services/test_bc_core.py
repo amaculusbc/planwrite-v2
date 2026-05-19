@@ -136,3 +136,48 @@ async def test_build_event_context_prefers_event_matching_both_requested_teams(m
     assert context["matched"] is True
     assert context["event_id"] == 2
     assert context["away_team"] == "Cleveland Cavaliers"
+
+
+@pytest.mark.asyncio
+async def test_build_event_context_tolerates_null_names_in_bc_payload(monkeypatch):
+    async def fake_get_json(path: str, *, params=None):
+        assert path == "/mlb/events"
+        return {
+            "results": [
+                {
+                    "id": 9,
+                    "leagueId": 3,
+                    "name": None,
+                    "scheduledDate": "2026-05-20T00:00:00Z",
+                    "teams": [
+                        {"id": 700, "name": "Atlanta Braves", "side": "AWAY"},
+                        {"id": 701, "name": None, "side": "HOME"},
+                    ],
+                    "players": [
+                        {"id": 1, "preferredName": None, "lastName": "Acuna", "side": "AWAY"},
+                    ],
+                    "eventStatus": {"name": "Scheduled"},
+                    "season": {"name": "2026 MLB"},
+                    "seasonSchedule": {"scheduleType": "Regular Season"},
+                    "broadcast": {"network": "MLB.TV"},
+                }
+            ]
+        }
+
+    monkeypatch.setattr(bc_core, "_get_json", fake_get_json)
+    monkeypatch.setattr(bc_core, "bc_core_configured", lambda: True)
+
+    context, reason = await bc_core.build_event_context(
+        {
+            "title": "bet365 bonus code: Braves vs. Marlins",
+            "event": {
+                "sport": "mlb",
+                "headline": "Atlanta Braves vs. Miami Marlins",
+                "away_team": "Atlanta Braves",
+                "home_team": "Miami Marlins",
+            },
+        }
+    )
+
+    assert context["matched"] is False
+    assert "did not match both requested teams" in reason

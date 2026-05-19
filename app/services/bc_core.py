@@ -66,6 +66,12 @@ def _compact_normalize(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", (value or "").lower())
 
 
+def _text(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value)
+
+
 def _tokenize(value: str) -> set[str]:
     return {token for token in re.findall(r"[a-z0-9']+", (value or "").lower()) if len(token) >= 2}
 
@@ -340,8 +346,8 @@ def _score_event(source_facts: dict, event: dict) -> int:
     teams = event.get("teams", []) or []
     away_team = _normalize(next((team.get("name", "") for team in teams if team.get("side") == "AWAY"), ""))
     home_team = _normalize(next((team.get("name", "") for team in teams if team.get("side") == "HOME"), ""))
-    team_names = " ".join(team.get("name", "") for team in teams)
-    event_terms = _tokenize(" ".join([event.get("name", ""), team_names]))
+    team_names = " ".join(_text(team.get("name")) for team in teams if _text(team.get("name")))
+    event_terms = _tokenize(" ".join([_text(event.get("name")), team_names]))
     overlap = len(basis_terms & event_terms)
 
     team_score = 0
@@ -486,8 +492,8 @@ async def build_event_context(source_facts: dict) -> tuple[dict, str]:
         "participants": [
             {
                 "id": item.get("id"),
-                "name": " ".join(part for part in [item.get("preferredName", ""), item.get("lastName", "")] if part).strip()
-                or " ".join(part for part in [item.get("firstName", ""), item.get("lastName", "")] if part).strip(),
+                "name": " ".join(_text(part) for part in [item.get("preferredName"), item.get("lastName")] if _text(part)).strip()
+                or " ".join(_text(part) for part in [item.get("firstName"), item.get("lastName")] if _text(part)).strip(),
                 "side": item.get("side"),
             }
             for item in players
