@@ -40,6 +40,7 @@ COPY storage/ storage/
 
 # Create storage directory
 RUN mkdir -p storage/exports \
+    && sed -i 's/\r$//' /railway-entrypoint.sh \
     && chmod +x /railway-entrypoint.sh
 
 # Expose app port (Railway sets PORT at runtime)
