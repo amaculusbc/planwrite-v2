@@ -1,5 +1,8 @@
 name: Deploy to Railway
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 on:
   push:
     branches:
@@ -27,7 +30,6 @@ jobs:
 
       - name: Deploy to Railway production
         env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
         run: |
           railway up --ci --service=5152a3d3-dd85-4b64-b026-133c9c9dfe32 --environment=53e36246-d009-485a-b585-2e3aa2a5eabf --project=b722d2ce-2e5b-4529-a4c4-14963ec85eab --path-as-root .
-
