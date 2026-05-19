@@ -813,18 +813,21 @@ def _keep_selected_non_switchboard_links(
 def _align_selected_link_anchors(
     html: str,
     selected_links: list[Any] | None,
+    preferred_phrases: list[str] | None = None,
 ) -> str:
     """Force selected internal links to use their preferred anchor text."""
     if not html or not selected_links:
         return html
 
+    phrases = [str(x).strip().lower() for x in (preferred_phrases or []) if str(x).strip()]
     anchor_map: dict[str, str] = {}
     for link in selected_links:
         url = str(getattr(link, "url", "") or "").strip().lower()
         anchors = [str(a).strip() for a in (getattr(link, "recommended_anchors", []) or []) if str(a).strip()]
         if not url or not anchors:
             continue
-        anchor_map[url] = anchors[0]
+        matched_anchor = next((anchor for anchor in anchors if anchor.lower() in phrases), "")
+        anchor_map[url] = matched_anchor or anchors[0]
 
     if not anchor_map:
         return html
@@ -3068,7 +3071,11 @@ async def generate_draft_from_outline(
         preferred_urls,
         fallback_primary_url=primary_internal_url,
     )
-    html_output = _align_selected_link_anchors(html_output, preferred_links)
+    html_output = _align_selected_link_anchors(
+        html_output,
+        preferred_links,
+        [keyword, *prefs["secondary_keywords"]],
+    )
     html_output = await _humanize_article_html(
         html_output,
         keyword=keyword,
@@ -4052,7 +4059,11 @@ async def generate_draft_from_outline_streaming(
         preferred_urls,
         fallback_primary_url=primary_internal_url,
     )
-    html_output = _align_selected_link_anchors(html_output, preferred_links)
+    html_output = _align_selected_link_anchors(
+        html_output,
+        preferred_links,
+        [keyword, *prefs["secondary_keywords"]],
+    )
     html_output = await _humanize_article_html(
         html_output,
         keyword=keyword,

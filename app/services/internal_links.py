@@ -134,6 +134,31 @@ REQUIRED_LINKS_BY_PROPERTY: dict[str, list[dict[str, object]]] = {
 }
 
 
+def _normalize_url_key(url: str | None) -> str:
+    clean = str(url or "").strip().lower()
+    if not clean:
+        return ""
+    if clean.endswith("/"):
+        clean = clean.rstrip("/")
+    return clean
+
+
+def _merge_anchor_lists(*anchor_groups: list[str] | None) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for group in anchor_groups:
+        for raw in group or []:
+            anchor = str(raw or "").strip()
+            if not anchor:
+                continue
+            key = anchor.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(anchor)
+    return merged
+
+
 def _normalize_property_key(property_key: str | None) -> str:
     key = (property_key or DEFAULT_PROPERTY).strip().lower()
     if key not in PROPERTIES:
@@ -275,9 +300,10 @@ class InternalLinksStore:
         for item in self._read_index_items():
             url = str(item.get("url") or "").strip()
             title = str(item.get("title") or "").strip()
-            if not url or not title:
+            url_key = _normalize_url_key(url)
+            if not url_key or not title:
                 continue
-            by_url[url.lower()] = InternalLinkSpec(
+            by_url[url_key] = InternalLinkSpec(
                 title=title,
                 url=url,
                 recommended_anchors=[str(a) for a in item.get("recommended_anchors", []) if str(a).strip()],
@@ -289,12 +315,23 @@ class InternalLinksStore:
         for item in self._read_source_items():
             url = str(item.get("url") or "").strip()
             title = str(item.get("title") or "").strip()
-            if not url or not title or url.lower() in by_url:
+            url_key = _normalize_url_key(url)
+            if not url_key or not title:
                 continue
-            by_url[url.lower()] = InternalLinkSpec(
+            incoming_anchors = [str(a) for a in item.get("recommended_anchors", []) if str(a).strip()]
+            existing = by_url.get(url_key)
+            if existing:
+                existing.recommended_anchors = _merge_anchor_lists(existing.recommended_anchors, incoming_anchors)
+                if not existing.description:
+                    existing.description = str(item.get("summary") or item.get("description") or "").strip()
+                if not existing.operator:
+                    existing.operator = str(item.get("operator") or _link_operator(item) or "").strip()
+                existing.always_include = existing.always_include or bool(item.get("always_include"))
+                continue
+            by_url[url_key] = InternalLinkSpec(
                 title=title,
                 url=url,
-                recommended_anchors=[str(a) for a in item.get("recommended_anchors", []) if str(a).strip()],
+                recommended_anchors=incoming_anchors,
                 description=str(item.get("summary") or item.get("description") or "").strip(),
                 operator=str(item.get("operator") or _link_operator(item) or "").strip(),
                 always_include=bool(item.get("always_include")),
@@ -303,18 +340,90 @@ class InternalLinksStore:
         for rec in REQUIRED_LINKS_BY_PROPERTY.get(self.property_key, []):
             url = str(rec.get("url") or "").strip()
             title = str(rec.get("title") or "").strip()
-            if not url or not title or url.lower() in by_url:
+            url_key = _normalize_url_key(url)
+            if not url_key or not title:
                 continue
-            by_url[url.lower()] = InternalLinkSpec(
+            incoming_anchors = [str(a) for a in rec.get("recommended_anchors", []) if str(a).strip()]
+            existing = by_url.get(url_key)
+            if existing:
+                existing.recommended_anchors = _merge_anchor_lists(existing.recommended_anchors, incoming_anchors)
+                if not existing.description:
+                    existing.description = str(rec.get("description") or "").strip()
+                if not existing.operator:
+                    existing.operator = str(rec.get("operator") or _link_operator(rec) or "").strip()
+                existing.always_include = existing.always_include or bool(rec.get("always_include"))
+                continue
+            by_url[url_key] = InternalLinkSpec(
                 title=title,
                 url=url,
-                recommended_anchors=[str(a) for a in rec.get("recommended_anchors", []) if str(a).strip()],
+                recommended_anchors=incoming_anchors,
                 description=str(rec.get("description") or "").strip(),
                 operator=str(rec.get("operator") or _link_operator(rec) or "").strip(),
                 always_include=bool(rec.get("always_include")),
             )
 
-        return [by_url[url.lower()] for url in requested if url.lower() in by_url]
+        return [by_url[url_key] for url in requested if (url_key := _normalize_url_key(url)) in by_url]
+
+    def list_picker_candidates(self) -> list[InternalLinkSpec]:
+        """Return a broad deduped list of property links for the writer picker UI."""
+        by_url: dict[str, InternalLinkSpec] = {}
+
+        def _merge_item(url: str, title: str, anchors: list[str], description: str, operator: str, always_include: bool) -> None:
+            url_key = _normalize_url_key(url)
+            if not url_key or not title:
+                return
+            existing = by_url.get(url_key)
+            if existing:
+                existing.recommended_anchors = _merge_anchor_lists(existing.recommended_anchors, anchors)
+                if not existing.description:
+                    existing.description = description
+                if not existing.operator:
+                    existing.operator = operator
+                existing.always_include = existing.always_include or always_include
+                return
+            by_url[url_key] = InternalLinkSpec(
+                title=title,
+                url=url,
+                recommended_anchors=anchors,
+                description=description,
+                operator=operator,
+                always_include=always_include,
+            )
+
+        items = self._read_index_items()
+        if not items:
+            items = self._read_source_items()
+        for item in items:
+            _merge_item(
+                url=str(item.get("url") or "").strip(),
+                title=str(item.get("title") or "").strip(),
+                anchors=[str(a) for a in item.get("recommended_anchors", []) if str(a).strip()],
+                description=str(item.get("summary") or item.get("description") or "").strip(),
+                operator=str(item.get("operator") or _link_operator(item) or "").strip(),
+                always_include=bool(item.get("always_include")),
+            )
+
+        for item in self._read_source_items():
+            _merge_item(
+                url=str(item.get("url") or "").strip(),
+                title=str(item.get("title") or "").strip(),
+                anchors=[str(a) for a in item.get("recommended_anchors", []) if str(a).strip()],
+                description=str(item.get("summary") or item.get("description") or "").strip(),
+                operator=str(item.get("operator") or _link_operator(item) or "").strip(),
+                always_include=bool(item.get("always_include")),
+            )
+
+        for rec in REQUIRED_LINKS_BY_PROPERTY.get(self.property_key, []):
+            _merge_item(
+                url=str(rec.get("url") or "").strip(),
+                title=str(rec.get("title") or "").strip(),
+                anchors=[str(a) for a in rec.get("recommended_anchors", []) if str(a).strip()],
+                description=str(rec.get("description") or "").strip(),
+                operator=str(rec.get("operator") or _link_operator(rec) or "").strip(),
+                always_include=bool(rec.get("always_include")),
+            )
+
+        return list(by_url.values())
 
     def _always_include_links(self) -> list[InternalLinkSpec]:
         """Load operator-scoped links flagged for guaranteed insertion."""
@@ -683,6 +792,12 @@ def get_links_by_urls(urls: list[str] | None, property_key: str | None = None) -
     """Resolve a writer-selected list of internal links for a property."""
     store = get_links_store(property_key=property_key)
     return store.get_links_by_urls(urls)
+
+
+def get_picker_candidates(property_key: str | None = None) -> list[InternalLinkSpec]:
+    """Return broad picker candidates for the writer-facing interlinks tab."""
+    store = get_links_store(property_key=property_key)
+    return store.list_picker_candidates()
 
 
 def _prediction_market_safe_text(text: str) -> str:

@@ -42,7 +42,7 @@ from app.services.draft import (
     _trim_dangling_paragraph_endings,
     _trim_repeated_phrase_in_html,
 )
-from app.services.internal_links import InternalLinkSpec
+from app.services.internal_links import InternalLinkSpec, get_links_by_urls, get_picker_candidates
 
 
 def test_soften_repetitive_intro_opener_rewrites_put_the_to_work():
@@ -112,8 +112,27 @@ def test_align_selected_link_anchors_rewrites_wrong_anchor_text_to_recommended_a
             recommended_anchors=["top dfs sites", "best dfs apps"],
         )
     ]
-    cleaned = _align_selected_link_anchors(html, links)
+    cleaned = _align_selected_link_anchors(html, links, preferred_phrases=["top dfs sites"])
     assert '>top dfs sites<' in cleaned.lower()
+
+
+def test_get_links_by_urls_merges_required_anchors_for_matching_url():
+    links = get_links_by_urls(
+        ["https://www.fantasylabs.com/articles/top-dfs-sites/"],
+        property_key="fantasy_labs",
+    )
+    assert links
+    anchors = [anchor.lower() for anchor in links[0].recommended_anchors]
+    assert "best dfs apps" in anchors
+    assert "top dfs sites" in anchors
+
+
+def test_get_picker_candidates_exposes_broader_property_link_catalog():
+    links = get_picker_candidates(property_key="fantasy_labs")
+    urls = {str(link.url).rstrip("/").lower() for link in links if getattr(link, "url", None)}
+    assert len(urls) >= 6
+    assert "https://www.fantasylabs.com/articles/top-dfs-sites" in urls
+    assert "https://www.fantasylabs.com/articles/underdog-promo-code" in urls
 
 
 def test_enforce_secondary_keyword_mentions_repeats_keywords_without_terms_section_pollution():

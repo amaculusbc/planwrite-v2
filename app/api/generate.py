@@ -27,6 +27,8 @@ from app.services.compliance import validate_content as validate_content_svc
 from app.services.competitor_scraper import scrape_competitors
 from app.services.bam_offers import get_offer_by_id_bam
 from app.services.internal_links import (
+    get_operator_evergreen_link,
+    get_picker_candidates,
     get_required_links_for_property,
     suggest_links_for_section,
 )
@@ -678,15 +680,22 @@ async def list_link_options(
         property_key=property,
         brand=brand,
     )
+    operator_link = get_operator_evergreen_link(property_key=property, brand=brand)
     required = get_required_links_for_property(property_key=property)
+    picker_candidates = get_picker_candidates(property_key=property)
+
+    def _url_key(value: str | None) -> str:
+        clean = str(value or "").strip().lower()
+        return clean.rstrip("/") if clean.endswith("/") else clean
 
     links: list[dict] = []
     seen_urls: set[str] = set()
-    for link in [*suggested, *required]:
+    for link in [*( [operator_link] if operator_link else [] ), *suggested, *required, *picker_candidates]:
         url = str(link.url or "").strip()
-        if not url or url.lower() in seen_urls:
+        url_key = _url_key(url)
+        if not url_key or url_key in seen_urls:
             continue
-        seen_urls.add(url.lower())
+        seen_urls.add(url_key)
         links.append(link.to_dict())
         if len(links) >= safe_limit:
             break
