@@ -476,6 +476,7 @@ async def build_event_context(source_facts: dict) -> tuple[dict, str]:
             for item in players
             if item.get("id")
         ],
+        "venue_id": best.get("venueId"),
         "extra_context": {
             "purse": best.get("purse"),
             "cutline": best.get("cutline"),
@@ -540,7 +541,7 @@ def summarize_bc_core_context(
     editorial_points = expertise_context.get("editorial_points") or []
     if editorial_points:
         lines.append("BC CORE EXPERTISE NOTES:")
-        lines.extend(f"- {point}" for point in editorial_points[:5])
+        lines.extend(f"- {point}" for point in editorial_points[:8])
     elif expertise_context.get("reason"):
         lines.extend([
             "BC CORE EXPERTISE NOTES:",
