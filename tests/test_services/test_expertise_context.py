@@ -216,3 +216,60 @@ async def test_build_expertise_context_tolerates_missing_optional_enrichment(mon
     assert payload["weather"]["matched"] is False
     assert payload["trends"]["matched"] is False
     assert payload["teams"]["away"]["per_game"]["points_for"] == 25.0
+
+
+@pytest.mark.asyncio
+async def test_build_expertise_context_keeps_trends_when_review_fails(monkeypatch):
+    async def fake_fetch(path: str, *, params=None):
+        if path == "/nba/seasons/standings":
+            return {"results": []}
+        if path == "/nba/seasons/team/101/stats":
+            return {"result": {"teamStats": {"games": 10, "points": 1100}, "opponentStats": {"games": 10, "points": 1020}}}
+        if path == "/nba/seasons/team/202/stats":
+            return {"result": {"teamStats": {"games": 10, "points": 1070}, "opponentStats": {"games": 10, "points": 1045}}}
+        if path == "/basketball/2/injuries":
+            return {"results": []}
+        if path == "/basketball/2/weather":
+            return {"results": []}
+        if path == "/basketball/2/team/101/trends":
+            return {"results": [{"timeFrame": {"name": "Last10"}, "split": {"name": "Overall"}, "ats": {"wins": 7, "losses": 3, "ties": 0}, "ml": {"wins": 8, "losses": 2, "ties": 0}, "total": {"overs": 6, "unders": 4, "ties": 0}}]}
+        if path == "/basketball/2/team/202/trends":
+            return {"results": [{"timeFrame": {"name": "Last10"}, "split": {"name": "Overall"}, "ats": {"wins": 4, "losses": 6, "ties": 0}, "ml": {"wins": 4, "losses": 6, "ties": 0}, "total": {"overs": 5, "unders": 5, "ties": 0}}]}
+        if path == "/basketball/2/team/101/trends/opponent/202":
+            return {"results": [{"timeFrame": {"name": "Season"}, "split": {"name": "Overall"}, "ats": {"wins": 2, "losses": 1, "ties": 0}, "ml": {"wins": 2, "losses": 1, "ties": 0}, "total": {"overs": 2, "unders": 1, "ties": 0}}]}
+        if path == "/basketball/2/team/202/trends/opponent/101":
+            return {"results": [{"timeFrame": {"name": "Season"}, "split": {"name": "Overall"}, "ats": {"wins": 1, "losses": 2, "ties": 0}, "ml": {"wins": 1, "losses": 2, "ties": 0}, "total": {"overs": 1, "unders": 2, "ties": 0}}]}
+        if path in {"/basketball/2/team/101/season/review", "/basketball/2/team/202/season/review"}:
+            raise RuntimeError("bc core review 500")
+        raise AssertionError(f"Unexpected BC Core path: {path}")
+
+    monkeypatch.setattr(expertise_context, "fetch_bc_core_json", fake_fetch)
+    monkeypatch.setattr(expertise_context, "get_bc_core_base_url", lambda: "https://core.example")
+
+    payload, reason = await expertise_context.build_expertise_context(
+        {},
+        {
+            "bc_core_event": {
+                "matched": True,
+                "sport": "nba",
+                "league_id": 2,
+                "event_id": 77,
+                "event_name": "Boston Celtics at Miami Heat",
+                "away_team_id": 101,
+                "away_team": "Boston Celtics",
+                "home_team_id": 202,
+                "home_team": "Miami Heat",
+                "season_year": 2026,
+                "season_type": "Reg",
+                "source_urls": ["https://core.example/nba/events"],
+            },
+            "source_urls": ["https://core.example/nba/events"],
+        },
+    )
+
+    assert reason == ""
+    assert payload["matched"] is True
+    assert payload["trends"]["matched"] is True
+    assert payload["trends"]["teams"]["away"]["last10_overall"]["ats"] == "7-3"
+    assert payload["trends"]["teams"]["away"]["season_review"]["games"] == []
+    assert any("7-3 ATS" in point for point in payload["editorial_points"])

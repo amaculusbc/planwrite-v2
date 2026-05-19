@@ -372,19 +372,30 @@ async def _fetch_team_trend_summary(
         fetch_bc_core_json(trend_path, params=trend_params),
         fetch_bc_core_json(opponent_trend_path, params=opponent_params),
         fetch_bc_core_json(review_path, params=review_params),
+        return_exceptions=True,
     )
-
-    team_trend = _summarize_trend_record(_pick_trend_record(trend_payload.get("results", []) or [], time_frame="Last10", split="Overall"))
-    opponent_trend = _summarize_trend_record(
-        _pick_trend_record(opponent_trend_payload.get("results", []) or [], time_frame="Season", split="Overall")
-    )
-    season_review = _summarize_season_review(team_id, team_name, review_payload.get("results", []) or [])
+    team_trend = {}
+    opponent_trend = {}
+    season_review = {"team_name": team_name, "games": []}
+    matched = False
+    if not isinstance(trend_payload, Exception):
+        team_trend = _summarize_trend_record(
+            _pick_trend_record(trend_payload.get("results", []) or [], time_frame="Last10", split="Overall")
+        )
+        matched = matched or bool(team_trend.get("ats") or team_trend.get("ml") or team_trend.get("total"))
+    if not isinstance(opponent_trend_payload, Exception):
+        opponent_trend = _summarize_trend_record(
+            _pick_trend_record(opponent_trend_payload.get("results", []) or [], time_frame="Season", split="Overall")
+        )
+        matched = matched or bool(opponent_trend.get("ats") or opponent_trend.get("ml") or opponent_trend.get("total"))
+    if not isinstance(review_payload, Exception):
+        season_review = _summarize_season_review(team_id, team_name, review_payload.get("results", []) or [])
     editorial_points = _trend_editorial_points(team_name, team_trend, opponent_trend, opponent_name)
     review_point = _season_review_editorial_point(season_review)
     if review_point:
         editorial_points.append(review_point)
     return {
-        "matched": True,
+        "matched": matched,
         "team_name": team_name,
         "last10_overall": team_trend,
         "opponent_trend": opponent_trend,
