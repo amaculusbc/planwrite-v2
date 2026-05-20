@@ -12,7 +12,8 @@ from app.config import get_settings
 settings = get_settings()
 _shared_client: httpx.AsyncClient | None = None
 
-DEFAULT_BC_CORE_BASE_URL = "https://core-external-api.actionnetwork.com"
+PUBLIC_BC_CORE_BASE_URL = "https://core-platform-api.actionnetwork.com"
+LEGACY_BC_CORE_BASE_URL = "https://core-external-api.actionnetwork.com"
 
 SPORT_ENDPOINTS = {
     "nba": "/nba/events",
@@ -39,8 +40,25 @@ SPORT_LEAGUE_IDS = {
 }
 
 
+def _configured_bc_core_base_url() -> str:
+    return str(settings.bc_core_base_url or "").strip().rstrip("/")
+
+
+def _using_public_bc_core_api() -> bool:
+    api_key = str(settings.bc_core_api_key or "").strip()
+    configured = _configured_bc_core_base_url().lower()
+    if "core-platform-api.actionnetwork.com" in configured:
+        return True
+    return bool(api_key)
+
+
 def _base_url() -> str:
-    return (settings.bc_core_base_url or DEFAULT_BC_CORE_BASE_URL).rstrip("/")
+    configured = _configured_bc_core_base_url()
+    if _using_public_bc_core_api():
+        if configured and "core-platform-api.actionnetwork.com" in configured.lower():
+            return configured
+        return PUBLIC_BC_CORE_BASE_URL
+    return configured or LEGACY_BC_CORE_BASE_URL
 
 
 def get_bc_core_base_url() -> str:
@@ -53,7 +71,7 @@ def _headers() -> dict[str, str]:
     proxy_bearer = (settings.bc_core_proxy_bearer or "").strip()
     if api_key:
         headers["x-api-key"] = api_key
-    if proxy_bearer:
+    if proxy_bearer and not _using_public_bc_core_api():
         headers["authorization"] = f"Bearer {proxy_bearer}"
     return headers
 
@@ -128,7 +146,7 @@ def _get_shared_client() -> httpx.AsyncClient:
         "limits": httpx.Limits(max_connections=20, max_keepalive_connections=10, keepalive_expiry=120.0),
     }
     socks_proxy = (settings.bc_core_socks_proxy or "").strip()
-    if socks_proxy:
+    if socks_proxy and not _using_public_bc_core_api():
         client_kwargs["proxy"] = socks_proxy
     _shared_client = httpx.AsyncClient(**client_kwargs)
     return _shared_client
@@ -164,7 +182,11 @@ async def fetch_bc_core_json(path: str, *, params: dict | None = None) -> dict:
 
 
 def bc_core_configured() -> bool:
-    return bool(settings.bc_core_base_url or settings.bc_core_api_key)
+    configured = _configured_bc_core_base_url()
+    api_key = str(settings.bc_core_api_key or "").strip()
+    if _using_public_bc_core_api():
+        return bool(api_key)
+    return bool(configured)
 
 
 def _pick_best_sportsbook(candidates: list[dict], requested_state: str) -> dict | None:

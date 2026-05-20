@@ -1,7 +1,10 @@
 # Hetzner / Tailscale Tunnel
 
 This repo's Railway image can bootstrap a Tailscale userspace tunnel at startup.
-The current production pattern is:
+That tunnel path is now optional and legacy-oriented. The preferred BC Core path
+is the public API domain `https://core-platform-api.actionnetwork.com` with `BC_CORE_API_KEY`.
+
+If you intentionally use the Hetzner/Tailscale route, the pattern is:
 
 - Railway app container joins the tailnet with `TS_AUTHKEY`
 - `tailscaled` exposes a local SOCKS5 proxy at `127.0.0.1:1055`

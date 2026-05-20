@@ -118,13 +118,14 @@ docker run -p 8000:8000 --env-file .env planwrite-v2
 
 1. Connect your GitHub repository
 2. Set environment variables in dashboard
-3. If BC Core traffic should route through the Hetzner-hosted tunnel, set `TS_AUTHKEY`, `TS_HOSTNAME`, `BC_CORE_BASE_URL`, and `BC_CORE_SOCKS_PROXY`
+3. Set `BC_CORE_API_KEY` to use the public BC Core API directly at `https://core-platform-api.actionnetwork.com`
+4. Only set `TS_AUTHKEY`, `TS_HOSTNAME`, `BC_CORE_BASE_URL`, and `BC_CORE_SOCKS_PROXY` if you intentionally want the legacy Hetzner/Tailscale tunnel path
 
 ### Tailscale / Hetzner Tunnel
 
-Production currently uses a Tailscale userspace SOCKS5 tunnel inside the Railway
-container so BC Core traffic can route through the Hetzner-hosted proxy node
-without tunneling BAM, ESPN, or OpenAI traffic.
+The preferred BC Core path is now the public API domain with `BC_CORE_API_KEY`.
+The Tailscale/Hetzner tunnel remains available only as a legacy fallback when
+you explicitly want BC Core traffic to route through the Hetzner-hosted proxy node.
 
 - `railway-entrypoint.sh` boots `tailscaled` in userspace mode
 - the local SOCKS5 listener is `127.0.0.1:1055`

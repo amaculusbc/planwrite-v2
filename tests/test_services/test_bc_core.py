@@ -3,6 +3,21 @@ import pytest
 from app.services import bc_core
 
 
+def test_bc_core_prefers_public_domain_when_api_key_is_present(monkeypatch):
+    monkeypatch.setattr(bc_core.settings, "bc_core_api_key", "test-key")
+    monkeypatch.setattr(bc_core.settings, "bc_core_base_url", "http://bc-proxy.tailnet:8500")
+    assert bc_core.get_bc_core_base_url() == "https://core-platform-api.actionnetwork.com"
+
+
+def test_bc_core_public_mode_ignores_proxy_bearer(monkeypatch):
+    monkeypatch.setattr(bc_core.settings, "bc_core_api_key", "test-key")
+    monkeypatch.setattr(bc_core.settings, "bc_core_base_url", "")
+    monkeypatch.setattr(bc_core.settings, "bc_core_proxy_bearer", "secret")
+    headers = bc_core._headers()
+    assert headers["x-api-key"] == "test-key"
+    assert "authorization" not in headers
+
+
 def test_compact_normalize_handles_spacing_and_punctuation():
     assert bc_core._compact_normalize("Bet MGM") == "betmgm"
     assert bc_core._compact_normalize("FanDuel Sportsbook") == "fanduelsportsbook"
