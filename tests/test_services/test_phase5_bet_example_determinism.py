@@ -96,3 +96,64 @@ async def test_generate_body_section_claim_uses_ai_prompt_with_exact_bet_mechani
     assert "$170.00" in content
     assert "$270.00" in content
     assert "[another pick]" not in content
+
+
+@pytest.mark.asyncio
+async def test_generate_body_section_surfaces_bc_core_fact_when_initial_copy_ignores_it(monkeypatch):
+    prompts: list[str] = []
+
+    async def _fake_query_articles(*args, **kwargs):
+        return []
+
+    async def _fake_suggest_links(*args, **kwargs):
+        return []
+
+    async def _fake_generate_completion(*, prompt, system_prompt, temperature, max_tokens):
+        prompts.append(prompt)
+        if len(prompts) == 1:
+            return "<p>This offer gives you a straightforward way to get extra value on the game.</p><p>Use the promo and keep the first wager simple.</p>"
+        return "<p>This offer gives you a straightforward way to get extra value on the game.</p><p>San Antonio has gone 8-2 against the spread over the last 10 games, which gives the matchup a sharper angle than a generic promo article would have.</p>"
+
+    monkeypatch.setattr(draft_mod, "query_articles", _fake_query_articles)
+    monkeypatch.setattr(draft_mod, "suggest_links_for_section", _fake_suggest_links)
+    monkeypatch.setattr(draft_mod, "generate_completion", _fake_generate_completion)
+
+    content = await _generate_body_section(
+        section_title="Why bet365 bonus code is worth a look for Spurs vs. Thunder",
+        level="h2",
+        keyword="bet365 bonus code",
+        offer={
+            "brand": "bet365",
+            "offer_text": "Bet $10, Get $200 in Bonus Bets Win or Lose!",
+            "bonus_code": "TOPACTION",
+            "terms": "",
+        },
+        all_offers=None,
+        state="NJ",
+        offer_property="action_network",
+        talking_points=[],
+        avoid=[],
+        previous_content="",
+        current_keyword_count=1,
+        target_keyword_total=6,
+        event_context="Featured game: San Antonio Spurs vs Oklahoma City Thunder. Game time: Wednesday, May 20, 2026 at 8:30 PM ET. Network: NBC/Peacock.",
+        prediction_market=False,
+        dfs_mode=False,
+        bc_core_context={
+            "event": {"matched": True, "network": "NBC/Peacock", "season_name": "2025-26", "schedule_name": "Playoffs"},
+            "expertise": {
+                "matched": True,
+                "editorial_points": [
+                    "San Antonio Spurs is 8-2 ATS in BC Core's Last10 Overall trend sample.",
+                    "San Antonio Spurs averaged 117.33 points per game with a +13.83 scoring margin.",
+                ],
+            },
+        },
+    )
+
+    assert len(prompts) == 2
+    assert "INTERNAL EXPERTISE NOTES" in prompts[0]
+    assert "San Antonio Spurs has gone 8-2 against the spread over the last 10 games." in prompts[0]
+    assert "MANDATORY CORRECTION" in prompts[1]
+    assert "8-2 against the spread" in content
+    assert "BC Core" not in content

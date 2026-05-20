@@ -70,6 +70,124 @@ def _count_keyword(text: str, keyword: str) -> int:
     return len(pattern.findall(text))
 
 
+def _naturalize_bc_core_editorial_point(point: str) -> str:
+    """Rewrite internal BC Core notes into reader-facing editorial language."""
+    text = str(point or "").strip()
+    if not text:
+        return ""
+    text = re.sub(r"\bBC Core\b", "", text, flags=re.IGNORECASE).strip()
+    text = re.sub(r"\s{2,}", " ", text)
+    text = re.sub(
+        r"^(?P<team>.+?) is (?P<record>\d+-\d+) ATS in .*?(?:Last10|last 10).*?trend sample\.$",
+        lambda m: f"{m.group('team')} has gone {m.group('record')} against the spread over the last 10 games.",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(
+        r"^(?P<team>.+?) is (?P<record>\d+-\d+) straight up in .*?trend sample\.$",
+        lambda m: f"{m.group('team')} is {m.group('record')} straight up in the recent sample.",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(
+        r"^In .*?matchup trend sample against (?P<opp>.+?), (?P<team>.+?) is (?P<record>\d+-\d+) ATS\.$",
+        lambda m: f"Against {m.group('opp')}, {m.group('team')} is {m.group('record')} against the spread in the matchup sample.",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(
+        r"^In .*?matchup trend sample against (?P<opp>.+?), (?P<team>.+?) is (?P<record>\d+-\d+) straight up\.$",
+        lambda m: f"Against {m.group('opp')}, {m.group('team')} is {m.group('record')} straight up in the matchup sample.",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(
+        r"has (?P<count>\d+) active .*?injury listings",
+        lambda m: f"has {m.group('count')} active injury listings",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(r"\s*weather at the venue points to\s*", " Weather context points to ", text, flags=re.IGNORECASE)
+    text = text.replace("FromRight", "from right field").replace("FromLeft", "from left field")
+    text = re.sub(r"\btrend sample\b", "recent sample", text, flags=re.IGNORECASE)
+    text = re.sub(r"\boverall sample\b", "recent sample", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s{2,}", " ", text).strip()
+    if text and not text.endswith("."):
+        text += "."
+    return text
+
+
+def _select_bc_core_editorial_points(
+    bc_core_context: dict[str, Any] | None,
+    *,
+    section_kind: str,
+    max_points: int = 3,
+) -> list[str]:
+    """Pick a few BC-backed editorial notes to surface in copy."""
+    bc_core_context = bc_core_context or {}
+    expertise = bc_core_context.get("expertise") if isinstance(bc_core_context, dict) else {}
+    event = bc_core_context.get("event") if isinstance(bc_core_context, dict) else {}
+    if not isinstance(expertise, dict) or not expertise.get("matched"):
+        return []
+
+    raw_points = [_naturalize_bc_core_editorial_point(point) for point in (expertise.get("editorial_points") or [])]
+    points = [point for point in raw_points if point]
+    if isinstance(event, dict) and event.get("matched"):
+        if event.get("network"):
+            points.insert(0, f"The matchup is set for {event.get('network')}.")
+        season_name = str(event.get("season_name") or "").strip()
+        schedule_name = str(event.get("schedule_name") or "").strip()
+        if season_name or schedule_name:
+            label = " ".join(part for part in [season_name, schedule_name] if part).strip()
+            if label:
+                points.insert(0, f"This spot falls in the {label} window.")
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for point in points:
+        normalized = re.sub(r"\s+", " ", point.lower()).strip()
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            deduped.append(point)
+
+    if section_kind == "claim":
+        return deduped[:1]
+    if section_kind == "intro":
+        return deduped[:2]
+    return deduped[:max_points]
+
+
+def _bc_core_marker_present(text: str, points: list[str]) -> bool:
+    """Return True when visible copy includes a concrete BC-backed stat/trend marker."""
+    haystack = str(text or "").lower()
+    if not haystack or not points:
+        return False
+    markers: set[str] = set()
+    for point in points:
+        for marker in re.findall(r"\b\d+(?:\.\d+)?(?:-\d+)?%?\b", point):
+            markers.add(marker.lower())
+        for marker in re.findall(r"\b(?:playoffs?|nbc|espn|peacock|record|straight up|against the spread|injury|weather)\b", point, flags=re.IGNORECASE):
+            markers.add(marker.lower())
+    return any(marker in haystack for marker in markers if marker)
+
+
+def _inject_bc_core_point_into_html(html: str, point: str) -> str:
+    """Guarantee one natural BC-backed sentence appears in visible copy."""
+    point = _naturalize_bc_core_editorial_point(point)
+    if not point:
+        return html
+    paragraphs = re.findall(r"<p>.*?</p>", html, flags=re.IGNORECASE | re.DOTALL)
+    if len(paragraphs) >= 2:
+        target = paragraphs[1]
+        updated = re.sub(r"</p>\s*$", f" {point}</p>", target, count=1, flags=re.IGNORECASE)
+        return html.replace(target, updated, 1)
+    if paragraphs:
+        target = paragraphs[0]
+        updated = re.sub(r"</p>\s*$", f" {point}</p>", target, count=1, flags=re.IGNORECASE)
+        return html.replace(target, updated, 1)
+    return f"<p>{point}</p>{html}"
+
+
 def _normalize_article_preferences(article_preferences: dict[str, Any] | None = None) -> dict[str, Any]:
     """Normalize writer-controlled preferences used during draft generation."""
     prefs = dict(article_preferences or {})
@@ -2896,6 +3014,7 @@ async def generate_draft_from_outline(
     output_format: str = "html",
     variation_key: str = "",
     article_preferences: dict[str, Any] | None = None,
+    bc_core_context: dict[str, Any] | None = None,
 ) -> str:
     """Generate full article draft from structured outline (Execute stage).
 
@@ -2981,6 +3100,7 @@ async def generate_draft_from_outline(
                 dfs_mode=is_dfs_mode,
                 variation_key=variation_key,
                 article_preferences=prefs,
+                bc_core_context=bc_core_context,
             )
             parts.append(content)
             previous_content += content
@@ -3026,6 +3146,7 @@ async def generate_draft_from_outline(
                 variation_key=variation_key,
                 article_preferences=prefs,
                 preferred_links=preferred_links,
+                bc_core_context=bc_core_context,
             )
             tag = "h2" if level == "h2" else "h3"
             parts.append(f"<{tag}>{section_title}</{tag}>")
@@ -3110,6 +3231,7 @@ async def _generate_intro_section(
     dfs_mode: bool = False,
     variation_key: str = "",
     article_preferences: dict[str, Any] | None = None,
+    bc_core_context: dict[str, Any] | None = None,
 ) -> str:
     """Generate the intro/lede section.
 
@@ -3171,6 +3293,11 @@ async def _generate_intro_section(
         section_kind="intro",
         prediction_market=prediction_market,
         dfs_mode=dfs_mode,
+    )
+    bc_core_points = (
+        _select_bc_core_editorial_points(bc_core_context, section_kind="intro", max_points=2)
+        if not prediction_market and not dfs_mode
+        else []
     )
 
     system_prompt = (
@@ -3251,6 +3378,10 @@ Output clean HTML only - use <p>, <a>, <strong> tags. No markdown. No exclamatio
         "Do not default to filler like 'see full terms' unless a missing detail must be acknowledged.",
         "The intro should feel fresh on each run: keep the facts fixed, but vary phrasing and sentence openings naturally.",
     ])
+    if bc_core_points:
+        requirements.append(
+            "Naturally work in at least one concrete matchup/stat/trend note from the internal context block below. Do not mention BC Core or call it a trend sample."
+        )
     if prefs["enforce_active_voice"]:
         requirements.append("Use active voice. Avoid passive phrasing like 'is offered' or 'is highlighted' when a direct verb works.")
     requirements_md = "\n".join(f"- {r}" for r in requirements)
@@ -3296,6 +3427,7 @@ DATE (include this): {date_str}
 {f"- Age Summary: {age_summary}" if age_summary else ""}
 
 {f"MULTI-OFFER SOURCE OF TRUTH (use correct brand/code pairings):{chr(10)}{multi_offer_context}{chr(10)}" if has_multiple_offers else ""}
+{f"INTERNAL MATCHUP NOTES (use at least one naturally, but never cite the source):{chr(10)}" + chr(10).join(f"- {point}" for point in bc_core_points) + chr(10) if bc_core_points else ""}
 
 KEYWORD: {keyword}
 {f"SECONDARY KEYWORDS (use these naturally across the article and aim for repeated coverage, not stuffing):{chr(10)}{secondary_keywords_md}" if secondary_keywords_md else ""}
@@ -3334,7 +3466,32 @@ Write TWO <p> tags now (HTML only, no markdown):"""
     result = _polish_intro_section_prose(result)
     result = _remove_irrelevant_excluded_state_mentions(result, state)
     result = _remove_irrelevant_single_state_exclusion_phrases(result, state)
-    return _resolve_intro_age_conflicts(result, age_summary)
+    result = _resolve_intro_age_conflicts(result, age_summary)
+    if bc_core_points and not _bc_core_marker_present(result, bc_core_points):
+        retry_prompt = (
+            user_prompt
+            + "\n\nMANDATORY CORRECTION:\n"
+            + "The intro must use at least one concrete matchup/stat/trend detail from the internal matchup notes.\n"
+            + "Do not mention BC Core or say 'trend sample'."
+        )
+        result = await generate_completion(
+            prompt=retry_prompt,
+            system_prompt=system_prompt,
+            temperature=max(0.2, min(get_temperature_by_section("intro"), 0.5)),
+            max_tokens=500,
+        )
+        result = result.strip()
+        if not result.startswith("<p>"):
+            result = f"<p>{result}</p>"
+        result = _ensure_two_paragraphs(result, brand, offer_text, has_code, code_strong, states_text)
+        result = _ensure_intro_state_specificity(result, states_text)
+        result = _polish_intro_section_prose(result)
+        result = _remove_irrelevant_excluded_state_mentions(result, state)
+        result = _remove_irrelevant_single_state_exclusion_phrases(result, state)
+        result = _resolve_intro_age_conflicts(result, age_summary)
+        if not _bc_core_marker_present(result, bc_core_points):
+            result = _inject_bc_core_point_into_html(result, bc_core_points[0])
+    return result
 
 
 async def _generate_body_section(
@@ -3358,6 +3515,7 @@ async def _generate_body_section(
     variation_key: str = "",
     article_preferences: dict[str, Any] | None = None,
     preferred_links: list[Any] | None = None,
+    bc_core_context: dict[str, Any] | None = None,
 ) -> str:
     """Generate a body section (H2 or H3)."""
     prompt_offers = [o for o in (all_offers or []) if o] or ([offer] if offer else [])
@@ -3534,6 +3692,11 @@ async def _generate_body_section(
         section_kind=section_kind,
         prediction_market=prediction_market,
         dfs_mode=dfs_mode,
+    )
+    bc_core_points = (
+        _select_bc_core_editorial_points(bc_core_context, section_kind=section_kind, max_points=3)
+        if not prediction_market and not dfs_mode and not is_terms and not is_numbered_list and not is_daily_promos
+        else []
     )
 
     reference_mechanics = ""
@@ -3737,6 +3900,7 @@ RULE: If a detail is not provided, omit it instead of guessing. Use "Full operat
 {event_label + chr(10) + event_context + chr(10) if event_context else ""}
 {f"EXACT MECHANICS REFERENCE (facts only; rewrite from scratch and do not mirror the sentence structure):{chr(10)}{reference_mechanics}{chr(10)}" if reference_mechanics else ""}
 {f"EXACT CLAIM FACTS (mandatory for this section):{chr(10)}{chr(10).join(exact_claim_lines)}{chr(10)}" if exact_claim_lines else ""}
+{f"INTERNAL EXPERTISE NOTES (use at least one naturally if relevant, but never cite the source):{chr(10)}" + chr(10).join(f"- {point}" for point in bc_core_points) + chr(10) if bc_core_points else ""}
 
 OFFER CONTEXT:
 - Brand: {brand}
@@ -3794,6 +3958,7 @@ SECTION-SPECIFIC GUARDRAILS:
 - Keep any worked example tied to the exact event context or worked-example data provided above.
 - For worked-example sections, use the exact mechanics and numbers from the reference blocks above, but write the prose in fresh language.
 - For worked-example sections, the exact claim facts block is mandatory. Do not change those numbers or swap in a different first amount.
+- If internal expertise notes are present, work at least one of them into the body naturally. Never mention BC Core or call anything a trend sample.
 - The article should feel new on each run. Keep the structure tight, but vary the phrasing and sentence openings naturally.
 
 DO NOT add responsible gaming disclaimers in this section (handled at the end).
@@ -3849,6 +4014,26 @@ Write the section now (HTML only, no heading, no markdown):"""
         result = f"<p>{result}</p>"
     if not is_eligibility:
         result = _polish_body_section_prose(result)
+    if bc_core_points and not _bc_core_marker_present(result, bc_core_points):
+        retry_prompt = (
+            user_prompt
+            + "\n\nMANDATORY CORRECTION:\n"
+            + "The section must use at least one concrete stat, trend, injury, weather, or schedule detail from the internal expertise notes.\n"
+            + "Do not mention BC Core or use the phrase 'trend sample'."
+        )
+        result = await generate_completion(
+            prompt=retry_prompt,
+            system_prompt=system_prompt,
+            temperature=max(0.2, min(section_temperature, 0.5)),
+            max_tokens=800,
+        )
+        result = result.strip()
+        if not result.startswith("<p>"):
+            result = f"<p>{result}</p>"
+        if not is_eligibility:
+            result = _polish_body_section_prose(result)
+        if not _bc_core_marker_present(result, bc_core_points):
+            result = _inject_bc_core_point_into_html(result, bc_core_points[0])
     return result
 
 def _render_html_offer_block(offer: dict, switchboard_url: str) -> str:
@@ -3896,6 +4081,7 @@ async def generate_draft_from_outline_streaming(
     output_format: str = "html",
     variation_key: str = "",
     article_preferences: dict[str, Any] | None = None,
+    bc_core_context: dict[str, Any] | None = None,
 ) -> AsyncGenerator[dict, None]:
     """Generate draft with streaming updates.
 
@@ -3968,6 +4154,7 @@ async def generate_draft_from_outline_streaming(
                 dfs_mode=is_dfs_mode,
                 variation_key=variation_key,
                 article_preferences=prefs,
+                bc_core_context=bc_core_context,
             )
             parts.append(content)
             previous_content += content
@@ -4013,6 +4200,7 @@ async def generate_draft_from_outline_streaming(
                 variation_key=variation_key,
                 article_preferences=prefs,
                 preferred_links=preferred_links,
+                bc_core_context=bc_core_context,
             )
             tag = "h2" if level == "h2" else "h3"
             heading = f"<{tag}>{section_title}</{tag}>"

@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sess
 
 from app.main import app, settings as app_settings
 from app.database import Base, get_db
+from app import models as _app_models  # noqa: F401
 from app.services import usage_tracking
 
 

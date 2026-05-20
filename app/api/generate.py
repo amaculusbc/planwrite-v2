@@ -374,6 +374,7 @@ async def _stream_draft(request: DraftRequest, db: AsyncSession) -> AsyncGenerat
             bet_example_data=bet_example_data,
             output_format="markdown",
             article_preferences=prefs,
+            bc_core_context=source_facts.get("bc_core"),
         ):
             yield f"data: {json.dumps(update)}\n\n"
     except Exception as e:
@@ -594,6 +595,7 @@ async def generate_draft_sync(
         bet_example_data=bet_example_data,
         output_format="html",
         article_preferences=prefs,
+        bc_core_context=source_facts.get("bc_core"),
     )
     artifact_run.write_stage(
         "draft",

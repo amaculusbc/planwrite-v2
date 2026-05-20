@@ -230,7 +230,7 @@ async def test_draft_and_validate_append_to_same_run(client, monkeypatch, tmp_pa
 
 @pytest.mark.asyncio
 async def test_draft_sync_includes_bc_core_context_for_any_property(client, monkeypatch, tmp_path):
-    captured: dict[str, str] = {}
+    captured: dict[str, object] = {}
 
     async def fake_offer(*args, **kwargs):
         return {
@@ -244,6 +244,7 @@ async def test_draft_sync_includes_bc_core_context_for_any_property(client, monk
 
     async def fake_draft(**kwargs):
         captured["event_context"] = kwargs.get("event_context", "")
+        captured["bc_core_context"] = kwargs.get("bc_core_context")
         return "<h1>Novig promo code: Celtics vs. Spurs</h1><p>States Available: NJ, PA.</p>"
 
     async def fake_operator_context(source_facts):
@@ -306,3 +307,5 @@ async def test_draft_sync_includes_bc_core_context_for_any_property(client, monk
     assert "BC CORE OPERATOR CONTEXT:" in captured["event_context"]
     assert "BC CORE EVENT CONTEXT:" in captured["event_context"]
     assert "BC CORE EXPERTISE NOTES:" in captured["event_context"]
+    assert isinstance(captured["bc_core_context"], dict)
+    assert captured["bc_core_context"]["expertise"]["matched"] is True
