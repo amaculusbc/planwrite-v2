@@ -117,6 +117,51 @@ def _naturalize_bc_core_editorial_point(point: str) -> str:
     return text
 
 
+def _bc_core_point_category(point: str) -> str:
+    """Classify an editorial point so surfaced facts vary in type."""
+    text = str(point or "").lower()
+    if any(token in text for token in ["weather", "degrees", "wind", "precipitation", "cloudy", "rain"]):
+        return "weather"
+    if "injury" in text:
+        return "injury"
+    if any(token in text for token in ["against the spread", "straight up", "ats", "last 10", "recent sample", "matchup sample"]):
+        return "trend"
+    if any(token in text for token in ["points per game", "scoring margin", "rebounds", "assists", "true shooting", "efg"]):
+        return "stat"
+    if any(token in text for token in ["playoffs", "season", "window", "network", "nbc", "espn", "peacock"]):
+        return "schedule"
+    return "general"
+
+
+def _prioritize_bc_core_points(points: list[str], max_points: int) -> list[str]:
+    """Prefer a spread of categories before taking extra same-type notes."""
+    category_priority = {
+        "trend": 0,
+        "weather": 1,
+        "stat": 2,
+        "injury": 3,
+        "schedule": 4,
+        "general": 5,
+    }
+    ordered_points = sorted(points, key=lambda point: category_priority.get(_bc_core_point_category(point), 99))
+    chosen: list[str] = []
+    used_categories: set[str] = set()
+    for point in ordered_points:
+        category = _bc_core_point_category(point)
+        if category not in used_categories:
+            chosen.append(point)
+            used_categories.add(category)
+        if len(chosen) >= max_points:
+            return chosen
+    for point in ordered_points:
+        if point in chosen:
+            continue
+        chosen.append(point)
+        if len(chosen) >= max_points:
+            break
+    return chosen
+
+
 def _select_bc_core_editorial_points(
     bc_core_context: dict[str, Any] | None,
     *,
@@ -151,41 +196,48 @@ def _select_bc_core_editorial_points(
             deduped.append(point)
 
     if section_kind == "claim":
-        return deduped[:1]
+        return _prioritize_bc_core_points(deduped, 1)
     if section_kind == "intro":
-        return deduped[:2]
-    return deduped[:max_points]
+        return _prioritize_bc_core_points(deduped, min(max_points, 2))
+    return _prioritize_bc_core_points(deduped, max_points)
 
 
-def _bc_core_marker_present(text: str, points: list[str]) -> bool:
-    """Return True when visible copy includes a concrete BC-backed stat/trend marker."""
+def _bc_core_marker_coverage(text: str, points: list[str]) -> int:
+    """Count how many selected BC-backed notes appear in visible copy."""
     haystack = str(text or "").lower()
     if not haystack or not points:
-        return False
-    markers: set[str] = set()
+        return 0
+    coverage = 0
     for point in points:
+        matched = False
         for marker in re.findall(r"\b\d+(?:\.\d+)?(?:-\d+)?%?\b", point):
-            markers.add(marker.lower())
+            if marker.lower() in haystack:
+                matched = True
         for marker in re.findall(r"\b(?:playoffs?|nbc|espn|peacock|record|straight up|against the spread|injury|weather)\b", point, flags=re.IGNORECASE):
-            markers.add(marker.lower())
-    return any(marker in haystack for marker in markers if marker)
+            if marker.lower() in haystack:
+                matched = True
+        if matched:
+            coverage += 1
+    return coverage
 
 
-def _inject_bc_core_point_into_html(html: str, point: str) -> str:
-    """Guarantee one natural BC-backed sentence appears in visible copy."""
-    point = _naturalize_bc_core_editorial_point(point)
-    if not point:
+def _inject_bc_core_points_into_html(html: str, points: list[str], *, max_injections: int = 2) -> str:
+    """Guarantee one or more natural BC-backed sentences appear in visible copy."""
+    cleaned_points = [_naturalize_bc_core_editorial_point(point) for point in points if _naturalize_bc_core_editorial_point(point)]
+    cleaned_points = cleaned_points[:max_injections]
+    if not cleaned_points:
         return html
     paragraphs = re.findall(r"<p>.*?</p>", html, flags=re.IGNORECASE | re.DOTALL)
+    injection = " ".join(cleaned_points)
     if len(paragraphs) >= 2:
         target = paragraphs[1]
-        updated = re.sub(r"</p>\s*$", f" {point}</p>", target, count=1, flags=re.IGNORECASE)
+        updated = re.sub(r"</p>\s*$", f" {injection}</p>", target, count=1, flags=re.IGNORECASE)
         return html.replace(target, updated, 1)
     if paragraphs:
         target = paragraphs[0]
-        updated = re.sub(r"</p>\s*$", f" {point}</p>", target, count=1, flags=re.IGNORECASE)
+        updated = re.sub(r"</p>\s*$", f" {injection}</p>", target, count=1, flags=re.IGNORECASE)
         return html.replace(target, updated, 1)
-    return f"<p>{point}</p>{html}"
+    return f"<p>{injection}</p>{html}"
 
 
 def _normalize_article_preferences(article_preferences: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -3299,6 +3351,7 @@ async def _generate_intro_section(
         if not prediction_market and not dfs_mode
         else []
     )
+    bc_core_required_count = 2 if len(bc_core_points) >= 2 else 1 if bc_core_points else 0
 
     system_prompt = (
         """You are a PUNCHY prediction-market writer for Action Network.
@@ -3380,7 +3433,7 @@ Output clean HTML only - use <p>, <a>, <strong> tags. No markdown. No exclamatio
     ])
     if bc_core_points:
         requirements.append(
-            "Naturally work in at least one concrete matchup/stat/trend note from the internal context block below. Do not mention BC Core or call it a trend sample."
+            f"Naturally work in at least {bc_core_required_count} concrete matchup/stat/trend note{'s' if bc_core_required_count != 1 else ''} from the internal context block below. Do not mention BC Core or call it a trend sample."
         )
     if prefs["enforce_active_voice"]:
         requirements.append("Use active voice. Avoid passive phrasing like 'is offered' or 'is highlighted' when a direct verb works.")
@@ -3427,7 +3480,7 @@ DATE (include this): {date_str}
 {f"- Age Summary: {age_summary}" if age_summary else ""}
 
 {f"MULTI-OFFER SOURCE OF TRUTH (use correct brand/code pairings):{chr(10)}{multi_offer_context}{chr(10)}" if has_multiple_offers else ""}
-{f"INTERNAL MATCHUP NOTES (use at least one naturally, but never cite the source):{chr(10)}" + chr(10).join(f"- {point}" for point in bc_core_points) + chr(10) if bc_core_points else ""}
+{f"INTERNAL MATCHUP NOTES (use at least {bc_core_required_count} naturally if available, but never cite the source):{chr(10)}" + chr(10).join(f"- {point}" for point in bc_core_points) + chr(10) if bc_core_points else ""}
 
 KEYWORD: {keyword}
 {f"SECONDARY KEYWORDS (use these naturally across the article and aim for repeated coverage, not stuffing):{chr(10)}{secondary_keywords_md}" if secondary_keywords_md else ""}
@@ -3467,11 +3520,13 @@ Write TWO <p> tags now (HTML only, no markdown):"""
     result = _remove_irrelevant_excluded_state_mentions(result, state)
     result = _remove_irrelevant_single_state_exclusion_phrases(result, state)
     result = _resolve_intro_age_conflicts(result, age_summary)
-    if bc_core_points and not _bc_core_marker_present(result, bc_core_points):
+    if bc_core_points and _bc_core_marker_coverage(result, bc_core_points) < bc_core_required_count:
         retry_prompt = (
             user_prompt
             + "\n\nMANDATORY CORRECTION:\n"
-            + "The intro must use at least one concrete matchup/stat/trend detail from the internal matchup notes.\n"
+            + f"The intro must use at least {bc_core_required_count} concrete matchup/stat/trend detail"
+            + ("s" if bc_core_required_count != 1 else "")
+            + " from the internal matchup notes.\n"
             + "Do not mention BC Core or say 'trend sample'."
         )
         result = await generate_completion(
@@ -3489,8 +3544,8 @@ Write TWO <p> tags now (HTML only, no markdown):"""
         result = _remove_irrelevant_excluded_state_mentions(result, state)
         result = _remove_irrelevant_single_state_exclusion_phrases(result, state)
         result = _resolve_intro_age_conflicts(result, age_summary)
-        if not _bc_core_marker_present(result, bc_core_points):
-            result = _inject_bc_core_point_into_html(result, bc_core_points[0])
+        if _bc_core_marker_coverage(result, bc_core_points) < bc_core_required_count:
+            result = _inject_bc_core_points_into_html(result, bc_core_points[:bc_core_required_count], max_injections=bc_core_required_count)
     return result
 
 
@@ -3698,6 +3753,7 @@ async def _generate_body_section(
         if not prediction_market and not dfs_mode and not is_terms and not is_numbered_list and not is_daily_promos
         else []
     )
+    bc_core_required_count = 2 if section_kind != "claim" and len(bc_core_points) >= 2 else 1 if bc_core_points else 0
 
     reference_mechanics = ""
     exact_claim_lines: list[str] = []
@@ -3900,7 +3956,7 @@ RULE: If a detail is not provided, omit it instead of guessing. Use "Full operat
 {event_label + chr(10) + event_context + chr(10) if event_context else ""}
 {f"EXACT MECHANICS REFERENCE (facts only; rewrite from scratch and do not mirror the sentence structure):{chr(10)}{reference_mechanics}{chr(10)}" if reference_mechanics else ""}
 {f"EXACT CLAIM FACTS (mandatory for this section):{chr(10)}{chr(10).join(exact_claim_lines)}{chr(10)}" if exact_claim_lines else ""}
-{f"INTERNAL EXPERTISE NOTES (use at least one naturally if relevant, but never cite the source):{chr(10)}" + chr(10).join(f"- {point}" for point in bc_core_points) + chr(10) if bc_core_points else ""}
+{f"INTERNAL EXPERTISE NOTES (use at least {bc_core_required_count} naturally if relevant, but never cite the source):{chr(10)}" + chr(10).join(f"- {point}" for point in bc_core_points) + chr(10) if bc_core_points else ""}
 
 OFFER CONTEXT:
 - Brand: {brand}
@@ -3958,7 +4014,7 @@ SECTION-SPECIFIC GUARDRAILS:
 - Keep any worked example tied to the exact event context or worked-example data provided above.
 - For worked-example sections, use the exact mechanics and numbers from the reference blocks above, but write the prose in fresh language.
 - For worked-example sections, the exact claim facts block is mandatory. Do not change those numbers or swap in a different first amount.
-- If internal expertise notes are present, work at least one of them into the body naturally. Never mention BC Core or call anything a trend sample.
+- If internal expertise notes are present, work at least {bc_core_required_count or 1} of them into the body naturally. Use distinct facts when more than one is available. Never mention BC Core or call anything a trend sample.
 - The article should feel new on each run. Keep the structure tight, but vary the phrasing and sentence openings naturally.
 
 DO NOT add responsible gaming disclaimers in this section (handled at the end).
@@ -4014,11 +4070,13 @@ Write the section now (HTML only, no heading, no markdown):"""
         result = f"<p>{result}</p>"
     if not is_eligibility:
         result = _polish_body_section_prose(result)
-    if bc_core_points and not _bc_core_marker_present(result, bc_core_points):
+    if bc_core_points and _bc_core_marker_coverage(result, bc_core_points) < bc_core_required_count:
         retry_prompt = (
             user_prompt
             + "\n\nMANDATORY CORRECTION:\n"
-            + "The section must use at least one concrete stat, trend, injury, weather, or schedule detail from the internal expertise notes.\n"
+            + f"The section must use at least {bc_core_required_count} concrete stat, trend, injury, weather, or schedule detail"
+            + ("s" if bc_core_required_count != 1 else "")
+            + " from the internal expertise notes.\n"
             + "Do not mention BC Core or use the phrase 'trend sample'."
         )
         result = await generate_completion(
@@ -4032,8 +4090,8 @@ Write the section now (HTML only, no heading, no markdown):"""
             result = f"<p>{result}</p>"
         if not is_eligibility:
             result = _polish_body_section_prose(result)
-        if not _bc_core_marker_present(result, bc_core_points):
-            result = _inject_bc_core_point_into_html(result, bc_core_points[0])
+        if _bc_core_marker_coverage(result, bc_core_points) < bc_core_required_count:
+            result = _inject_bc_core_points_into_html(result, bc_core_points[:bc_core_required_count], max_injections=bc_core_required_count)
     return result
 
 def _render_html_offer_block(offer: dict, switchboard_url: str) -> str:
