@@ -5,6 +5,16 @@ import pytest
 from app.services import bam_offers
 
 
+def test_available_properties_includes_goal_bam_config():
+    properties = bam_offers.get_available_properties()
+    goal_config = bam_offers.PROPERTIES["goal_com"]
+
+    assert properties["goal_com"] == "GOAL"
+    assert goal_config["property_id"] == "326"
+    assert goal_config["placement_id"] == "2066"
+    assert goal_config["switchboard_domain"] == "us-betting.goal.com"
+
+
 @pytest.mark.asyncio
 async def test_get_offers_bam_prefers_exact_state_match(monkeypatch):
     async def fake_fetch_offers_from_bam(*args, **kwargs):

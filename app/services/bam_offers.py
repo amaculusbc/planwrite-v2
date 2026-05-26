@@ -77,6 +77,13 @@ PROPERTIES = {
         "name": "FantasyLabs",
         "default_context": "web-article-top-stories",
     },
+    "goal_com": {
+        "property_id": "326",
+        "placement_id": "2066",
+        "switchboard_domain": "us-betting.goal.com",
+        "name": "GOAL",
+        "default_context": "web-article-top-stories",
+    },
 }
 
 DEFAULT_PROPERTY = "action_network"
