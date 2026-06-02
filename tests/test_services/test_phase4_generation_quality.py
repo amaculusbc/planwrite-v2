@@ -101,6 +101,20 @@ def test_strip_source_and_prompt_leaks_removes_internal_context_phrasing():
     assert "typically see" not in cleaned
 
 
+def test_strip_source_and_prompt_leaks_removes_excerpt_alignment_commentary():
+    html = (
+        "<p>It reads like a Canada-facing offer, but the excerpt does not fully align "
+        "with that framing, so confirm in-app access before entering the code.</p>"
+        "<p>Provinces Available: AB, BC.</p>"
+    )
+
+    cleaned = _strip_source_and_prompt_leaks(html)
+
+    assert "excerpt" not in cleaned.lower()
+    assert "align with that framing" not in cleaned.lower()
+    assert "Provinces Available: AB, BC" in cleaned
+
+
 def test_strip_market_mismatch_phrasing_converts_canada_output():
     html = (
         "<p>21+ and U.S. residents where permitted can use the offer. "
@@ -223,6 +237,7 @@ def test_enforce_secondary_keyword_mentions_repeats_keywords_without_terms_secti
     cleaned = _enforce_secondary_keyword_mentions(html, ["best dfs apps"])
     assert cleaned.lower().count("best dfs apps") >= 2
     assert "States Available: NJ, PA." in cleaned
+    assert "it also ties into" not in cleaned.lower()
 
 
 def test_render_terms_section_html_uses_current_state_for_multi_offer_headers():

@@ -1956,9 +1956,9 @@ def _enforce_secondary_keyword_mentions(html: str, secondary_keywords: list[str]
         return result
 
     phrase_templates = [
-        "It also ties into {phrase}.",
-        "That keeps {phrase} in the mix.",
-        "This is also relevant for {phrase}.",
+        "Readers comparing {phrase} should start with the same offer details.",
+        "The same setup matters for anyone tracking {phrase}.",
+        "This section also gives readers a cleaner path into {phrase}.",
     ]
 
     for phrase in phrases:
@@ -2086,6 +2086,7 @@ def _strip_source_and_prompt_leaks(html: str) -> str:
         r"\s*[^.]*\binternal expertise notes?[^.]*\.?",
         r"\s*[^.]*\binternal matchup notes?[^.]*\.?",
         r"\s*[^.]*\bBC Core\b[^.]*\.?",
+        r"\s*[^.]*\bexcerpt\b[^.]*\balign[^.]*\.?",
     ]
     cleaned = html
     for pattern in patterns:
