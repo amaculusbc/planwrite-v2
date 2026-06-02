@@ -106,3 +106,19 @@ def test_offer_switchboard_url_uses_property_domain_and_state_code():
     assert "switchboard.vegasinsider.com/offers" in url
     assert "stateCode=NJ" in url
     assert "propertyId=2" in url
+
+
+def test_offer_switchboard_url_uses_goal_domain_not_action_fallback():
+    url = _offer_switchboard_url(
+        {
+            "affiliate_id": "174",
+            "campaign_id": "6577",
+            "switchboard_link": "https://switchboard.actionnetwork.com/offers?affiliateId=174&campaignId=6577",
+        },
+        state="ON",
+        property_key="goal_com",
+    )
+
+    assert "https://us-betting.goal.com/offers" in url
+    assert "switchboard.actionnetwork.com" not in url
+    assert "propertyId=326" in url

@@ -38,6 +38,7 @@ from app.services.draft import (
     _soften_repetitive_intro_opener,
     _strip_formatting_from_headings,
     _strip_invalid_non_switchboard_links,
+    _strip_source_and_prompt_leaks,
     _target_keyword_mentions,
     _trim_dangling_paragraph_endings,
     _trim_repeated_phrase_in_html,
@@ -78,6 +79,35 @@ def test_normalize_matchup_vs_notation_replaces_at_symbol_in_visible_text_only()
     cleaned = _normalize_matchup_vs_notation(html)
     assert "Hawks vs. Hornets" in cleaned
     assert "https://example.com/a@b" in cleaned
+
+
+def test_strip_source_and_prompt_leaks_removes_internal_context_phrasing():
+    html = (
+        "<p>bet365 is supported in Illinois (IL) for this article's requested state context, "
+        "but availability varies by location, so confirm in-app.</p>"
+        "<p>That works here with no matched event data here to lean on for extra context.</p>"
+        "<p>BC Core says this is a playoff-style matchup and you'll typically see the favorite shaded.</p>"
+    )
+
+    cleaned = _strip_source_and_prompt_leaks(html)
+
+    assert "requested state context" not in cleaned
+    assert "no matched event data" not in cleaned
+    assert "BC Core" not in cleaned
+    assert "playoff-style" not in cleaned
+    assert "typically see" not in cleaned
+
+
+def test_offer_states_text_prefers_selected_sportsbook_offer_states_over_operator_defaults():
+    offer = {
+        "brand": "bet365",
+        "states_list": ["ON", "QC"],
+        "terms": "Available in Ontario and Quebec.",
+    }
+
+    rendered = _offer_states_text(offer, "ALL")
+
+    assert rendered == "ON, QC"
 
 
 def test_trim_repeated_see_full_terms_mentions_caps_phrase():

@@ -547,7 +547,7 @@ def summarize_bc_core_context(
 
     if operator_context.get("matched"):
         lines.extend([
-            "BC CORE OPERATOR CONTEXT:",
+            "INTERNAL OPERATOR CONTEXT:",
             f"- Operator match: {operator_context.get('parent_name') or operator_context.get('sportsbook_name')}",
         ])
         if operator_context.get("requested_state_supported") is not None:
@@ -556,19 +556,19 @@ def summarize_bc_core_context(
             )
         coverage = operator_context.get("coverage") or {}
         if coverage.get("checked") and coverage.get("supported") is not None:
-            lines.append(f"- BC Core coverage for this sport: {'yes' if coverage.get('supported') else 'no'}")
+            lines.append(f"- Operator coverage for this sport: {'yes' if coverage.get('supported') else 'no'}")
         states = operator_context.get("states") or []
         if states:
-            lines.append(f"- BC Core state list: {', '.join(states[:25])}")
+            lines.append(f"- Operator state list: {', '.join(states[:25])}")
     elif operator_context.get("reason"):
         lines.extend([
-            "BC CORE OPERATOR CONTEXT:",
+            "INTERNAL OPERATOR CONTEXT:",
             f"- {operator_context.get('reason')}",
         ])
 
     if event_context.get("matched"):
         lines.extend([
-            "BC CORE EVENT CONTEXT:",
+            "INTERNAL EVENT CONTEXT:",
             f"- Matched event: {event_context.get('event_name') or event_context.get('headline')}",
         ])
         if event_context.get("scheduled_date"):
@@ -579,17 +579,19 @@ def summarize_bc_core_context(
             lines.append(f"- Season context: {event_context.get('season_name')}")
     elif event_context.get("reason"):
         lines.extend([
-            "BC CORE EVENT CONTEXT:",
+            "INTERNAL EVENT CONTEXT:",
             f"- {event_context.get('reason')}",
         ])
 
     editorial_points = expertise_context.get("editorial_points") or []
     if editorial_points:
-        lines.append("BC CORE EXPERTISE NOTES:")
-        lines.extend(f"- {point}" for point in editorial_points[:8])
+        lines.append("INTERNAL EXPERTISE NOTES:")
+        for point in editorial_points[:8]:
+            cleaned_point = re.sub(r"\bBC Core(?:'s)?\b", "", str(point), flags=re.IGNORECASE).strip()
+            lines.append(f"- {cleaned_point}")
     elif expertise_context.get("reason"):
         lines.extend([
-            "BC CORE EXPERTISE NOTES:",
+            "INTERNAL EXPERTISE NOTES:",
             f"- {expertise_context.get('reason')}",
         ])
 

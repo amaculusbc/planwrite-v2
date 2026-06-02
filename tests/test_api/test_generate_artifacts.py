@@ -146,8 +146,8 @@ async def test_outline_sync_includes_bc_core_context_for_any_property(client, mo
     data = response.json()
     assert data["source_facts"]["bc_core"]["operator"]["matched"] is True
     assert data["source_facts"]["bc_core"]["event"]["matched"] is True
-    assert "BC CORE OPERATOR CONTEXT:" in captured["event_context"]
-    assert "BC CORE EXPERTISE NOTES:" in captured["event_context"]
+    assert "INTERNAL OPERATOR CONTEXT:" in captured["event_context"]
+    assert "INTERNAL EXPERTISE NOTES:" in captured["event_context"]
 
 
 @pytest.mark.asyncio
@@ -304,8 +304,8 @@ async def test_draft_sync_includes_bc_core_context_for_any_property(client, monk
     data = response.json()
     assert data["source_facts"]["bc_core"]["operator"]["matched"] is True
     assert data["source_facts"]["bc_core"]["expertise"]["matched"] is True
-    assert "BC CORE OPERATOR CONTEXT:" in captured["event_context"]
-    assert "BC CORE EVENT CONTEXT:" in captured["event_context"]
-    assert "BC CORE EXPERTISE NOTES:" in captured["event_context"]
+    assert "INTERNAL OPERATOR CONTEXT:" in captured["event_context"]
+    assert "INTERNAL EVENT CONTEXT:" in captured["event_context"]
+    assert "INTERNAL EXPERTISE NOTES:" in captured["event_context"]
     assert isinstance(captured["bc_core_context"], dict)
     assert captured["bc_core_context"]["expertise"]["matched"] is True

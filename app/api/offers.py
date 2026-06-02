@@ -23,6 +23,7 @@ async def list_offers(
     brand: str | None = None,
     force_refresh: bool = False,
     property: str | None = Query(None, description="BAM property key"),
+    market: str | None = Query(None, description="Market code, e.g. US or CA"),
 ):
     """List offers from BAM API with optional filters.
 
@@ -37,6 +38,7 @@ async def list_offers(
         brand=brand,
         force_refresh=force_refresh,
         property_key=property,
+        market=market,
     )
 
 
@@ -62,6 +64,8 @@ async def list_states():
         "ALL", "AZ", "CO", "CT", "DC", "IA", "IL", "IN", "KS", "KY",
         "LA", "MA", "MD", "MI", "NC", "NJ", "NY", "OH", "PA", "TN",
         "VA", "WV", "WY",
+        "AB", "BC", "MB", "NB", "NL", "NS", "NT", "NU", "ON", "PE",
+        "QC", "SK", "YT",
     ]
 
 
@@ -83,9 +87,10 @@ async def get_offer(
     offer_id: str,
     property: str | None = Query(None, description="BAM property key"),
     state: str | None = Query(None, description="State code for BAM geo override"),
+    market: str | None = Query(None, description="Market code, e.g. US or CA"),
 ):
     """Get a single offer by ID."""
-    offer = await get_offer_by_id_bam(offer_id, property_key=property, state=state)
+    offer = await get_offer_by_id_bam(offer_id, property_key=property, state=state, market=market)
 
     if not offer:
         raise HTTPException(status_code=404, detail="Offer not found")

@@ -83,6 +83,20 @@ BET_TRIGGERS = [
 # State-specific disclaimers
 STATE_DISCLAIMERS = {
     "ALL": "21+. Gambling problem? Call 1-800-GAMBLER. Please bet responsibly.",
+    "CANADA": "Legal age varies by province. Please play responsibly. Terms apply.",
+    "AB": "Legal age varies by province. Please play responsibly. Terms apply.",
+    "BC": "Legal age varies by province. Please play responsibly. Terms apply.",
+    "MB": "Legal age varies by province. Please play responsibly. Terms apply.",
+    "NB": "Legal age varies by province. Please play responsibly. Terms apply.",
+    "NL": "Legal age varies by province. Please play responsibly. Terms apply.",
+    "NS": "Legal age varies by province. Please play responsibly. Terms apply.",
+    "NT": "Legal age varies by province. Please play responsibly. Terms apply.",
+    "NU": "Legal age varies by province. Please play responsibly. Terms apply.",
+    "ON": "Legal age varies by province. Please play responsibly. Terms apply.",
+    "PE": "Legal age varies by province. Please play responsibly. Terms apply.",
+    "QC": "Legal age varies by province. Please play responsibly. Terms apply.",
+    "SK": "Legal age varies by province. Please play responsibly. Terms apply.",
+    "YT": "Legal age varies by province. Please play responsibly. Terms apply.",
     "NY": "21+. Gambling problem? Call 877-8-HOPENY or text HOPENY (467369).",
     "AZ": "21+. Gambling problem? Call 1-800-NEXT-STEP.",
     "PA": "21+. Gambling problem? Call 1-800-GAMBLER.",
@@ -248,6 +262,10 @@ def check_cta_links(content: str) -> list[ComplianceIssue]:
         r'<a\b[^>]*href\s*=\s*(["\'])https?://[^"\']*switchboard\.[^"\']+/offers[^"\']*\1[^>]*>',
         re.IGNORECASE,
     )
+    goal_offer_anchor_pattern = re.compile(
+        r'<a\b[^>]*href\s*=\s*(["\'])https://us-betting\.goal\.com/offers[^"\']*\1[^>]*>',
+        re.IGNORECASE,
+    )
     switchboard_tracking_pattern = re.compile(r'data-id\s*=\s*(["\'])switchboard_tracking\1', re.IGNORECASE)
     bam_shortcode_pattern = re.compile(r"\[bam-inline-promotion\b", re.IGNORECASE)
 
@@ -255,6 +273,7 @@ def check_cta_links(content: str) -> list[ComplianceIssue]:
         bool(cta_pattern.search(content or "")),
         bool(html_cta_pattern.search(content or "")),
         bool(switchboard_anchor_pattern.search(content or "")),
+        bool(goal_offer_anchor_pattern.search(content or "")),
         bool(switchboard_tracking_pattern.search(content or "")),
         bool(bam_shortcode_pattern.search(content or "")),
     ])
@@ -303,7 +322,9 @@ def check_link_quality(content: str, allowed_domains: list[str] | None = None) -
 
     for url, _, anchor_text in _extract_html_links(content):
         anchor = anchor_text.strip()
-        if len(anchor.split()) < 2 and "switchboard." not in url.lower():
+        url_lc = url.lower()
+        is_cta_link = ("switchboard." in url_lc and "/offers" in url_lc) or "us-betting.goal.com/offers" in url_lc
+        if len(anchor.split()) < 2 and not is_cta_link:
             issues.append(ComplianceIssue(
                 type="short_anchor",
                 message=f"Anchor text too short: '{anchor}'",
@@ -311,7 +332,7 @@ def check_link_quality(content: str, allowed_domains: list[str] | None = None) -
                 location=url,
                 suggestion="Use descriptive anchor text (2+ words)",
             ))
-        if domains and "switchboard." not in url.lower() and not any(domain in url for domain in domains):
+        if domains and not is_cta_link and not any(domain in url for domain in domains):
             issues.append(ComplianceIssue(
                 type="external_link",
                 message=f"External link detected: {url}",
@@ -391,8 +412,21 @@ def check_editorial_regressions(
     switchboard_links = [
         (url, inner, text)
         for url, inner, text in links
-        if "switchboard." in url.lower() and "/offers" in url.lower()
+        if ("switchboard." in url.lower() and "/offers" in url.lower())
+        or "us-betting.goal.com/offers" in url.lower()
     ]
+    goal_property_context = 'property-id="326"' in content.lower() or "propertyid=326" in content.lower()
+    if goal_property_context:
+        for url, _, _ in switchboard_links:
+            if "switchboard.actionnetwork.com/offers" in url.lower():
+                issues.append(ComplianceIssue(
+                    type="goal_action_switchboard_domain",
+                    message="GOAL article contains an Action Network switchboard domain",
+                    severity=IssueSeverity.ERROR,
+                    location=url,
+                    suggestion="Use the GOAL offer domain (us-betting.goal.com) for GOAL CTAs",
+                ))
+                break
     if len(switchboard_links) > 1:
         issues.append(ComplianceIssue(
             type="switchboard_link_overuse",
@@ -404,7 +438,10 @@ def check_editorial_regressions(
     non_switchboard_links = [
         (url, inner, text)
         for url, inner, text in links
-        if not ("switchboard." in url.lower() and "/offers" in url.lower())
+        if not (
+            ("switchboard." in url.lower() and "/offers" in url.lower())
+            or "us-betting.goal.com/offers" in url.lower()
+        )
     ]
     if len(non_switchboard_links) > 1:
         issues.append(ComplianceIssue(
@@ -419,7 +456,7 @@ def check_editorial_regressions(
     seen_internal: set[str] = set()
     for url, _, _ in links:
         url_lc = url.lower()
-        if "switchboard." in url_lc and "/offers" in url_lc:
+        if ("switchboard." in url_lc and "/offers" in url_lc) or "us-betting.goal.com/offers" in url_lc:
             continue
         if url_lc in seen_internal:
             duplicate_urls.add(url)
@@ -492,6 +529,45 @@ def check_editorial_regressions(
             message=f"Article contains stock filler phrasing ({', '.join(sorted(set(matched_fillers)))})",
             severity=IssueSeverity.WARNING,
             suggestion="Replace stock filler with direct, specific editorial copy",
+        ))
+
+    source_leak_patterns = [
+        (r"\bBC Core\b", "bc_core_source_leak", "Article mentions BC Core/internal data source"),
+        (r"\brequested state context\b", "prompt_context_leak", "Article mentions prompt/request context"),
+        (r"\bno matched event data\b", "prompt_context_leak", "Article mentions missing internal event data"),
+        (r"\binternal (?:expertise|matchup) notes?\b", "prompt_context_leak", "Article mentions internal prompt notes"),
+    ]
+    for pattern, issue_type, message in source_leak_patterns:
+        if re.search(pattern, plain, flags=re.IGNORECASE):
+            issues.append(ComplianceIssue(
+                type=issue_type,
+                message=message,
+                severity=IssueSeverity.ERROR,
+                suggestion="Remove prompt/source implementation details from reader-facing copy",
+            ))
+            break
+
+    vague_market_phrases = [
+        r"\byou(?:'|’)?ll typically see\b",
+        r"\bcheck the live board\b",
+        r"\bcheck live now\b",
+        r"\bprice range varies\b",
+        r"\bspread shaded toward\b",
+    ]
+    if any(re.search(pattern, plain, flags=re.IGNORECASE) for pattern in vague_market_phrases):
+        issues.append(ComplianceIssue(
+            type="vague_market_copy",
+            message="Sports breakdown uses vague market filler instead of selected odds/facts",
+            severity=IssueSeverity.WARNING,
+            suggestion="Use the selected market, team, line and odds from the builder or omit the price",
+        ))
+
+    if re.search(r"\bplayoff-style\b", plain, flags=re.IGNORECASE):
+        issues.append(ComplianceIssue(
+            type="awkward_playoff_phrasing",
+            message="Article uses awkward 'playoff-style' phrasing",
+            severity=IssueSeverity.WARNING,
+            suggestion="Say 'playoff game', 'playoff matchup', or name the round when known",
         ))
 
     return issues

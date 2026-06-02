@@ -120,23 +120,26 @@
                     </div>
                 </div>
 
-                <!-- State -->
+                <!-- Market / Location -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                    <label for="state" class="block text-sm font-medium text-gray-700">State</label>
+                    <label for="market" class="block text-sm font-medium text-gray-700">Market</label>
+                    <select x-model="form.market" id="market" name="market" @change="onMarketChange()"
+                            class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm">
+                        <option value="US">United States</option>
+                        <option value="CA">Canada</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label for="state" class="block text-sm font-medium text-gray-700" x-text="form.market === 'CA' ? 'Province' : 'State'"></label>
                     <select x-model="form.state" id="state" name="state" @change="loadOffers()"
                             class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm">
-                        <option value="ALL">All States</option>
-                        <option value="NY">New York</option>
-                        <option value="NJ">New Jersey</option>
-                        <option value="PA">Pennsylvania</option>
-                        <option value="AZ">Arizona</option>
-                        <option value="CO">Colorado</option>
-                        <option value="OH">Ohio</option>
-                        <option value="MI">Michigan</option>
-                        <option value="VA">Virginia</option>
-                        <option value="MA">Massachusetts</option>
-                        <option value="KY">Kentucky</option>
+                        <template x-for="location in locationOptions()" :key="location.value">
+                            <option :value="location.value" x-text="location.label"></option>
+                        </template>
                     </select>
+                </div>
                 </div>
 
                 <!-- Game Context Section -->
@@ -948,6 +951,7 @@ function articleWizard() {
             offer_property: 'action_network',
             offer_id: '',
             alt_offer_ids: [],
+            market: 'US',
             state: 'ALL',
             keyword: '',
             title: '',
@@ -1225,6 +1229,45 @@ function articleWizard() {
                 structure_notes: (this.articlePrefs.structure_notes || '').trim()
             };
         },
+        locationOptions() {
+            const us = [
+                { value: 'ALL', label: 'All States' },
+                { value: 'NY', label: 'New York' },
+                { value: 'NJ', label: 'New Jersey' },
+                { value: 'PA', label: 'Pennsylvania' },
+                { value: 'AZ', label: 'Arizona' },
+                { value: 'CO', label: 'Colorado' },
+                { value: 'OH', label: 'Ohio' },
+                { value: 'MI', label: 'Michigan' },
+                { value: 'VA', label: 'Virginia' },
+                { value: 'MA', label: 'Massachusetts' },
+                { value: 'KY', label: 'Kentucky' },
+            ];
+            const ca = [
+                { value: 'ALL', label: 'All Provinces' },
+                { value: 'AB', label: 'Alberta' },
+                { value: 'BC', label: 'British Columbia' },
+                { value: 'MB', label: 'Manitoba' },
+                { value: 'NB', label: 'New Brunswick' },
+                { value: 'NL', label: 'Newfoundland and Labrador' },
+                { value: 'NS', label: 'Nova Scotia' },
+                { value: 'NT', label: 'Northwest Territories' },
+                { value: 'NU', label: 'Nunavut' },
+                { value: 'ON', label: 'Ontario' },
+                { value: 'PE', label: 'Prince Edward Island' },
+                { value: 'QC', label: 'Quebec' },
+                { value: 'SK', label: 'Saskatchewan' },
+                { value: 'YT', label: 'Yukon' },
+            ];
+            return this.form.market === 'CA' ? ca : us;
+        },
+        onMarketChange() {
+            this.form.state = 'ALL';
+            this.form.offer_id = '';
+            this.form.alt_offer_ids = [];
+            this.loadOffers();
+            this.loadLinkOptions();
+        },
         async loadLinkOptions() {
             const property = (this.form.offer_property || '').trim();
             const keyword = (this.form.keyword || '').trim();
@@ -1240,6 +1283,8 @@ function articleWizard() {
                     property,
                     limit: '16'
                 });
+                if (this.form.market) params.set('market', this.form.market);
+                if (this.form.state) params.set('state', this.form.state);
                 if (keyword) params.set('keyword', keyword);
                 if (brand) params.set('brand', brand);
                 const resp = await fetch(`/api/generate/link-options?${params.toString()}`);
@@ -1398,6 +1443,7 @@ function articleWizard() {
                 const params = new URLSearchParams();
                 if (this.form.offer_property) params.set('property', this.form.offer_property);
                 if (this.form.state) params.set('state', this.form.state);
+                if (this.form.market) params.set('market', this.form.market);
                 if (forceRefresh) params.set('force_refresh', 'true');
 
                 const resp = await fetch(`/api/offers/?${params}`);
@@ -1467,6 +1513,7 @@ function articleWizard() {
             try {
                 const params = new URLSearchParams();
                 if (this.form.offer_property) params.set('property', this.form.offer_property);
+                if (this.form.market) params.set('market', this.form.market);
                 await fetch(`/api/offers/sync?${params}`, { method: 'POST' });
                 await this.loadOffers(true);
                 this.showStatus('Offers refreshed', 'info');
@@ -1747,6 +1794,7 @@ function articleWizard() {
                     offer_id: this.form.offer_id || null,
                     offer_property: this.form.offer_property || null,
                     alt_offer_ids: this.form.alt_offer_ids || [],
+                    market: this.form.market || 'US',
                     state: this.form.state,
                     competitor_urls: competitorUrls.length > 0 ? competitorUrls : null,
                     game_context: gameContext,
@@ -1775,6 +1823,7 @@ function articleWizard() {
                     offer_id: this.form.offer_id || null,
                     offer_property: this.form.offer_property || null,
                     alt_offer_ids: this.form.alt_offer_ids || [],
+                    market: this.form.market || 'US',
                     state: this.form.state,
                     game_context: gameContext,
                     article_preferences: this.buildArticlePreferences()
@@ -1915,6 +1964,7 @@ function articleWizard() {
                         offer_id: this.form.offer_id || null,
                         offer_property: this.form.offer_property || null,
                         alt_offer_ids: this.form.alt_offer_ids || [],
+                        market: this.form.market || 'US',
                         state: this.form.state,
                         competitor_urls: competitorUrls.length > 0 ? competitorUrls : null,
                         game_context: gameContext,
@@ -1987,6 +2037,7 @@ function articleWizard() {
                         offer_id: this.form.offer_id || null,
                         offer_property: this.form.offer_property || null,
                         alt_offer_ids: this.form.alt_offer_ids || [],
+                        market: this.form.market || 'US',
                         state: this.form.state,
                         game_context: gameContext,
                         article_preferences: this.buildArticlePreferences()
@@ -2019,6 +2070,7 @@ function articleWizard() {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         content: this.draft,
+                        market: this.form.market || 'US',
                         state: this.form.state,
                         keyword: this.form.keyword,
                         offer_id: this.form.offer_id,
@@ -2078,6 +2130,7 @@ blockquote{border-left:4px solid #ddd;margin:1rem 0;padding-left:1rem;color:#666
                     body: JSON.stringify({
                         title: this.form.title,
                         keyword: this.form.keyword,
+                        market: this.form.market || 'US',
                         state: this.form.state,
                         offer_id: this.form.offer_id || null,
                         offer_property: this.form.offer_property || null,

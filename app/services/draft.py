@@ -250,6 +250,7 @@ def _normalize_article_preferences(article_preferences: dict[str, Any] | None = 
         section_count = 5
     section_count = max(3, min(section_count, 6))
     return {
+        "market": str(prefs.get("market") or "US").strip().upper() or "US",
         "secondary_keywords": [str(x).strip() for x in (prefs.get("secondary_keywords") or []) if str(x).strip()][:6],
         "preferred_internal_urls": [str(x).strip() for x in (prefs.get("preferred_internal_urls") or []) if str(x).strip()][:5],
         "section_count": section_count,
@@ -636,13 +637,15 @@ def _offer_switchboard_url(
     campaign_id = offer.get("campaign_id")
     if affiliate_id and campaign_id:
         prop_key = str(property_key or "action_network").strip().lower()
-        prop = PROPERTIES.get(prop_key, PROPERTIES["action_network"])
+        prop = PROPERTIES.get(prop_key)
+        if not prop:
+            return ""
         return build_switchboard_url(
             affiliate_id,
             campaign_id,
             state_code=state if state != "ALL" else "",
             property_id=prop.get("property_id", "1"),
-            switchboard_domain=prop.get("switchboard_domain", "switchboard.actionnetwork.com"),
+            switchboard_domain=prop.get("switchboard_domain", ""),
         )
 
     return str(offer.get("switchboard_link") or "").strip()
@@ -728,7 +731,11 @@ def _is_switchboard_link(url: str, attrs_text: str = "") -> bool:
     """Return True when a link is a switchboard CTA, even without tracking attrs."""
     url_lc = (url or "").strip().lower()
     attrs_lc = (attrs_text or "").lower()
-    return "switchboard_tracking" in attrs_lc or ("switchboard." in url_lc and "/offers" in url_lc)
+    return (
+        "switchboard_tracking" in attrs_lc
+        or ("switchboard." in url_lc and "/offers" in url_lc)
+        or ("us-betting.goal.com/offers" in url_lc)
+    )
 
 
 def _count_non_switchboard_links(html: str) -> int:
@@ -1184,11 +1191,18 @@ def _offer_states_text(
         else CONTENT_MODE_SPORTSBOOK
     )
     operator_facts = get_operator_facts(offer.get("brand"), content_mode=content_mode)
-    states = _normalize_states(operator_facts.get("allowed_states"))
-    if not states:
+    if content_mode in {CONTENT_MODE_DFS, CONTENT_MODE_PREDICTION_MARKET}:
+        states = _normalize_states(operator_facts.get("allowed_states"))
+        if not states:
+            states = _normalize_states(offer.get("states_list") or offer.get("states"))
+        if not states:
+            states = extract_states_from_terms(str(offer.get("terms") or ""))
+    else:
         states = _normalize_states(offer.get("states_list") or offer.get("states"))
-    if not states:
-        states = extract_states_from_terms(str(offer.get("terms") or ""))
+        if not states:
+            states = extract_states_from_terms(str(offer.get("terms") or ""))
+        if not states:
+            states = _normalize_states(operator_facts.get("allowed_states"))
     if not states:
         if fallback_state and fallback_state != "ALL":
             return fallback_state
@@ -2061,6 +2075,44 @@ def _trim_dangling_paragraph_endings(html: str) -> str:
     return cleaned
 
 
+def _strip_source_and_prompt_leaks(html: str) -> str:
+    """Remove internal prompt/source wording that should never appear in articles."""
+    if not html:
+        return html
+
+    patterns = [
+        r"\s*[^.]*\bfor this article(?:'|â€™|’)?s requested state context[^.]*\.?",
+        r"\s*[^.]*\bno matched event data here[^.]*\.?",
+        r"\s*[^.]*\binternal expertise notes?[^.]*\.?",
+        r"\s*[^.]*\binternal matchup notes?[^.]*\.?",
+        r"\s*[^.]*\bBC Core\b[^.]*\.?",
+    ]
+    cleaned = html
+    for pattern in patterns:
+        cleaned = _rewrite_html_text_nodes(
+            cleaned,
+            lambda text, pattern=pattern: re.sub(pattern, "", text, flags=re.IGNORECASE),
+        )
+
+    replacements = [
+        (r"\bplayoff-style\b", "playoff"),
+        (r"\bYou(?:'|â€™|’)?ll typically see\b", "The market board shows"),
+        (r"\bcheck the live board\b", "use the selected market"),
+        (r"\bcheck live now\b", "review the selected market"),
+    ]
+    for pattern, replacement in replacements:
+        cleaned = _rewrite_html_text_nodes(
+            cleaned,
+            lambda text, pattern=pattern, replacement=replacement: re.sub(
+                pattern,
+                replacement,
+                text,
+                flags=re.IGNORECASE,
+            ),
+        )
+    return _normalize_visible_punctuation(cleaned)
+
+
 def _apply_generation_quality_postprocess(html: str, keyword: str) -> str:
     """Final article cleanup for intro consistency, keyword placement, and repetition."""
     if not html:
@@ -2071,6 +2123,7 @@ def _apply_generation_quality_postprocess(html: str, keyword: str) -> str:
     html = _normalize_matchup_vs_notation(html)
     html = _trim_repeated_phrase_in_html(html, "see full terms", max_occurrences=2, replacement="see terms")
     html = _remove_inline_compliance_fragments(html)
+    html = _strip_source_and_prompt_leaks(html)
     html = _trim_dangling_paragraph_endings(html)
     html = _normalize_visible_punctuation(html)
     return html
@@ -3121,8 +3174,7 @@ async def generate_draft_from_outline(
                 idx = int(suffix)
                 if idx < len(all_offers):
                     return all_offers[idx]
-            # Unknown suffix falls back to main
-            return all_offers[0]
+            return None
         return all_offers[0]
 
     parts = []
@@ -3218,12 +3270,16 @@ async def generate_draft_from_outline(
     html_output = _apply_generation_quality_postprocess(html_output, keyword)
     primary_evergreen_link = get_operator_evergreen_link(property_key=offer_property, brand=brand)
     primary_evergreen_url = str(primary_evergreen_link.url) if primary_evergreen_link and primary_evergreen_link.url else ""
+    if prefs.get("market") == "CA" and offer_property == "goal_com" and "goal.com/en-ca/" not in primary_evergreen_url.lower():
+        primary_evergreen_url = ""
+        preferred_urls = [url for url in preferred_urls if "goal.com/en-ca/" in url.lower()]
     primary_internal_url = preferred_urls[0] if preferred_urls else primary_evergreen_url
     if primary_internal_url:
         html_output = _ensure_primary_keyword_internal_link(html_output, keyword, primary_internal_url)
 
     # Ensure single disclaimer at the end
-    disclaimer = get_disclaimer_for_state(state)
+    disclaimer_state = "CANADA" if prefs.get("market") == "CA" and str(state or "").upper() == "ALL" else state
+    disclaimer = get_disclaimer_for_state(disclaimer_state)
     if is_prediction_market:
         disclaimer = _adapt_disclaimer_for_prediction_market(disclaimer)
     elif is_dfs_mode:
@@ -3261,6 +3317,7 @@ async def generate_draft_from_outline(
     html_output = _target_keyword_mentions(html_output, keyword)
     html_output = _enforce_secondary_keyword_mentions(html_output, prefs["secondary_keywords"])
     html_output = _clean_orphaned_keyword_page_references(html_output, keyword)
+    html_output = _strip_source_and_prompt_leaks(html_output)
     html_output = _strip_formatting_from_headings(html_output)
 
     if output_format == "markdown":
@@ -4174,7 +4231,7 @@ async def generate_draft_from_outline_streaming(
                 idx = int(suffix)
                 if idx < len(all_offers):
                     return all_offers[idx]
-            return all_offers[0]
+            return None
         return all_offers[0]
 
     parts = []
@@ -4280,10 +4337,14 @@ async def generate_draft_from_outline_streaming(
     html_output = _apply_generation_quality_postprocess(html_output, keyword)
     primary_evergreen_link = get_operator_evergreen_link(property_key=offer_property, brand=brand)
     primary_evergreen_url = str(primary_evergreen_link.url) if primary_evergreen_link and primary_evergreen_link.url else ""
+    if prefs.get("market") == "CA" and offer_property == "goal_com" and "goal.com/en-ca/" not in primary_evergreen_url.lower():
+        primary_evergreen_url = ""
+        preferred_urls = [url for url in preferred_urls if "goal.com/en-ca/" in url.lower()]
     primary_internal_url = preferred_urls[0] if preferred_urls else primary_evergreen_url
     if primary_internal_url:
         html_output = _ensure_primary_keyword_internal_link(html_output, keyword, primary_internal_url)
-    disclaimer = get_disclaimer_for_state(state)
+    disclaimer_state = "CANADA" if prefs.get("market") == "CA" and str(state or "").upper() == "ALL" else state
+    disclaimer = get_disclaimer_for_state(disclaimer_state)
     if is_prediction_market:
         disclaimer = _adapt_disclaimer_for_prediction_market(disclaimer)
     elif is_dfs_mode:
@@ -4322,6 +4383,7 @@ async def generate_draft_from_outline_streaming(
     html_output = _target_keyword_mentions(html_output, keyword)
     html_output = _enforce_secondary_keyword_mentions(html_output, prefs["secondary_keywords"])
     html_output = _clean_orphaned_keyword_page_references(html_output, keyword)
+    html_output = _strip_source_and_prompt_leaks(html_output)
     html_output = _strip_formatting_from_headings(html_output)
 
     if output_format == "markdown":

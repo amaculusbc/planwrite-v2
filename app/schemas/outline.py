@@ -44,6 +44,7 @@ class OutlineRequest(BaseModel):
     offer_id: Optional[str] = None
     offer_property: Optional[str] = None
     alt_offer_ids: Optional[list[str]] = None
+    market: str = "US"
     state: str = "ALL"
     competitor_urls: Optional[list[str]] = None
     style_profile_id: Optional[int] = None
@@ -63,6 +64,7 @@ class DraftRequest(BaseModel):
     offer_id: Optional[str] = None
     offer_property: Optional[str] = None
     alt_offer_ids: Optional[list[str]] = None
+    market: str = "US"
     state: str = "ALL"
     style_profile_id: Optional[int] = None
     game_context: Optional[GameContext] = None

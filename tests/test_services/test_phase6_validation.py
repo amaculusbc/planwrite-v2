@@ -73,9 +73,11 @@ def test_validate_content_includes_editorial_regression_checks():
 def test_check_cta_links_accepts_switchboard_and_bam_shortcodes():
     switchboard_content = '<p><a data-id="switchboard_tracking" href="https://switchboard.actionnetwork.com/offers?x=1">Claim</a></p>'
     bam_content = '[bam-inline-promotion placement-id="2037" property-id="1" affiliate="bet365"]'
+    goal_content = '<p><a href="https://us-betting.goal.com/offers?affiliateId=1&propertyId=326">Claim</a></p>'
 
     assert check_cta_links(switchboard_content) == []
     assert check_cta_links(bam_content) == []
+    assert check_cta_links(goal_content) == []
 
 
 def test_check_link_quality_flags_html_heading_links():
@@ -94,6 +96,34 @@ def test_editorial_regressions_warn_on_tool_shaped_filler_phrases():
     content = "<p>The value is simple: this angle is live and built for volume.</p>"
     issues = check_editorial_regressions(content, keyword="Novig promo code", offer={"brand": "Novig"})
     assert "tool_shaped_phrase" in _issue_types(issues)
+
+
+def test_editorial_regressions_error_on_goal_action_switchboard_domain():
+    content = (
+        '[bam-inline-promotion placement-id="2066" property-id="326" affiliate="FanDuel"]'
+        '<p><a data-id="switchboard_tracking" '
+        'href="https://switchboard.actionnetwork.com/offers?affiliateId=3&propertyId=326">'
+        'FanDuel promo code</a></p>'
+    )
+
+    issues = check_editorial_regressions(content, keyword="FanDuel promo code", offer={"brand": "FanDuel"})
+
+    assert "goal_action_switchboard_domain" in _issue_types(issues)
+
+
+def test_editorial_regressions_flags_prompt_leaks_and_vague_market_copy():
+    content = (
+        "<p>BC Core says bet365 is supported for this article's requested state context.</p>"
+        "<p>You'll typically see Cleveland as the favorite, so check the live board.</p>"
+        "<p>This is a playoff-style spot.</p>"
+    )
+
+    issues = check_editorial_regressions(content, keyword="bet365 bonus code", offer={"brand": "bet365"})
+    types = _issue_types(issues)
+
+    assert "bc_core_source_leak" in types or "prompt_context_leak" in types
+    assert "vague_market_copy" in types
+    assert "awkward_playoff_phrasing" in types
 
 
 def test_check_active_voice_flags_passive_heavy_copy():

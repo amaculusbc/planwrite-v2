@@ -29,9 +29,14 @@ CACHE_DURATION = timedelta(hours=6)
 BAM_CACHE_SCHEMA_VERSION = "v2"
 BAM_CATALOG_LOCATIONS = (
     "AZ", "CO", "CT", "DC", "IA", "IL", "IN", "KS", "KY",
-    "LA", "MA", "MD", "MI", "NC", "NJ", "NY", "OH", "ON",
-    "PA", "TN", "VA", "WV", "WY",
+    "LA", "MA", "MD", "MI", "NC", "NJ", "NY", "OH", "PA",
+    "TN", "VA", "WV", "WY",
+    "AB", "BC", "MB", "NB", "NL", "NS", "NT", "NU", "ON",
+    "PE", "QC", "SK", "YT",
 )
+CANADA_PROVINCES = {"AB", "BC", "MB", "NB", "NL", "NS", "NT", "NU", "ON", "PE", "QC", "SK", "YT"}
+US_CATALOG_LOCATIONS = tuple(loc for loc in BAM_CATALOG_LOCATIONS if loc not in CANADA_PROVINCES)
+CANADA_CATALOG_LOCATIONS = tuple(loc for loc in BAM_CATALOG_LOCATIONS if loc in CANADA_PROVINCES)
 
 # Property configurations (parity with v1)
 PROPERTIES = {
@@ -113,8 +118,9 @@ def _build_cache_scope_key(
     return "__".join(part or "none" for part in parts)
 
 
-def _build_catalog_scope_key(property_key: str, *, context: str) -> str:
-    return _build_cache_scope_key(property_key, context=context, location="CATALOG")
+def _build_catalog_scope_key(property_key: str, *, context: str, market: str = "") -> str:
+    catalog_location = f"CATALOG_{str(market or 'ALL').strip().upper() or 'ALL'}"
+    return _build_cache_scope_key(property_key, context=context, location=catalog_location)
 
 
 def _geo_params_for_state(state: str | None) -> dict[str, str]:
@@ -124,10 +130,23 @@ def _geo_params_for_state(state: str | None) -> dict[str, str]:
         return {}
 
     params = {"location": state_code}
-    # BAM expects country_code for non-US regional overrides such as Ontario.
-    if state_code == "ON":
+    # BAM expects country_code for Canadian province overrides.
+    if state_code in CANADA_PROVINCES:
         params["country_code"] = "CA"
     return params
+
+
+def _catalog_locations_for_market(state: str | None, market: str | None = None) -> tuple[list[str], bool]:
+    """Return BAM override locations and whether the base feed should be included."""
+    requested_state = str(state or "").strip().upper()
+    market_code = str(market or "").strip().upper()
+    if requested_state and requested_state != "ALL":
+        return [requested_state], False
+    if market_code == "CA":
+        return list(CANADA_CATALOG_LOCATIONS), False
+    if market_code == "US":
+        return list(US_CATALOG_LOCATIONS), True
+    return list(BAM_CATALOG_LOCATIONS), True
 
 
 def _merge_offer_variants(existing: dict, incoming: dict, *, source_location: str = "") -> dict:
@@ -170,6 +189,22 @@ def _normalize_catalog_offer_states(offer: dict) -> dict:
         normalized["states"] = source_locations
         normalized["states_list"] = source_locations
     return enrich_offer_dict(normalized)
+
+
+def _offer_matches_market(offer: dict, market: str | None = None) -> bool:
+    """Return whether an offer belongs to the selected country market."""
+    market_code = str(market or "").strip().upper()
+    if market_code not in {"US", "CA"}:
+        return True
+    states = parse_states(offer.get("states") or offer.get("states_list") or [])
+    if not states or states == ["ALL"]:
+        source_locations = parse_states(offer.get("source_locations") or [])
+        states = source_locations
+    if not states or states == ["ALL"]:
+        return market_code == "US"
+    has_canada = any(state in CANADA_PROVINCES for state in states)
+    has_us = any(state not in CANADA_PROVINCES for state in states)
+    return has_canada if market_code == "CA" else has_us
 
 
 def _generate_offer_id(
@@ -531,6 +566,7 @@ async def get_offers_bam(
     force_refresh: bool = False,
     property_key: str | None = None,
     context: str | None = None,
+    market: str | None = None,
 ) -> list[dict]:
     """Get offers from BAM API with optional filtering.
 
@@ -569,6 +605,7 @@ async def get_offer_catalog_bam(
     force_refresh: bool = False,
     property_key: str | None = None,
     context: str | None = None,
+    market: str | None = None,
 ) -> list[dict]:
     """Return a union catalog of offers across BAM location overrides.
 
@@ -581,7 +618,7 @@ async def get_offer_catalog_bam(
         DEFAULT_PROPERTY,
     )
     context = context or property_config.get("default_context", BAM_CONTEXT)
-    scope_key = _build_catalog_scope_key(property_key, context=context)
+    scope_key = _build_catalog_scope_key(property_key, context=context, market=market or "")
 
     if not force_refresh and _cached_offers.get(scope_key) and _last_fetch.get(scope_key):
         if datetime.utcnow() - _last_fetch[scope_key] < CACHE_DURATION:
@@ -600,18 +637,16 @@ async def get_offer_catalog_bam(
             offers = list(cached)
 
     if not offers:
-        requested_state = str(state or "").strip().upper()
-        locations: list[str] = []
-        if requested_state and requested_state != "ALL":
-            locations.append(requested_state)
-        for location in BAM_CATALOG_LOCATIONS:
-            if location not in locations:
-                locations.append(location)
+        locations, include_base_feed = _catalog_locations_for_market(state, market)
 
-        base_offers = await fetch_offers_from_bam(
-            force_refresh,
-            property_key=property_key,
-            context=context,
+        base_offers = (
+            await fetch_offers_from_bam(
+                force_refresh,
+                property_key=property_key,
+                context=context,
+            )
+            if include_base_feed
+            else []
         )
         scoped_results = await asyncio.gather(
             *[
@@ -652,6 +687,8 @@ async def get_offer_catalog_bam(
         brand_lower = brand.lower()
         offers = [o for o in offers if o.get("brand", "").lower() == brand_lower]
 
+    offers = [offer for offer in offers if _offer_matches_market(offer, market)]
+
     requested_state = str(state or "").strip().upper()
     if requested_state and requested_state != "ALL":
         def _catalog_sort_key(offer: dict) -> tuple[int, tuple[int, int, float, str]]:
@@ -669,6 +706,7 @@ async def get_offer_by_id_bam(
     property_key: str | None = None,
     context: str | None = None,
     state: str | None = None,
+    market: str | None = None,
 ) -> Optional[dict]:
     """Get a single offer by its ID."""
     geo_params = _geo_params_for_state(state)
@@ -686,6 +724,7 @@ async def get_offer_by_id_bam(
         state=state,
         property_key=property_key,
         context=context,
+        market=market,
     )
     for offer in catalog_offers:
         if offer.get("id") == offer_id:

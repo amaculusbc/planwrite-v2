@@ -15,6 +15,26 @@ def test_available_properties_includes_goal_bam_config():
     assert goal_config["switchboard_domain"] == "us-betting.goal.com"
 
 
+def test_canadian_province_geo_override_sets_country_code():
+    params = bam_offers._geo_params_for_state("ON")
+
+    assert params == {"location": "ON", "country_code": "CA"}
+
+
+def test_catalog_locations_for_canada_market_exclude_us_states():
+    locations, include_base = bam_offers._catalog_locations_for_market("ALL", "CA")
+
+    assert include_base is False
+    assert "ON" in locations
+    assert "NJ" not in locations
+
+
+def test_offer_matches_market_requires_canadian_province_for_ca_market():
+    assert bam_offers._offer_matches_market({"states": ["ON", "QC"]}, "CA") is True
+    assert bam_offers._offer_matches_market({"states": ["NJ", "PA"]}, "CA") is False
+    assert bam_offers._offer_matches_market({"states": ["NJ", "PA"]}, "US") is True
+
+
 @pytest.mark.asyncio
 async def test_get_offers_bam_prefers_exact_state_match(monkeypatch):
     async def fake_fetch_offers_from_bam(*args, **kwargs):

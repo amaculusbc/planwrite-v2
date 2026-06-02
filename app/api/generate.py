@@ -259,12 +259,14 @@ async def _stream_outline(request: OutlineRequest, db: AsyncSession) -> AsyncGen
             request.offer_id,
             property_key=request.offer_property,
             state=request.state,
+            market=request.market,
         )
     for alt_id in request.alt_offer_ids or []:
         alt = await get_offer_by_id_bam(
             alt_id,
             property_key=request.offer_property,
             state=request.state,
+            market=request.market,
         )
         if alt:
             alt_offers.append(alt)
@@ -274,10 +276,12 @@ async def _stream_outline(request: OutlineRequest, db: AsyncSession) -> AsyncGen
         competitor_context = await scrape_competitors(request.competitor_urls, max_chars_per_url=1500)
     game_context_str, bet_example_str, _, article_date = _build_game_context(request.game_context)
     prefs = _preferences_dict(request.article_preferences)
+    prefs["market"] = request.market
     source_facts = build_source_facts(
         keyword=request.keyword,
         title=request.title,
         state=request.state,
+        market=request.market,
         offer_property=request.offer_property,
         offer=offer,
         alt_offers=alt_offers,
@@ -327,12 +331,14 @@ async def _stream_draft(request: DraftRequest, db: AsyncSession) -> AsyncGenerat
             request.offer_id,
             property_key=request.offer_property,
             state=request.state,
+            market=request.market,
         )
     for alt_id in request.alt_offer_ids or []:
         alt = await get_offer_by_id_bam(
             alt_id,
             property_key=request.offer_property,
             state=request.state,
+            market=request.market,
         )
         if alt:
             alt_offers.append(alt)
@@ -340,10 +346,12 @@ async def _stream_draft(request: DraftRequest, db: AsyncSession) -> AsyncGenerat
     outline = _resolve_outline_from_request(request)
     game_context_str, bet_example_str, bet_example_data, article_date = _build_game_context(request.game_context)
     prefs = _preferences_dict(request.article_preferences)
+    prefs["market"] = request.market
     source_facts = build_source_facts(
         keyword=request.keyword,
         title=request.title,
         state=request.state,
+        market=request.market,
         offer_property=request.offer_property,
         offer=offer_dict,
         alt_offers=alt_offers,
@@ -411,12 +419,14 @@ async def generate_outline_sync(
             request.offer_id,
             property_key=request.offer_property,
             state=request.state,
+            market=request.market,
         )
     for alt_id in request.alt_offer_ids or []:
         alt = await get_offer_by_id_bam(
             alt_id,
             property_key=request.offer_property,
             state=request.state,
+            market=request.market,
         )
         if alt:
             alt_offers.append(alt)
@@ -426,10 +436,12 @@ async def generate_outline_sync(
         competitor_context = await scrape_competitors(request.competitor_urls, max_chars_per_url=1500)
     game_context_str, bet_example_str, _, article_date = _build_game_context(request.game_context)
     prefs = _preferences_dict(request.article_preferences)
+    prefs["market"] = request.market
     source_facts = build_source_facts(
         keyword=request.keyword,
         title=request.title,
         state=request.state,
+        market=request.market,
         offer_property=request.offer_property,
         offer=offer,
         alt_offers=alt_offers,
@@ -449,6 +461,7 @@ async def generate_outline_sync(
         keyword=request.keyword,
         title=request.title,
         state=request.state,
+        market=request.market,
         offer_property=request.offer_property,
     )
     artifact_run.write_stage(
@@ -523,12 +536,14 @@ async def generate_draft_sync(
             request.offer_id,
             property_key=request.offer_property,
             state=request.state,
+            market=request.market,
         )
     for alt_id in request.alt_offer_ids or []:
         alt = await get_offer_by_id_bam(
             alt_id,
             property_key=request.offer_property,
             state=request.state,
+            market=request.market,
         )
         if alt:
             alt_offers.append(alt)
@@ -536,10 +551,12 @@ async def generate_draft_sync(
     outline = _resolve_outline_from_request(request)
     game_context_str, bet_example_str, bet_example_data, article_date = _build_game_context(request.game_context)
     prefs = _preferences_dict(request.article_preferences)
+    prefs["market"] = request.market
     source_facts = build_source_facts(
         keyword=request.keyword,
         title=request.title,
         state=request.state,
+        market=request.market,
         offer_property=request.offer_property,
         offer=offer_dict,
         alt_offers=alt_offers,
@@ -614,6 +631,7 @@ async def generate_draft_sync(
 @router.post("/validate")
 async def validate_content_endpoint(
     content: str = Body(..., embed=True),
+    market: str = Body("US", embed=True),
     state: str = Body("ALL", embed=True),
     keyword: str | None = Body(None, embed=True),
     offer_id: str | None = Body(None, embed=True),
@@ -627,6 +645,7 @@ async def validate_content_endpoint(
             offer_id,
             property_key=offer_property,
             state=state,
+            market=market,
         )
 
     result = validate_content_svc(
@@ -648,6 +667,7 @@ async def validate_content_endpoint(
             "validation",
             {
                 "state": state,
+                "market": market,
                 "keyword": keyword,
                 "result": payload,
             },
@@ -671,6 +691,8 @@ async def list_link_options(
     property: str | None = None,
     keyword: str = "",
     brand: str = "",
+    market: str = "US",
+    state: str = "ALL",
     limit: int = 16,
 ):
     """Return writer-selectable internal link options for the current property."""
@@ -694,6 +716,9 @@ async def list_link_options(
     seen_urls: set[str] = set()
     for link in [*( [operator_link] if operator_link else [] ), *suggested, *required, *picker_candidates]:
         url = str(link.url or "").strip()
+        if (market or "").strip().upper() == "CA" and (property or "").strip().lower() == "goal_com":
+            if "goal.com/en-ca/" not in url.lower():
+                continue
         url_key = _url_key(url)
         if not url_key or url_key in seen_urls:
             continue
