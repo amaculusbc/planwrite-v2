@@ -230,6 +230,7 @@ def test_get_picker_candidates_exposes_broader_property_link_catalog():
 def test_enforce_secondary_keyword_mentions_repeats_keywords_without_terms_section_pollution():
     html = (
         "<p>Main intro for the article.</p>"
+        "<p>Second intro paragraph about the offer.</p>"
         "<h2>Section One</h2><p>Body copy about the offer.</p>"
         "<h2>Section Two</h2><p>More body copy for the example.</p>"
         "<h2>Terms</h2><p>States Available: NJ, PA.</p>"
@@ -238,6 +239,8 @@ def test_enforce_secondary_keyword_mentions_repeats_keywords_without_terms_secti
     assert cleaned.lower().count("best dfs apps") >= 2
     assert "States Available: NJ, PA." in cleaned
     assert "it also ties into" not in cleaned.lower()
+    assert "<p>Main intro for the article.</p>" in cleaned
+    assert "<p>Second intro paragraph about the offer.</p>" in cleaned
 
 
 def test_render_terms_section_html_uses_current_state_for_multi_offer_headers():

@@ -1956,9 +1956,9 @@ def _enforce_secondary_keyword_mentions(html: str, secondary_keywords: list[str]
         return result
 
     phrase_templates = [
-        "Readers comparing {phrase} should start with the same offer details.",
-        "The same setup matters for anyone tracking {phrase}.",
-        "This section also gives readers a cleaner path into {phrase}.",
+        "For readers comparing {phrase}, the same offer details and availability notes still apply.",
+        "That context also helps if you are checking {phrase} before signing up.",
+        "Use the same offer and availability checks when reviewing {phrase}.",
     ]
 
     for phrase in phrases:
@@ -1969,10 +1969,14 @@ def _enforce_secondary_keyword_mentions(html: str, secondary_keywords: list[str]
 
         needed = target_mentions - current_mentions
         replacements = 0
+        paragraph_index = 0
 
         def _replace(match: re.Match[str]) -> str:
-            nonlocal replacements
+            nonlocal replacements, paragraph_index
+            paragraph_index += 1
             if replacements >= needed:
+                return match.group(0)
+            if paragraph_index <= 2:
                 return match.group(0)
             inner = match.group(1)
             plain = re.sub(r"<[^>]+>", " ", inner)
