@@ -9,6 +9,7 @@ from app.services.draft import (
     _clean_orphaned_keyword_page_references,
     _enforce_secondary_keyword_mentions,
     _ensure_primary_keyword_internal_link,
+    _ensure_intro_state_specificity,
     _ensure_keyword_in_first_paragraph,
     _extract_featured_label_from_event_context,
     _generate_signup_steps_structured,
@@ -37,6 +38,7 @@ from app.services.draft import (
     _resolve_intro_age_conflicts,
     _soften_repetitive_intro_opener,
     _strip_formatting_from_headings,
+    _strip_market_mismatch_phrasing,
     _strip_invalid_non_switchboard_links,
     _strip_source_and_prompt_leaks,
     _target_keyword_mentions,
@@ -44,6 +46,7 @@ from app.services.draft import (
     _trim_repeated_phrase_in_html,
 )
 from app.services.internal_links import InternalLinkSpec, get_links_by_urls, get_picker_candidates
+from app.services.outline import _sanitize_outline_for_market
 
 
 def test_soften_repetitive_intro_opener_rewrites_put_the_to_work():
@@ -98,6 +101,42 @@ def test_strip_source_and_prompt_leaks_removes_internal_context_phrasing():
     assert "typically see" not in cleaned
 
 
+def test_strip_market_mismatch_phrasing_converts_canada_output():
+    html = (
+        "<p>21+ and U.S. residents where permitted can use the offer. "
+        "States Available: AB, BC, ON. It is not nationwide.</p>"
+    )
+
+    cleaned = _strip_market_mismatch_phrasing(html, "CA")
+
+    assert "U.S. residents" not in cleaned
+    assert "21+ and" not in cleaned
+    assert "States Available" not in cleaned
+    assert "nationwide" not in cleaned
+    assert "Provinces Available: AB, BC, ON" in cleaned
+
+
+def test_sanitize_outline_for_canada_removes_us_eligibility_language():
+    outline = [
+        {
+            "level": "intro",
+            "title": "",
+            "talking_points": [
+                "State eligibility clearly and once: 21+ and U.S. residents where permitted, with eligible states listed.",
+            ],
+            "avoid": ["US states and nationwide language"],
+        }
+    ]
+
+    cleaned = _sanitize_outline_for_market(outline, "CA")
+    rendered = " ".join(cleaned[0]["talking_points"] + cleaned[0]["avoid"])
+
+    assert "U.S. residents" not in rendered
+    assert "eligible states" not in rendered.lower()
+    assert "US states" not in rendered
+    assert "listed Canadian provinces" in rendered
+
+
 def test_offer_states_text_prefers_selected_sportsbook_offer_states_over_operator_defaults():
     offer = {
         "brand": "bet365",
@@ -108,6 +147,15 @@ def test_offer_states_text_prefers_selected_sportsbook_offer_states_over_operato
     rendered = _offer_states_text(offer, "ALL")
 
     assert rendered == "ON, QC"
+
+
+def test_ensure_intro_state_specificity_respects_existing_province_label():
+    html = "<p>Use the offer before tip. Provinces Available: AB, BC, QC.</p>"
+
+    cleaned = _ensure_intro_state_specificity(html, "AB, BC, QC")
+
+    assert cleaned.count("Provinces Available") == 1
+    assert "States Available" not in cleaned
 
 
 def test_trim_repeated_see_full_terms_mentions_caps_phrase():

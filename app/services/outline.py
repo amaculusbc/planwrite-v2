@@ -463,6 +463,7 @@ def _apply_editorial_section_rules(
     if not outline:
         return outline
     prefs = _normalize_article_preferences(article_preferences)
+    market = prefs["market"]
 
     titles = _contextual_section_titles(
         keyword,
@@ -667,7 +668,65 @@ def _normalize_article_preferences(article_preferences: dict[str, Any] | None = 
         "include_table": bool(prefs.get("include_table", False)),
         "enforce_active_voice": prefs.get("enforce_active_voice", True) is not False,
         "structure_notes": str(prefs.get("structure_notes") or "").strip(),
+        "market": str(prefs.get("market") or "US").strip().upper() or "US",
     }
+
+
+def _market_compliance_block(market: str) -> str:
+    """Return market-specific planning rules that prevent geo/compliance leakage."""
+    market = str(market or "US").strip().upper()
+    if market == "CA":
+        return (
+            "MARKET COMPLIANCE:\n"
+            "- This is a Canada-market article.\n"
+            "- Use province/provinces language, not state/states language, when discussing availability.\n"
+            "- Never say U.S. residents, US users, US states, nationwide, or eligible states.\n"
+            "- Do not assert 21+ or US responsible-gaming/legal language unless the provided source explicitly says it.\n"
+            "- Use legal-age users in the listed Canadian provinces where permitted.\n"
+        )
+    return (
+        "MARKET COMPLIANCE:\n"
+        "- This is a United States-market article.\n"
+        "- Use state/states language for availability.\n"
+    )
+
+
+def _sanitize_outline_for_market(outline: list[dict], market: str) -> list[dict]:
+    """Remove common market-language leaks from model-generated outline guidance."""
+    market = str(market or "US").strip().upper()
+    if market != "CA":
+        return outline
+
+    replacements = [
+        (r"\b21\+\s+and\s+U\.?S\.?\s+residents\s+where\s+permitted(?:\s*\(void where prohibited\))?", "legal-age users in the listed Canadian provinces where permitted"),
+        (r"\bU\.?S\.?\s+residents\s+where\s+permitted\b", "users in the listed Canadian provinces where permitted"),
+        (r"\bU\.?S\.?\s+residents\b", "users in the listed Canadian provinces"),
+        (r"\bU\.?S\.?\s+users\b", "Canadian users in listed provinces"),
+        (r"\bUS\s+states\b", "Canadian provinces"),
+        (r"\bU\.?S\.?\s+states\b", "Canadian provinces"),
+        (r"\beligible states\b", "listed provinces"),
+        (r"\bStates Available\b", "Provinces Available"),
+        (r"\bstate availability\b", "province availability"),
+        (r"\bstate-specific\b", "province-specific"),
+        (r"\bnationwide\b", "available in listed provinces"),
+    ]
+
+    def clean_text(value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        cleaned = value
+        for pattern, replacement in replacements:
+            cleaned = re.sub(pattern, replacement, cleaned, flags=re.IGNORECASE)
+        return cleaned
+
+    cleaned_outline: list[dict] = []
+    for section in outline:
+        normalized = dict(section)
+        normalized["title"] = clean_text(normalized.get("title", ""))
+        normalized["talking_points"] = [clean_text(point) for point in normalized.get("talking_points", [])]
+        normalized["avoid"] = [clean_text(point) for point in normalized.get("avoid", [])]
+        cleaned_outline.append(normalized)
+    return cleaned_outline
 
 
 def _title_focus_terms(title: str, keyword: str, brand: str, event_context: str = "") -> list[str]:
@@ -743,6 +802,7 @@ async def generate_structured_outline(
     style_guide = get_style_instructions()
     variation_key = variation_key or uuid4().hex
     prefs = _normalize_article_preferences(article_preferences)
+    market = prefs["market"]
     title_focus_terms = _title_focus_terms(title, keyword, brand, event_context)
     section_titles = _contextual_section_titles(
         keyword,
@@ -902,6 +962,7 @@ RULES:
         f"- Enforce active voice: {'yes' if prefs['enforce_active_voice'] else 'no'}\n"
         + (f"- Structure notes: {structure_notes}\n" if structure_notes else "")
     )
+    market_compliance_block = _market_compliance_block(market)
     required_structure_lines = [
         "1. [INTRO] - Hook with date, offer value, promo code mention",
         "2. [SHORTCODE] - Promo card",
@@ -950,6 +1011,7 @@ STYLE EXAMPLES (match this tone):
 {title_focus_block}
 {secondary_keywords_block}
 {writer_prefs_block}
+{market_compliance_block}
 
 REQUIRED STRUCTURE:
 {required_structure_md}
@@ -992,12 +1054,13 @@ Output ONLY the JSON object, no other text:"""
             variation_key=variation_key,
             article_preferences=prefs,
         )
+        outline = _sanitize_outline_for_market(outline, market)
         return outline
     except Exception as e:
         print(f"Failed to generate structured outline: {e}")
 
     # Fallback to default structure
-    return _get_default_outline(
+    outline = _get_default_outline(
         keyword,
         brand,
         event_context,
@@ -1007,6 +1070,7 @@ Output ONLY the JSON object, no other text:"""
         variation_key=variation_key,
         article_preferences=prefs,
     )
+    return _sanitize_outline_for_market(outline, market)
 
 
 def _ensure_shortcodes(outline: list[dict]) -> list[dict]:

@@ -1584,8 +1584,8 @@ def _ensure_intro_state_specificity(html: str, states_text: str) -> str:
         html = _rewrite_html_text_nodes(
             html,
             lambda text: re.sub(
-                r"States Available:\s*[^.]+",
-                f"States Available: {normalized_states}",
+                r"(?:States|Provinces) Available:\s*[^.]+",
+                lambda match: f"{match.group(0).split(':', 1)[0]}: {normalized_states}",
                 text,
                 flags=re.IGNORECASE,
             ),
@@ -1596,7 +1596,7 @@ def _ensure_intro_state_specificity(html: str, states_text: str) -> str:
 
     state_tokens = [s.strip().upper() for s in normalized_states.split(",") if s.strip()]
     plain = re.sub(r"<[^>]+>", " ", html).upper()
-    has_states_available_phrase = "STATES AVAILABLE:" in plain
+    has_states_available_phrase = "STATES AVAILABLE:" in plain or "PROVINCES AVAILABLE:" in plain
     has_explicit_state = any(re.search(rf"\b{re.escape(token)}\b", plain) for token in state_tokens)
     if has_explicit_state and has_states_available_phrase:
         return html
@@ -2113,7 +2113,44 @@ def _strip_source_and_prompt_leaks(html: str) -> str:
     return _normalize_visible_punctuation(cleaned)
 
 
-def _apply_generation_quality_postprocess(html: str, keyword: str) -> str:
+def _strip_market_mismatch_phrasing(html: str, market: str = "US") -> str:
+    """Remove US-market phrasing from Canada-market output."""
+    if not html:
+        return html
+    if str(market or "US").strip().upper() != "CA":
+        return html
+
+    replacements = [
+        (r"\b21\+\s+and\s+U\.?S\.?\s+residents\s+where\s+permitted(?:\s*\(void where prohibited\))?", "legal-age users in the listed Canadian provinces where permitted"),
+        (r"\bU\.?S\.?\s+residents\s+where\s+permitted\b", "users in the listed Canadian provinces where permitted"),
+        (r"\bU\.?S\.?\s+residents\b", "users in the listed Canadian provinces"),
+        (r"\bU\.?S\.?\s+users\b", "Canadian users in listed provinces"),
+        (r"\bUS\s+states\b", "Canadian provinces"),
+        (r"\bU\.?S\.?\s+states\b", "Canadian provinces"),
+        (r"\beligible states\b", "listed provinces"),
+        (r"\bEligible States\b", "Eligible Provinces"),
+        (r"\bStates Available\b", "Provinces Available"),
+        (r"\bstate availability\b", "province availability"),
+        (r"\bstate-specific\b", "province-specific"),
+        (r"\bnationwide\b", "available in listed provinces"),
+        (r"\bMust be 21\+\b", "Legal age varies by province"),
+        (r"\b21\+\.\s*", ""),
+    ]
+    cleaned = html
+    for pattern, replacement in replacements:
+        cleaned = _rewrite_html_text_nodes(
+            cleaned,
+            lambda text, pattern=pattern, replacement=replacement: re.sub(
+                pattern,
+                replacement,
+                text,
+                flags=re.IGNORECASE,
+            ),
+        )
+    return _normalize_visible_punctuation(cleaned)
+
+
+def _apply_generation_quality_postprocess(html: str, keyword: str, market: str = "US") -> str:
     """Final article cleanup for intro consistency, keyword placement, and repetition."""
     if not html:
         return html
@@ -2124,6 +2161,7 @@ def _apply_generation_quality_postprocess(html: str, keyword: str) -> str:
     html = _trim_repeated_phrase_in_html(html, "see full terms", max_occurrences=2, replacement="see terms")
     html = _remove_inline_compliance_fragments(html)
     html = _strip_source_and_prompt_leaks(html)
+    html = _strip_market_mismatch_phrasing(html, market)
     html = _trim_dangling_paragraph_endings(html)
     html = _normalize_visible_punctuation(html)
     return html
@@ -3267,7 +3305,7 @@ async def generate_draft_from_outline(
         prediction_market=is_prediction_market,
         dfs_mode=is_dfs_mode,
     )
-    html_output = _apply_generation_quality_postprocess(html_output, keyword)
+    html_output = _apply_generation_quality_postprocess(html_output, keyword, prefs.get("market", "US"))
     primary_evergreen_link = get_operator_evergreen_link(property_key=offer_property, brand=brand)
     primary_evergreen_url = str(primary_evergreen_link.url) if primary_evergreen_link and primary_evergreen_link.url else ""
     if prefs.get("market") == "CA" and offer_property == "goal_com" and "goal.com/en-ca/" not in primary_evergreen_url.lower():
@@ -3318,6 +3356,7 @@ async def generate_draft_from_outline(
     html_output = _enforce_secondary_keyword_mentions(html_output, prefs["secondary_keywords"])
     html_output = _clean_orphaned_keyword_page_references(html_output, keyword)
     html_output = _strip_source_and_prompt_leaks(html_output)
+    html_output = _strip_market_mismatch_phrasing(html_output, prefs.get("market", "US"))
     html_output = _strip_formatting_from_headings(html_output)
 
     if output_format == "markdown":
@@ -3394,6 +3433,11 @@ async def _generate_intro_section(
         dfs_mode=dfs_mode,
     )
     prefs = _normalize_article_preferences(article_preferences)
+    is_canada_market = prefs.get("market") == "CA"
+    availability_label = "province" if is_canada_market else "state"
+    availability_heading = "Provinces Available" if is_canada_market else "States Available"
+    availability_context_label = "Eligible Provinces" if is_canada_market else "Eligible States"
+    excluded_context_label = "Excluded Provinces" if is_canada_market else "Excluded States"
 
     # Format talking points for prompt
     points_md = "\n".join(f"- {p}" for p in talking_points) if talking_points else ""
@@ -3448,13 +3492,18 @@ Output clean HTML only - use <p>, <a>, <strong> tags. No markdown. No exclamatio
     requirements = [
         "If there is a game hook, open sentence one with the matchup/time/network context and the offer value (do not reuse the same stock opener).",
         "If no game hook, start with a direct offer statement; avoid generic openers like \"If you are looking for a valuable offer...\"",
-        "Use explicit eligible states from source data. Do not say 'nationwide states'.",
-        "When listing state eligibility, use this exact label format: 'States Available: AZ, CO, ...'.",
+        f"Use explicit eligible {availability_label}s from source data. Do not say nationwide.",
+        f"When listing availability, use this exact label format: '{availability_heading}: AB, BC, ...'." if is_canada_market else "When listing state eligibility, use this exact label format: 'States Available: AZ, CO, ...'.",
         "Do not paste the full raw offer string more than once. Prefer a natural summary.",
         "Do not mention 21+, minimum odds, or long legal disclaimers in the intro.",
         "If expiration is mentioned, it must describe the bonus/credit expiration, not the offer itself.",
         "Do NOT include responsible gaming disclaimers here (handled at the end of the article).",
     ]
+    if is_canada_market:
+        requirements.extend([
+            "This is a Canada-market article. Never say U.S. residents, US users, US states, eligible states, or nationwide.",
+            "Use legal-age users in listed Canadian provinces where permitted; do not assert 21+ unless the source explicitly says it.",
+        ])
     if prediction_market:
         requirements.append(
             "Use prediction-market terms only (market, position, contract, trade). "
@@ -3532,9 +3581,9 @@ DATE (include this): {date_str}
 - Bonus Code: {bonus_code or "No code required"}
 - Bonus Amount: {bonus_amount or "See offer"}
 - {expiration_line[2:]}
-- Eligible States: {states_text}
-{f"- Excluded States: {excluded_states_text}" if excluded_states_text else ""}
-{f"- Age Summary: {age_summary}" if age_summary else ""}
+- {availability_context_label}: {states_text}
+{f"- {excluded_context_label}: {excluded_states_text}" if excluded_states_text else ""}
+{f"- Age Summary: {age_summary}" if age_summary and not is_canada_market else ""}
 
 {f"MULTI-OFFER SOURCE OF TRUTH (use correct brand/code pairings):{chr(10)}{multi_offer_context}{chr(10)}" if has_multiple_offers else ""}
 {f"INTERNAL MATCHUP NOTES (use at least {bc_core_required_count} naturally if available, but never cite the source):{chr(10)}" + chr(10).join(f"- {point}" for point in bc_core_points) + chr(10) if bc_core_points else ""}
@@ -3660,6 +3709,14 @@ async def _generate_body_section(
         dfs_mode=dfs_mode,
     )
     prefs = _normalize_article_preferences(article_preferences)
+    is_canada_market = prefs.get("market") == "CA"
+    availability_label = "provinces" if is_canada_market else "states"
+    availability_context_label = "Eligible Provinces" if is_canada_market else "Eligible States"
+    availability_format_example = (
+        'If provinces are listed, render as: "Provinces Available: AB, BC, ..."'
+        if is_canada_market
+        else 'If states are listed, render as: "States Available: AZ, CO, ..."'
+    )
 
     style_guide = get_style_instructions()
     rag_guidance = get_rag_usage_guidance()
@@ -3953,9 +4010,9 @@ Do NOT include step-by-step instructions (that's in How to Claim)."""
         section_objective = f"""SECTION OBJECTIVE: Briefly cover requirements without repeating the intro.
 
 Focus on:
-- 21+ and new customer requirement
-- Exact eligible states from source data
-- If states are listed, render as: "States Available: AZ, CO, ..."
+- {'Legal-age/province requirements from source data' if is_canada_market else '21+ and new customer requirement'}
+- Exact eligible {availability_label} from source data
+- {availability_format_example}
 - {'Promo-credit expiration and market-specific eligibility notes when provided' if prediction_market else 'Bonus-entry expiration and contest eligibility notes when provided' if dfs_mode else 'Minimum odds and expiration when provided'}
 
 {code_requirement}
@@ -4020,7 +4077,7 @@ OFFER CONTEXT:
 - Offer: {offer_text}
 - Offer Summary: {offer_summary}
 - Bonus Code: {bonus_code or "No code required"}
-- Eligible States: {primary_states_text}
+- {availability_context_label}: {primary_states_text}
 - {expiration_line[2:]}
 
 {"TALKING POINTS:" + chr(10) + points_md + chr(10) if points_md else ""}
@@ -4066,6 +4123,7 @@ PREVIOUSLY WRITTEN (do NOT repeat this content):
 SECTION-SPECIFIC GUARDRAILS:
 - Do not repeat the H1 wording or simply restate the heading.
 - Do not call the offer nationwide.
+- {"This is a Canada-market article. Use province/provinces language and never say U.S. residents, US users, US states, eligible states, or nationwide." if is_canada_market else "This is a US-market article. Use state/states language for availability."}
 - Do not paste the full raw offer string unless the section is explicitly about terms.
 - Outside Terms/Eligibility, avoid repeating 21+, minimum odds, or expiration details unless essential.
 - Keep any worked example tied to the exact event context or worked-example data provided above.
@@ -4334,7 +4392,7 @@ async def generate_draft_from_outline_streaming(
         prediction_market=is_prediction_market,
         dfs_mode=is_dfs_mode,
     )
-    html_output = _apply_generation_quality_postprocess(html_output, keyword)
+    html_output = _apply_generation_quality_postprocess(html_output, keyword, prefs.get("market", "US"))
     primary_evergreen_link = get_operator_evergreen_link(property_key=offer_property, brand=brand)
     primary_evergreen_url = str(primary_evergreen_link.url) if primary_evergreen_link and primary_evergreen_link.url else ""
     if prefs.get("market") == "CA" and offer_property == "goal_com" and "goal.com/en-ca/" not in primary_evergreen_url.lower():
@@ -4384,6 +4442,7 @@ async def generate_draft_from_outline_streaming(
     html_output = _enforce_secondary_keyword_mentions(html_output, prefs["secondary_keywords"])
     html_output = _clean_orphaned_keyword_page_references(html_output, keyword)
     html_output = _strip_source_and_prompt_leaks(html_output)
+    html_output = _strip_market_mismatch_phrasing(html_output, prefs.get("market", "US"))
     html_output = _strip_formatting_from_headings(html_output)
 
     if output_format == "markdown":
