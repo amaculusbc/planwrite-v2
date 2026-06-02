@@ -246,6 +246,27 @@ def _select_internal_id(internal_identifiers: list[str]) -> str:
     return internal_identifiers[0]
 
 
+def normalize_bam_affiliate_type(value: str | None) -> str:
+    """Normalize BAM affiliate types into shortcode-safe values."""
+    raw = str(value or "").strip().lower()
+    raw = re.sub(r"[_\s]+", "-", raw)
+    raw = re.sub(r"-+", "-", raw).strip("-")
+    aliases = {
+        "social-operator": "social-sportsbook",
+        "social-operators": "social-sportsbook",
+        "social-sportsbooks": "social-sportsbook",
+        "social-sportsbook": "social-sportsbook",
+        "prediction-market": "social-sportsbook",
+        "prediction-markets": "social-sportsbook",
+        "daily-fantasy": "dfs",
+        "fantasy": "dfs",
+        "dfs-app": "dfs",
+        "sportsbook": "sportsbook",
+        "casino": "casino",
+    }
+    return aliases.get(raw, raw or "sportsbook")
+
+
 def _looks_foreign_market_offer(offer_text: str, terms: str) -> bool:
     """Return True when an offer clearly targets a non-US market."""
     haystack = f"{offer_text}\n{terms}".lower()
@@ -362,11 +383,11 @@ def _parse_promotion(promo: dict, property_config: dict, context: str) -> dict:
     internal_id = internal_ids.get("fbo") or next(iter(internal_ids.values()), "") or _select_internal_id(internal_identifiers)
 
     # Build shortcode
-    affiliate_type = str(
+    affiliate_type = normalize_bam_affiliate_type(
         affiliate.get("affiliate_type")
         or affiliate.get("type")
         or "sportsbook"
-    ).strip().lower()
+    )
     shortcode = (
         f'[bam-inline-promotion placement-id="{property_config.get("placement_id", "2037")}" '
         f'property-id="{property_config.get("property_id", "1")}" '
@@ -402,6 +423,8 @@ def _parse_promotion(promo: dict, property_config: dict, context: str) -> dict:
         "promo_image": promo_image,
         "affiliate_id": affiliate_id,
         "campaign_id": campaign_id,
+        "affiliate_type": affiliate_type,
+        "internal_id": internal_id,
         "page_type": "sportsbook",
     }
     return enrich_offer_dict(offer)

@@ -35,6 +35,11 @@ def test_offer_matches_market_requires_canadian_province_for_ca_market():
     assert bam_offers._offer_matches_market({"states": ["NJ", "PA"]}, "US") is True
 
 
+def test_normalize_bam_affiliate_type_removes_spaces_for_shortcodes():
+    assert bam_offers.normalize_bam_affiliate_type("social operators") == "social-sportsbook"
+    assert bam_offers.normalize_bam_affiliate_type("daily fantasy") == "dfs"
+
+
 @pytest.mark.asyncio
 async def test_get_offers_bam_prefers_exact_state_match(monkeypatch):
     async def fake_fetch_offers_from_bam(*args, **kwargs):

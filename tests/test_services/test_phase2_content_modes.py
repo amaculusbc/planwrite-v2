@@ -31,9 +31,9 @@ def test_dfs_signup_fallback_avoids_bet_terms():
         code_strong="<strong>ACTION</strong>",
         dfs_mode=True,
     )
-    assert "qualifying fantasy entry" in html
+    assert "qualifying contest" in html or "fantasy entry" in html
     assert "qualifying bet" not in html
-    assert "trigger the bonus entries" in html
+    assert "bonus entries" in html
 
 
 def test_dfs_terms_fallback_avoids_sportsbook_fields():

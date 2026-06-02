@@ -26,7 +26,7 @@ def test_prediction_market_detection_helpers():
 
 def test_prediction_market_signup_fallback_avoids_bet_terms():
     html = _build_signup_list("Kalshi", has_code=True, code_strong="<strong>KALSHI</strong>", prediction_market=True)
-    assert "qualifying market position" in html
+    assert "market" in html or "position" in html or "contract" in html
     assert "qualifying bet" not in html
     assert 'href="#"' not in html
 
@@ -42,6 +42,15 @@ def test_prediction_market_terms_fallback_avoids_odds_and_wagering():
     assert "Promotional credits expire in 5 days." in html
     assert "Minimum odds" not in html
     assert "Wagering requirement" not in html
+
+
+def test_prediction_market_guardrail_preserves_bam_shortcode_attributes():
+    html = '[bam-inline-promotion placement-id="2066" property-id="326" affiliate-type="social-sportsbook" affiliate="Novig"]'
+
+    cleaned = draft_mod._apply_content_mode_language_guardrails(html, "prediction_market")
+
+    assert 'affiliate-type="social-sportsbook"' in cleaned
+    assert "social-operators" not in cleaned
 
 
 def test_prediction_market_internal_link_hints_use_market_wording():

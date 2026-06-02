@@ -5,6 +5,7 @@ from app.services.draft import (
     _inject_switchboard_links_for_offers,
     _link_first_keyword_internal,
     _offer_switchboard_url,
+    _render_html_offer_block,
 )
 from app.services.switchboard_links import inject_switchboard_links
 
@@ -122,3 +123,21 @@ def test_offer_switchboard_url_uses_goal_domain_not_action_fallback():
     assert "https://us-betting.goal.com/offers" in url
     assert "switchboard.actionnetwork.com" not in url
     assert "propertyId=326" in url
+
+
+def test_render_offer_block_rebuilds_shortcode_for_active_property():
+    block = _render_html_offer_block(
+        {
+            "brand": "Novig",
+            "shortcode": '[bam-inline-promotion placement-id="2037" property-id="1" context="web-article-top-stories" internal-id="evergreen" affiliate-type="social operators" affiliate="Novig"]',
+            "affiliate_type": "social operators",
+            "internal_id": "evergreen",
+        },
+        "",
+        property_key="goal_com",
+    )
+
+    assert 'placement-id="2066"' in block
+    assert 'property-id="326"' in block
+    assert 'affiliate-type="social-sportsbook"' in block
+    assert 'property-id="1"' not in block

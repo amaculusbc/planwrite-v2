@@ -227,16 +227,16 @@ def test_get_picker_candidates_exposes_broader_property_link_catalog():
     assert "https://www.fantasylabs.com/articles/underdog-promo-code" in urls
 
 
-def test_enforce_secondary_keyword_mentions_repeats_keywords_without_terms_section_pollution():
+def test_enforce_secondary_keyword_mentions_removes_forced_backfill_without_inserting():
     html = (
         "<p>Main intro for the article.</p>"
         "<p>Second intro paragraph about the offer.</p>"
-        "<h2>Section One</h2><p>Body copy about the offer.</p>"
+        "<h2>Section One</h2><p>Body copy about the offer. It also ties into best dfs apps.</p>"
         "<h2>Section Two</h2><p>More body copy for the example.</p>"
         "<h2>Terms</h2><p>States Available: NJ, PA.</p>"
     )
     cleaned = _enforce_secondary_keyword_mentions(html, ["best dfs apps"])
-    assert cleaned.lower().count("best dfs apps") >= 2
+    assert cleaned.lower().count("best dfs apps") == 0
     assert "States Available: NJ, PA." in cleaned
     assert "it also ties into" not in cleaned.lower()
     assert "<p>Main intro for the article.</p>" in cleaned
@@ -505,7 +505,7 @@ def test_build_signup_list_uses_state_and_event_instead_of_generic_guide_copy():
         signup_url="https://switchboard.actionnetwork.com/offers?x=1",
     )
     assert "sign-up guide" not in html.lower()
-    assert "sign-up link" in html
+    assert "sign-up link" in html or "registration page" in html or "offer link" in html
     assert "UFC 325 Main Card" in html
     assert "switchboard.actionnetwork.com" in html
     assert 'data-id="switchboard_tracking"' in html
@@ -606,7 +606,37 @@ def test_build_signup_list_uses_exact_qualifying_amount_for_dfs_entries():
         qualifying_amount="$5",
         dfs_mode=True,
     )
-    assert "first $5 fantasy entry" in html
+    assert "$5" in html
+    assert "fantasy entry" in html or "qualifying contest" in html
+
+
+def test_build_signup_list_varies_by_mode_and_generation_key():
+    pm_html = _build_signup_list(
+        brand="Kalshi",
+        has_code=True,
+        code_strong="<strong>KALSHI</strong>",
+        state="CO",
+        event_context="Featured market: Celtics vs Spurs.",
+        signup_url="https://switchboard.actionnetwork.com/offers?x=1",
+        qualifying_amount="$10",
+        prediction_market=True,
+        variation_key="pm-run",
+    )
+    sportsbook_html = _build_signup_list(
+        brand="bet365",
+        has_code=True,
+        code_strong="<strong>ACTION365</strong>",
+        state="NJ",
+        event_context="Featured game: Celtics vs Spurs.",
+        signup_url="https://switchboard.actionnetwork.com/offers?x=1",
+        qualifying_amount="$10",
+        variation_key="sportsbook-run",
+    )
+
+    assert pm_html != sportsbook_html
+    assert "position" in pm_html.lower() or "contract" in pm_html.lower()
+    assert "bet" in sportsbook_html.lower() or "wager" in sportsbook_html.lower()
+    assert "qualifying bet" not in pm_html.lower()
 
 
 def test_strip_invalid_non_switchboard_links_unwraps_relative_urls():

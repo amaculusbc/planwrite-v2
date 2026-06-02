@@ -22,7 +22,7 @@ from app.services.internal_links import (
     suggest_links_for_section,
 )
 from app.services.compliance import get_disclaimer_for_state
-from app.services.bam_offers import PROPERTIES, render_bam_offer_block
+from app.services.bam_offers import PROPERTIES, normalize_bam_affiliate_type, render_bam_offer_block
 from app.services.content_guidelines import get_style_instructions, get_temperature_by_section
 from app.services.style import get_rag_usage_guidance
 from app.services.switchboard_links import inject_switchboard_links, build_switchboard_url
@@ -567,12 +567,29 @@ def _apply_content_mode_language_guardrails(html: str, content_mode: str) -> str
     if replacer is None:
         return html
 
+    protected_shortcodes: dict[str, str] = {}
+
+    def _protect_shortcode(match: re.Match[str]) -> str:
+        key = f"__BAM_SHORTCODE_{len(protected_shortcodes)}__"
+        protected_shortcodes[key] = match.group(0)
+        return key
+
+    protected_html = re.sub(
+        r"\[bam-inline-promotion[^\]]+\]",
+        _protect_shortcode,
+        html,
+        flags=re.IGNORECASE,
+    )
+
     # Only rewrite visible text nodes so href/src attributes and URLs remain intact.
-    tokens = re.findall(r"<[^>]+>|[^<]+", html, flags=re.DOTALL)
+    tokens = re.findall(r"<[^>]+>|[^<]+", protected_html, flags=re.DOTALL)
     out: list[str] = []
     for token in tokens:
         out.append(token if token.startswith("<") else replacer(token))
-    return "".join(out)
+    result = "".join(out)
+    for key, shortcode in protected_shortcodes.items():
+        result = result.replace(key, shortcode)
+    return result
 
 
 def _adapt_disclaimer_for_prediction_market(disclaimer: str) -> str:
@@ -651,6 +668,53 @@ def _offer_switchboard_url(
     return str(offer.get("switchboard_link") or "").strip()
 
 
+def _shortcode_attr(shortcode: str, attr: str) -> str:
+    match = re.search(rf'\b{re.escape(attr)}\s*=\s*(["\'])(.*?)\1', shortcode or "", flags=re.IGNORECASE)
+    return match.group(2).strip() if match else ""
+
+
+def _build_property_correct_bam_shortcode(offer: dict[str, Any], property_key: str) -> str:
+    """Build a BAM shortcode with the selected property's placement/property IDs."""
+    prop = PROPERTIES.get(str(property_key or "action_network").strip().lower())
+    if not prop:
+        return str(offer.get("shortcode") or "").strip()
+    brand = str(offer.get("brand") or "").strip()
+    if not brand:
+        return ""
+    internal_id = str(
+        offer.get("internal_id")
+        or _shortcode_attr(str(offer.get("shortcode") or ""), "internal-id")
+        or "evergreen"
+    ).strip()
+    affiliate_type = normalize_bam_affiliate_type(
+        offer.get("affiliate_type")
+        or _shortcode_attr(str(offer.get("shortcode") or ""), "affiliate-type")
+        or "sportsbook"
+    )
+    context = str(prop.get("default_context") or "web-article-top-stories").strip()
+    return (
+        f'[bam-inline-promotion placement-id="{prop.get("placement_id", "2037")}" '
+        f'property-id="{prop.get("property_id", "1")}" '
+        f'context="{context}" internal-id="{escape(internal_id, quote=True)}" '
+        f'affiliate-type="{escape(affiliate_type, quote=True)}" '
+        f'affiliate="{escape(brand, quote=True)}"]'
+    )
+
+
+def _is_property_correct_bam_shortcode(shortcode: str, property_key: str) -> bool:
+    """Return True if a shortcode's property, placement and affiliate type are safe."""
+    if not shortcode or "[bam-inline-promotion" not in shortcode.lower():
+        return False
+    prop = PROPERTIES.get(str(property_key or "action_network").strip().lower())
+    if not prop:
+        return False
+    return (
+        _shortcode_attr(shortcode, "property-id") == str(prop.get("property_id"))
+        and _shortcode_attr(shortcode, "placement-id") == str(prop.get("placement_id"))
+        and _shortcode_attr(shortcode, "affiliate-type") == normalize_bam_affiliate_type(_shortcode_attr(shortcode, "affiliate-type"))
+    )
+
+
 def _build_signup_list(
     brand: str,
     has_code: bool,
@@ -661,11 +725,14 @@ def _build_signup_list(
     qualifying_amount: str = "",
     prediction_market: bool = False,
     dfs_mode: bool = False,
+    variation_key: str = "",
+    market: str = "US",
 ) -> str:
     """Build a deterministic 5-step signup list as HTML."""
     brand_label = brand or ("the operator" if prediction_market else "the DFS app" if dfs_mode else "the sportsbook")
     event_label = _extract_featured_label_from_event_context(event_context)
-    location_label = state if state and state != "ALL" else "your state"
+    is_canada_market = str(market or "US").strip().upper() == "CA"
+    location_label = state if state and state != "ALL" else "your province" if is_canada_market else "your state"
     mechanics_ref = (
         "how market contracts settle"
         if prediction_market
@@ -674,30 +741,76 @@ def _build_signup_list(
         else ""
     )
 
-    step_two = (
-        f"Create your account and enter {code_strong}."
-        if has_code
-        else "Create your account (no promo code required)."
-    )
-    step_one = (
-        f'Tap this <a data-id="switchboard_tracking" href="{signup_url}" rel="nofollow">{brand_label} sign-up link</a> to start registration in {location_label}.'
-        if signup_url
-        else f"Open {brand_label} in {location_label} and start registration."
+    step_one_options = [
+        f'Tap this <a data-id="switchboard_tracking" href="{signup_url}" rel="nofollow">{brand_label} sign-up link</a> to start registration in {location_label}.',
+        f'Open the <a data-id="switchboard_tracking" href="{signup_url}" rel="nofollow">{brand_label} registration page</a> and confirm it is available in {location_label}.',
+        f'Use the <a data-id="switchboard_tracking" href="{signup_url}" rel="nofollow">{brand_label} offer link</a> to begin the account flow for {location_label}.',
+    ] if signup_url else [
+        f"Open {brand_label} in {location_label} and start registration.",
+        f"Go to {brand_label} and begin the account flow for {location_label}.",
+        f"Start from {brand_label}'s registration screen and confirm access in {location_label}.",
+    ]
+    step_two_options = [
+        f"Create your account and enter {code_strong} in the promo field.",
+        f"Add your email and password, then apply {code_strong} before you finish signup.",
+        f"Register your account and attach {code_strong} when the promo-code field appears.",
+    ] if has_code else [
+        "Create your account; no promo code is required for this offer.",
+        "Register with your basic account details and continue without a promo code.",
+        "Set up the account profile, then continue because this offer does not require a code.",
+    ]
+    verify_options = [
+        "Complete identity and location checks, then log in.",
+        "Verify your identity and location so the app can show eligible offers.",
+        "Finish the required account verification before adding funds or entering a market.",
+    ]
+    fund_options = (
+        [
+            "Add funds or coins using an approved payment method.",
+            "Load the account with the required amount before opening a position.",
+            "Fund the account so you can complete the qualifying market action.",
+        ]
+        if prediction_market
+        else [
+            "Add funds if the app requires a paid entry.",
+            "Fund the account with an approved payment method before building your entry.",
+            "Load the account, then move to the contest lobby.",
+        ]
+        if dfs_mode
+        else [
+            "Deposit the required amount using an approved payment method.",
+            "Fund the account before choosing your first wager.",
+            "Add the minimum required deposit, then head to the sportsbook lobby.",
+        ]
     )
 
     qualifying_display = str(qualifying_amount or "").strip()
+    final_options = (
+        [
+            f"Open a qualifying position on {event_label or 'the featured market'} and review contract terms before settlement.",
+            f"Choose a contract for {event_label or 'the featured market'}, confirm the position size, and submit it before the market closes.",
+            f"Use the first {qualifying_display or 'qualifying'} action on {event_label or 'an eligible market'}, then track how the contract settles.",
+        ]
+        if prediction_market
+        else [
+            f"Enter your first {qualifying_display or 'qualifying'} fantasy entry for {event_label or 'the featured slate'} to trigger the bonus entries.",
+            f"Build an eligible entry for {event_label or 'the featured slate'}, review the picks, and submit it before lock.",
+            f"Join a qualifying contest on {event_label or 'the featured slate'} and confirm how bonus entries apply.",
+        ]
+        if dfs_mode
+        else [
+            f"Place your first {qualifying_display or 'qualifying'} bet on {event_label or 'the featured event'} or any market you prefer, then wait for it to settle.",
+            f"Choose an eligible wager for {event_label or 'the featured event'}, confirm the stake, and submit it before the market closes.",
+            f"Make the first qualifying bet, then check the promo tracker for bonus timing after settlement.",
+        ]
+    )
+    seed_key = variation_key or f"{brand}|{state}|{event_label}|{prediction_market}|{dfs_mode}"
     steps = [
-        step_one,
-        step_two,
-        "Complete identity verification and log in.",
-        "Fund your account with the required minimum.",
-        (
-            f"Place your first qualifying market position on {event_label or 'the featured market'} and confirm {mechanics_ref} before it settles."
-            if prediction_market
-            else f"Enter your first {qualifying_display or 'qualifying'} fantasy entry for {event_label or 'the featured slate'} to trigger the bonus entries."
-            if dfs_mode
-            else f"Place your first {qualifying_display or 'qualifying'} bet on {event_label or 'the featured event'} or any market you prefer, then wait for it to settle."
-        ),
+        _choose_variant(seed_key, "signup_1", step_one_options, brand_label, location_label),
+        _choose_variant(seed_key, "signup_2", step_two_options, brand_label, code_strong),
+        _choose_variant(seed_key, "signup_3", verify_options, brand_label),
+        _choose_variant(seed_key, "signup_4", fund_options, brand_label),
+        _choose_variant(seed_key, "signup_5", final_options, brand_label, event_label, mechanics_ref),
     ]
 
     items = "\n".join(f"<li>{step}</li>" for step in steps)
@@ -1945,7 +2058,7 @@ def _secondary_keyword_count(html: str, phrase: str) -> int:
 
 
 def _enforce_secondary_keyword_mentions(html: str, secondary_keywords: list[str] | None) -> str:
-    """Ensure secondary keywords appear repeatedly without stuffing one paragraph."""
+    """Remove forced secondary-keyword filler; model prompts handle natural usage."""
     phrases = [str(x).strip() for x in (secondary_keywords or []) if str(x).strip()]
     if not html or not phrases:
         return html
@@ -1955,43 +2068,24 @@ def _enforce_secondary_keyword_mentions(html: str, secondary_keywords: list[str]
     if not paragraph_pattern.search(result):
         return result
 
-    phrase_templates = [
-        "For readers comparing {phrase}, the same offer details and availability notes still apply.",
-        "That context also helps if you are checking {phrase} before signing up.",
-        "Use the same offer and availability checks when reviewing {phrase}.",
-    ]
-
     for phrase in phrases:
-        target_mentions = 2
-        current_mentions = _secondary_keyword_count(result, phrase)
-        if current_mentions >= target_mentions:
-            continue
-
-        needed = target_mentions - current_mentions
-        replacements = 0
-        paragraph_index = 0
-
-        def _replace(match: re.Match[str]) -> str:
-            nonlocal replacements, paragraph_index
-            paragraph_index += 1
-            if replacements >= needed:
-                return match.group(0)
-            if paragraph_index <= 2:
-                return match.group(0)
-            inner = match.group(1)
-            plain = re.sub(r"<[^>]+>", " ", inner)
-            plain_lower = re.sub(r"\s+", " ", plain).strip().lower()
-            if not plain_lower:
-                return match.group(0)
-            if phrase.lower() in plain_lower:
-                return match.group(0)
-            if "states available:" in plain_lower or "terms" in plain_lower or "1-800-gambler" in plain_lower:
-                return match.group(0)
-            sentence = phrase_templates[(sum(ord(ch) for ch in f"{phrase}|{replacements}") % len(phrase_templates))].format(phrase=phrase)
-            replacements += 1
-            return f"<p>{inner.strip()} {sentence}</p>"
-
-        result = paragraph_pattern.sub(_replace, result)
+        escaped = re.escape(phrase)
+        forced_patterns = [
+            rf"\s*It also ties into {escaped}\.",
+            rf"\s*That keeps {escaped} in the mix\.",
+            rf"\s*This is also relevant for {escaped}\.",
+            rf"\s*Readers comparing {escaped} should start with the same offer details\.",
+            rf"\s*The same setup matters for anyone tracking {escaped}\.",
+            rf"\s*This section also gives readers a cleaner path into {escaped}\.",
+            rf"\s*For readers comparing {escaped}, the same offer details and availability notes still apply\.",
+            rf"\s*That context also helps if you are checking {escaped} before signing up\.",
+            rf"\s*Use the same offer and availability checks when reviewing {escaped}\.",
+        ]
+        for pattern in forced_patterns:
+            result = _rewrite_html_text_nodes(
+                result,
+                lambda text, pattern=pattern: re.sub(pattern, "", text, flags=re.IGNORECASE),
+            )
 
     return _normalize_visible_punctuation(result)
 
@@ -2504,7 +2598,7 @@ def _extract_featured_label_from_event_context(event_context: str, games_only: b
     for pattern in patterns:
         match = re.search(pattern, event_context, flags=re.IGNORECASE)
         if match:
-            label = match.group(1).strip()
+            label = match.group(1).strip().rstrip(".")
             label = re.sub(r"\s@\s", " vs. ", label)
             return re.sub(r"\s+", " ", label)
     return ""
@@ -3261,7 +3355,7 @@ async def generate_draft_from_outline(
                     state=state,
                     property_key=offer_property,
                 ) or switchboard_url
-                block = _render_html_offer_block(current_offer, current_switchboard)
+                block = _render_html_offer_block(current_offer, current_switchboard, property_key=offer_property)
                 parts.append(block)
             else:
                 parts.append("<!-- Promo module placeholder -->")
@@ -3858,6 +3952,8 @@ async def _generate_body_section(
             qualifying_amount=str(primary_offer.get("qualifying_amount") or "").strip(),
             prediction_market=prediction_market,
             dfs_mode=dfs_mode,
+            variation_key=variation_key,
+            market=prefs.get("market", "US"),
         )
 
     section_kind = "claim" if is_how_to_claim else "overview" if is_overview else "general"
@@ -4214,11 +4310,16 @@ Write the section now (HTML only, no heading, no markdown):"""
             result = _inject_bc_core_points_into_html(result, bc_core_points[:bc_core_required_count], max_injections=bc_core_required_count)
     return result
 
-def _render_html_offer_block(offer: dict, switchboard_url: str) -> str:
+def _render_html_offer_block(offer: dict, switchboard_url: str, property_key: str = "action_network") -> str:
     """Render offer as HTML CTA block."""
-    shortcode = offer.get("shortcode") or ""
-    if not shortcode:
-        return "<!-- Promo module placeholder -->"
+    shortcode = str(offer.get("shortcode") or "").strip()
+    if not _is_property_correct_bam_shortcode(shortcode, property_key):
+        shortcode = _build_property_correct_bam_shortcode(offer, property_key)
+    if shortcode:
+        return shortcode
+    if switchboard_url:
+        brand = escape(str(offer.get("brand") or "Claim Offer").strip() or "Claim Offer")
+        return f'<p><a data-id="switchboard_tracking" href="{escape(switchboard_url, quote=True)}" rel="nofollow">Claim {brand} offer</a></p>'
     return shortcode
 
 
@@ -4347,7 +4448,7 @@ async def generate_draft_from_outline_streaming(
                     state=state,
                     property_key=offer_property,
                 ) or switchboard_url
-                block = _render_html_offer_block(current_offer, current_switchboard)
+                block = _render_html_offer_block(current_offer, current_switchboard, property_key=offer_property)
                 parts.append(block)
                 yield {"type": "content", "section": "shortcode", "content": block}
 
