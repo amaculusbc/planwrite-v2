@@ -166,6 +166,8 @@ def test_render_prediction_market_example_section_deterministic_uses_contract_ma
     assert "bonus bets" not in html.lower()
     assert "$25 qualifying action" in html
     assert "position on a Yes position on" not in html
+    assert "If I complete" not in html
+    assert "A $1.00 settlement pays" in html or "A close at $1.00 returns" in html
 
 
 @pytest.mark.asyncio

@@ -1758,7 +1758,7 @@ function articleWizard() {
                 event_context: eventLabel,
                 reward_amount: amounts.rewardAmount
             };
-            this.betExample = `If I complete the $${amounts.qualifyingAmount} qualifying action first, I can open a separate $${positionAmount} ${sideLabel} position on ${eventLabel}. At $${entryPrice.toFixed(2)} per contract, that buys about ${contracts.toFixed(0)} contracts. If it settles at $${settlementPrice.toFixed(2)}, the payout is about $${payout.toFixed(2)}, or roughly $${profit.toFixed(2)} in profit.`;
+            this.betExample = `I complete the $${amounts.qualifyingAmount} qualifying action first. Then I open a separate $${positionAmount} ${sideLabel} position on ${eventLabel}. At $${entryPrice.toFixed(2)} per contract, that buys about ${contracts.toFixed(0)} contracts. A $${settlementPrice.toFixed(2)} settlement pays about $${payout.toFixed(2)}, or roughly $${profit.toFixed(2)} in profit.`;
         },
 
         generateDfsExampleLocally() {
@@ -1777,7 +1777,7 @@ function articleWizard() {
                 event_context: eventLabel,
                 reward_amount: amounts.rewardAmount
             };
-            this.betExample = `If I use a $${entryAmount} entry on ${selection}, that first play is the qualifier. If the contest returns ${payoutMultiplier}x, I get back $${totalReturn} total including the entry fee. If it misses, I am only out the $${entryAmount} entry fee, and the app still credits the promo once the qualifying play posts.`;
+            this.betExample = `I use a $${entryAmount} entry on ${selection}. That first play qualifies the offer. A ${payoutMultiplier}x result returns $${totalReturn} total, including the entry fee. A miss costs only the $${entryAmount} entry fee, and the app still credits the promo once the qualifying play posts.`;
         },
 
         async fetchBatchOutline(item, gameContext) {

@@ -9,6 +9,7 @@ from app.services.draft import (
     _clean_orphaned_keyword_page_references,
     _enforce_secondary_keyword_mentions,
     _ensure_primary_keyword_internal_link,
+    _ensure_first_paragraph_keyword_internal_link,
     _ensure_intro_state_specificity,
     _ensure_keyword_in_first_paragraph,
     _extract_featured_label_from_event_context,
@@ -26,8 +27,10 @@ from app.services.draft import (
     _generate_body_section,
     _generate_intro_section,
     _polish_body_section_prose,
+    _polish_conditional_user_openers,
     _polish_intro_fallback_phrases,
     _polish_intro_section_prose,
+    _polish_worked_example_conditionals,
     _remove_generic_state_fallbacks,
     _render_dfs_intro_deterministic,
     _render_dfs_overview_section_deterministic,
@@ -40,10 +43,13 @@ from app.services.draft import (
     _strip_formatting_from_headings,
     _strip_market_mismatch_phrasing,
     _strip_invalid_non_switchboard_links,
+    _strip_unprovided_article_date,
     _strip_source_and_prompt_leaks,
     _target_keyword_mentions,
     _trim_dangling_paragraph_endings,
     _trim_repeated_phrase_in_html,
+    _unwrap_generic_offer_strong,
+    today_long,
 )
 from app.services.internal_links import InternalLinkSpec, get_links_by_urls, get_picker_candidates
 from app.services.outline import _sanitize_outline_for_market
@@ -71,10 +77,80 @@ def test_polish_intro_fallback_phrases_rewrites_awkward_prefixes():
     assert "For readers tracking" in cleaned
 
 
+def test_polish_intro_fallback_phrases_rewrites_if_youre_following_linked_keyword():
+    html = '<p>If you’re following <a href="https://example.com">bet365 bonus code</a>, Celtics vs. Spurs tips tonight.</p>'
+    cleaned = _polish_intro_fallback_phrases(html)
+    assert "If you" not in cleaned
+    assert 'For readers tracking <a href="https://example.com">bet365 bonus code</a>' in cleaned
+
+
+def test_polish_worked_example_conditionals_rewrites_common_if_phrasing():
+    html = (
+        "<p>If it wins, my profit is $45.45, and I get my $50 stake back. "
+        "If it loses, I'm down $50 on the bet.</p>"
+        "<p>If I put $200 in bonus bets on another NBA pick at -110 and it wins, "
+        "the payout is profit-only: $181.82.</p>"
+    )
+    cleaned = _polish_worked_example_conditionals(html)
+    assert "If it wins" not in cleaned
+    assert "If it loses" not in cleaned
+    assert "If I put" not in cleaned
+    assert "A win puts the profit at $45.45" in cleaned
+    assert "A loss leaves me down $50" in cleaned
+    assert "A later $200 bonus bet on another NBA pick at -110 pays profit-only" in cleaned
+
+
+def test_polish_conditional_user_openers_rewrites_if_youre_patterns():
+    html = (
+        "<p>If you’re already targeting Celtics vs. Spurs, this is an easy way to stretch one wager.</p>"
+        "<p>If you’re signing up for UFC 325, enter TOPACTION at registration.</p>"
+    )
+    cleaned = _polish_conditional_user_openers(html)
+    assert "If you" not in cleaned
+    assert "For Celtics vs. Spurs, this is an easy way" in cleaned
+    assert "When signing up for UFC 325, enter TOPACTION" in cleaned
+
+
+def test_strip_unprovided_article_date_removes_inferred_today_only_when_missing():
+    today = today_long()
+    html = (
+        f"<p>{today} turns attention to the UFC 325 main card ahead of Saturday night.</p>"
+        f"<p>{today}: Celtics vs. Spurs tips at 8:00 PM ET.</p>"
+        f"<p>{today} sets up a straightforward opportunity for Celtics vs. Spurs.</p>"
+        f"<p>{today} pairs well with UFC 325 Main Card.</p>"
+        f"<p>{today} lines up perfectly with UFC 325 Main Card.</p>"
+        f"<p>{today} lines up nicely with UFC 325 Main Card.</p>"
+    )
+    cleaned = _strip_unprovided_article_date(html, article_date="")
+    assert today not in cleaned
+    assert "The UFC 325 main card" in cleaned
+    assert "Celtics vs. Spurs tips" in cleaned
+    assert "a straightforward opportunity for Celtics vs. Spurs" in cleaned
+    assert "UFC 325 Main Card" in cleaned
+    preserved = _strip_unprovided_article_date(html, article_date=today)
+    assert today in preserved
+
+
 def test_ensure_keyword_in_first_paragraph_skips_when_first_paragraph_is_after_h2():
     html = "<h2>Terms & Conditions</h2><p>Deposit required. T&Cs apply.</p>"
     cleaned = _ensure_keyword_in_first_paragraph(html, "bet365 bonus code")
     assert cleaned == html
+
+
+def test_ensure_first_paragraph_keyword_internal_link_prioritizes_intro_keyword():
+    html = (
+        "<h1>bet365 Bonus Code</h1>"
+        "<p>Use bet365 bonus code tonight for the main offer.</p>"
+        "<h2>More Details</h2>"
+        "<p>Later bet365 bonus code coverage should stay plain.</p>"
+    )
+    cleaned = _ensure_first_paragraph_keyword_internal_link(
+        html,
+        "bet365 bonus code",
+        "https://example.com/bet365-bonus-code",
+    )
+    assert '<a href="https://example.com/bet365-bonus-code">bet365 bonus code</a>' in cleaned
+    assert cleaned.count('href="https://example.com/bet365-bonus-code"') == 1
 
 
 def test_normalize_matchup_vs_notation_replaces_at_symbol_in_visible_text_only():
@@ -243,6 +319,27 @@ def test_enforce_secondary_keyword_mentions_removes_forced_backfill_without_inse
     assert "<p>Second intro paragraph about the offer.</p>" in cleaned
 
 
+def test_enforce_secondary_keyword_mentions_adds_clean_missing_coverage_outside_terms():
+    html = (
+        "<p>The intro explains the promo code, offer amount, featured event, and state availability for readers.</p>"
+        "<p>The next paragraph gives practical account setup details before moving into the matchup angle.</p>"
+        "<h2>Terms & Conditions</h2><p>Terms language should not receive secondary keyword wording.</p>"
+    )
+    cleaned = _enforce_secondary_keyword_mentions(html, ["best dfs apps"])
+    assert cleaned.lower().count("best dfs apps") == 2
+    assert "it also ties into" not in cleaned.lower()
+    terms_html = cleaned.split("<h2>Terms & Conditions</h2>", 1)[1].lower()
+    assert "best dfs apps" not in terms_html
+
+
+def test_unwrap_generic_offer_strong_removes_bold_brand_offer_without_touching_code():
+    html = "<p>Use the <strong>Underdog offer</strong> tonight with <strong>TOPACTION</strong>.</p>"
+    cleaned = _unwrap_generic_offer_strong(html, "Underdog")
+    assert "<strong>Underdog offer</strong>" not in cleaned
+    assert "Underdog offer" in cleaned
+    assert "<strong>TOPACTION</strong>" in cleaned
+
+
 def test_render_terms_section_html_uses_current_state_for_multi_offer_headers():
     html = _render_terms_section_html(
         offers=[
@@ -366,6 +463,8 @@ def test_render_bet_example_section_deterministic_uses_reward_phrase_not_raw_off
     assert html is not None
     assert "Bet $10 Get $50 in Bonus Bets" not in html
     assert "$50 in bonus bets" in html.lower()
+    assert "If I place" not in html
+    assert "A win returns" in html
 
 
 def test_render_bet_example_section_deterministic_builds_contextual_fallback_for_custom_event():
@@ -404,6 +503,8 @@ def test_render_dfs_example_section_deterministic_uses_qualifying_entry_amount()
     assert "$5" in html
     assert "$50 entry" not in html
     assert "$50 in bonus entries" in html.lower()
+    assert "If I use" not in html
+    assert "A miss costs" in html
     assert "for Los Angeles Lakers vs Oklahoma City Thunder for Los Angeles Lakers vs Oklahoma City Thunder" not in html
 
 
@@ -546,6 +647,37 @@ async def test_generate_intro_section_uses_ai_prompt_for_dfs_intro(monkeypatch):
     assert "DFS writer" in captured["system_prompt"]
     assert "TOPACTION" in html
     assert "States Available:" in html
+
+
+@pytest.mark.asyncio
+async def test_generate_intro_section_does_not_default_to_today_when_article_date_missing(monkeypatch):
+    captured: dict[str, str] = {}
+
+    async def _fake_generate_completion(*, prompt, system_prompt, temperature, max_tokens):
+        captured["prompt"] = prompt
+        return "<p>bet365 bonus code TOPACTION is tied to Celtics vs. Spurs at 8:00 PM ET on ESPN.</p><p>States Available: NJ, PA.</p>"
+
+    monkeypatch.setattr("app.services.draft.generate_completion", _fake_generate_completion)
+
+    await _generate_intro_section(
+        keyword="bet365 bonus code",
+        title="bet365 bonus code: Celtics vs. Spurs",
+        offer={
+            "brand": "bet365",
+            "offer_text": "Bet $10, Get $365 in Bonus Bets",
+            "bonus_code": "TOPACTION",
+            "bonus_amount": "$365",
+            "states": ["NJ", "PA"],
+        },
+        all_offers=None,
+        state="NJ",
+        talking_points=[],
+        event_context="Featured game: Boston Celtics vs San Antonio Spurs. Game time: Friday, March 20 at 8:00 PM ET. Network: ESPN.",
+        article_date="",
+    )
+    assert "ARTICLE DATE: not provided" in captured["prompt"]
+    assert "Do not mention today's date" in captured["prompt"]
+    assert "DATE (include this)" not in captured["prompt"]
 
 
 @pytest.mark.asyncio

@@ -943,6 +943,33 @@ def _ensure_primary_keyword_internal_link(html: str, keyword: str, url: str) -> 
     return _link_first_keyword_internal(updated, keyword, url)
 
 
+def _ensure_first_paragraph_keyword_internal_link(html: str, keyword: str, url: str) -> str:
+    """Bias the primary evergreen link into the first paragraph when the keyword is present."""
+    if not html or not keyword or not url:
+        return html
+
+    first_para_match = re.search(r"<p\b[^>]*>.*?</p>", html, flags=re.IGNORECASE | re.DOTALL)
+    if not first_para_match:
+        return _ensure_primary_keyword_internal_link(html, keyword, url)
+
+    first_para = first_para_match.group(0)
+    keyword_pattern = re.compile(re.escape(keyword), flags=re.IGNORECASE)
+    plain_first = _html_to_plain_text(first_para)
+    if not keyword_pattern.search(plain_first):
+        return _ensure_primary_keyword_internal_link(html, keyword, url)
+
+    # If the first paragraph already links the keyword, normalize that link to the selected URL.
+    normalized_first = _ensure_primary_keyword_internal_link(first_para, keyword, url)
+    if normalized_first != first_para:
+        return html[: first_para_match.start()] + normalized_first + html[first_para_match.end():]
+
+    linked_first = _link_first_keyword_internal(first_para, keyword, url)
+    if linked_first != first_para:
+        return html[: first_para_match.start()] + linked_first + html[first_para_match.end():]
+
+    return _ensure_primary_keyword_internal_link(html, keyword, url)
+
+
 def _dedupe_non_switchboard_links_by_url(html: str) -> str:
     """Unwrap duplicate non-switchboard links after the first occurrence."""
     if not html:
@@ -1769,9 +1796,9 @@ def _ensure_keyword_in_first_paragraph(html: str, keyword: str) -> str:
         return html
     variants = [
         f"For readers tracking {keyword}, ",
-        f"If you're looking into {keyword}, ",
-        f"For this matchup, the {keyword} angle is straightforward: ",
+        f"For this event, the {keyword} angle is straightforward: ",
         f"The latest {keyword} angle ties into this event: ",
+        f"Readers checking {keyword} get the main offer details up front: ",
     ]
     prefix = variants[sum(ord(ch) for ch in f"{keyword}|{plain}") % len(variants)]
     updated_para = f"<p>{prefix}{first_inner.strip()}</p>"
@@ -1788,9 +1815,140 @@ def _polish_intro_fallback_phrases(html: str) -> str:
         (r"(.+?)\s+is part of the story here\.\s*", r"For readers tracking \1, "),
     ]
     cleaned = html
+    cleaned = re.sub(
+        r"(<p\b[^>]*>)\s*If you(?:'|’|&rsquo;|&#8217;)re following\s+((?:<a\b[^>]*>.*?</a>|[^,]+)),\s*",
+        r"\1For readers tracking \2, ",
+        cleaned,
+        count=1,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
     for pattern, replacement in replacements:
         cleaned = re.sub(pattern, replacement, cleaned, count=1, flags=re.IGNORECASE)
     return cleaned
+
+
+def _polish_worked_example_conditionals(html: str) -> str:
+    """Rewrite common worked-example 'If...' constructions into direct active phrasing."""
+    if not html:
+        return html
+
+    replacements = [
+        (
+            r"\bIf my bet wins at ([^,\.]+),\s+I profit\b",
+            r"A win at \1 profits",
+        ),
+        (
+            r"\bIf it wins,\s+my profit is\b",
+            "A win puts the profit at",
+        ),
+        (
+            r"\bIf it wins,\s+I profit\b",
+            "A win profits",
+        ),
+        (
+            r"\bIf (?:it|the bet) loses,\s+I(?:'|’|&rsquo;|&#8217;)?m\s+down\b",
+            "A loss leaves me down",
+        ),
+        (
+            r"\bIf (?:it|the bet) loses,\s+I am\s+down\b",
+            "A loss leaves me down",
+        ),
+        (
+            r"\bIf it does not cash,\s+I lose\b",
+            "A losing entry costs",
+        ),
+        (
+            r"\bIf it settles at (\$[\d.]+),\s+the payout is\b",
+            r"A \1 settlement pays",
+        ),
+        (
+            r"\bIf it settles the other way,\s+I can lose\b",
+            "The opposite settlement risks",
+        ),
+        (
+            r"\bIf I put (\$[\d,]+) in bonus bets on ([^\.]+?) and it wins,\s+the payout is profit-only:",
+            r"A later \1 bonus bet on \2 pays profit-only:",
+        ),
+        (
+            r"\bI put (\$[\d,]+) in bonus bets on ([^\.]+?) and it wins,\s+the payout is profit-only:",
+            r"A later \1 bonus bet on \2 pays profit-only:",
+        ),
+    ]
+    cleaned = html
+    for pattern, replacement in replacements:
+        cleaned = _rewrite_html_text_nodes(
+            cleaned,
+            lambda text, pattern=pattern, replacement=replacement: re.sub(
+                pattern,
+                replacement,
+                text,
+                flags=re.IGNORECASE,
+            ),
+        )
+    return _normalize_visible_punctuation(cleaned)
+
+
+def _polish_conditional_user_openers(html: str) -> str:
+    """Reduce repetitive 'If you're...' user-facing openers."""
+    if not html:
+        return html
+    apostrophe = r"(?:'|’|�|&rsquo;|&#8217;|â€™)"
+    replacements = [
+        (
+            rf"\bIf you{apostrophe}re already targeting ([^,]+),\s+this is\b",
+            r"For \1, this is",
+        ),
+        (
+            rf"\bIf you{apostrophe}re signing up for ([^,]+),\s+",
+            r"When signing up for \1, ",
+        ),
+        (
+            rf"\bIf you{apostrophe}re using\b",
+            "When using",
+        ),
+        (
+            rf"\bIf you{apostrophe}re eligible and want\b",
+            "For eligible readers who want",
+        ),
+    ]
+    cleaned = html
+    for pattern, replacement in replacements:
+        cleaned = _rewrite_html_text_nodes(
+            cleaned,
+            lambda text, pattern=pattern, replacement=replacement: re.sub(
+                pattern,
+                replacement,
+                text,
+                flags=re.IGNORECASE,
+            ),
+        )
+    return _normalize_visible_punctuation(cleaned)
+
+
+def _strip_unprovided_article_date(html: str, article_date: str = "") -> str:
+    """Remove today's date when no article date was supplied by the request."""
+    if not html or str(article_date or "").strip():
+        return html
+    today = today_long()
+    if today not in _html_to_plain_text(html):
+        return html
+    today_escaped = re.escape(today)
+
+    def _transform(text: str) -> str:
+        original = text
+        text = re.sub(rf"\bAs of\s+{today_escaped},\s*", "", text, flags=re.IGNORECASE)
+        text = re.sub(rf"\b{today_escaped}:\s*", "", text, flags=re.IGNORECASE)
+        text = re.sub(rf"\b{today_escaped}\s+pairs cleanly with\s+", "", text, flags=re.IGNORECASE)
+        text = re.sub(rf"\b{today_escaped}\s+pairs(?:\s+\w+)?\s+with\s+", "", text, flags=re.IGNORECASE)
+        text = re.sub(rf"\b{today_escaped}\s+turns attention to\s+", "", text, flags=re.IGNORECASE)
+        text = re.sub(rf"\b{today_escaped}\s+sets up\s+", "", text, flags=re.IGNORECASE)
+        text = re.sub(rf"\b{today_escaped}\s+lines up(?:\s+\w+)?\s+with\s+", "", text, flags=re.IGNORECASE)
+        text = re.sub(rf"\s+ahead of\s+{today_escaped}\b", "", text, flags=re.IGNORECASE)
+        if text != original and re.match(r"^\s*the\b", text):
+            text = re.sub(r"^(\s*)the\b", r"\1The", text, count=1)
+        return text
+
+    return _normalize_visible_punctuation(_rewrite_html_text_nodes(html, _transform))
 
 
 def _normalize_visible_punctuation(html: str) -> str:
@@ -2058,7 +2216,7 @@ def _secondary_keyword_count(html: str, phrase: str) -> int:
 
 
 def _enforce_secondary_keyword_mentions(html: str, secondary_keywords: list[str] | None) -> str:
-    """Remove forced secondary-keyword filler; model prompts handle natural usage."""
+    """Clean forced filler and add light, fact-safe secondary coverage when missing."""
     phrases = [str(x).strip() for x in (secondary_keywords or []) if str(x).strip()]
     if not html or not phrases:
         return html
@@ -2086,6 +2244,54 @@ def _enforce_secondary_keyword_mentions(html: str, secondary_keywords: list[str]
                 result,
                 lambda text, pattern=pattern: re.sub(pattern, "", text, flags=re.IGNORECASE),
             )
+
+    def _safe_paragraph_spans(source: str) -> list[re.Match[str]]:
+        blocked_heading = ""
+        spans: list[re.Match[str]] = []
+        for match in re.finditer(
+            r"<h[1-6]\b[^>]*>(.*?)</h[1-6]>|<p\b[^>]*>(.*?)</p>",
+            source,
+            flags=re.IGNORECASE | re.DOTALL,
+        ):
+            heading = match.group(1)
+            paragraph = match.group(2)
+            if heading is not None:
+                blocked_heading = _html_to_plain_text(heading).lower()
+                continue
+            if paragraph is None:
+                continue
+            if any(token in blocked_heading for token in ("terms", "conditions", "fine print", "rules", "settlement")):
+                continue
+            if any(token in blocked_heading for token in ("sign up", "sign-up", "signup", "claim")):
+                continue
+            plain = _html_to_plain_text(paragraph).strip()
+            if len(plain.split()) < 12:
+                continue
+            if "data-id=\"switchboard_tracking\"" in paragraph.lower() or "[bam-inline-promotion" in paragraph.lower():
+                continue
+            spans.append(match)
+        return spans
+
+    sentence_templates = [
+        "The same checks matter for {phrase}: offer amount, code status, and available states.",
+        "Use {phrase} searches to confirm the selected offer instead of relying on stale terms.",
+    ]
+
+    for phrase in phrases:
+        # Only hard-fill when the model missed repeated coverage. Avoid overdoing it.
+        while _secondary_keyword_count(result, phrase) < 2:
+            spans = _safe_paragraph_spans(result)
+            if not spans:
+                break
+            count = _secondary_keyword_count(result, phrase)
+            target = spans[min(count, len(spans) - 1)]
+            paragraph = target.group(0)
+            inner = target.group(2) or ""
+            addition = sentence_templates[count % len(sentence_templates)].format(phrase=escape(phrase))
+            if re.search(re.escape(phrase), _html_to_plain_text(inner), flags=re.IGNORECASE):
+                break
+            updated = f"<p>{inner.strip()} {addition}</p>"
+            result = result[: target.start()] + updated + result[target.end():]
 
     return _normalize_visible_punctuation(result)
 
@@ -2124,6 +2330,25 @@ def _clean_orphaned_keyword_page_references(html: str, keyword: str) -> str:
     )
     cleaned = colon_pattern.sub("page.", html)
     return at_pattern.sub("page", cleaned)
+
+
+def _unwrap_generic_offer_strong(html: str, brand: str = "") -> str:
+    """Do not leave generic 'Brand offer' wording bolded in reader-facing prose."""
+    if not html:
+        return html
+    labels = ["the offer"]
+    brand_clean = str(brand or "").strip()
+    if brand_clean:
+        labels.append(f"{brand_clean} offer")
+    result = html
+    for label in labels:
+        result = re.sub(
+            rf"<strong>\s*({re.escape(label)})\s*</strong>",
+            r"\1",
+            result,
+            flags=re.IGNORECASE,
+        )
+    return result
 
 
 def _normalize_matchup_vs_notation(html: str) -> str:
@@ -2256,6 +2481,8 @@ def _apply_generation_quality_postprocess(html: str, keyword: str, market: str =
     html = _soften_repetitive_intro_opener(html)
     html = _ensure_keyword_in_first_paragraph(html, keyword)
     html = _polish_intro_fallback_phrases(html)
+    html = _polish_worked_example_conditionals(html)
+    html = _polish_conditional_user_openers(html)
     html = _normalize_matchup_vs_notation(html)
     html = _trim_repeated_phrase_in_html(html, "see full terms", max_occurrences=2, replacement="see terms")
     html = _remove_inline_compliance_fragments(html)
@@ -3109,17 +3336,17 @@ def _render_prediction_market_example_section_deterministic(
     profit = gross_payout - position_amount
     reward_phrase = _offer_reward_phrase_visible(offer).replace("bonus bets", "promo credits")
     bonus_code = str(offer.get("bonus_code") or "").strip()
-    code_sentence = f" and enter <strong>{bonus_code}</strong> at signup" if bonus_code else ""
+    code_sentence = f" after entering <strong>{bonus_code}</strong> at signup" if bonus_code else ""
 
     first_para_options = [
-        f"<p>If I complete the ${qualifying_amount:.0f} qualifying action{code_sentence}, I can still open a separate ${position_amount:.0f} Yes position on {selection}. At ${entry_price:.2f} per contract, that buys about {contracts:.0f} contracts. If the market settles at ${settlement_price:.2f}, the payout is about ${gross_payout:.2f}, which works out to roughly ${profit:.2f} in profit.</p>",
-        f"<p>Say the ${qualifying_amount:.0f} qualifying action is already done{code_sentence} and I use a separate ${position_amount:.0f} Yes position on {selection}. At ${entry_price:.2f} per contract, that is about {contracts:.0f} contracts. If the market closes at ${settlement_price:.2f}, the position returns about ${gross_payout:.2f}, or roughly ${profit:.2f} in profit.</p>",
-        f"<p>After the ${qualifying_amount:.0f} qualifying action{code_sentence}, I can put ${position_amount:.0f} behind a Yes position on {selection}. At ${entry_price:.2f} per contract, that buys roughly {contracts:.0f} contracts. If settlement lands at ${settlement_price:.2f}, the payout is about ${gross_payout:.2f}, which means about ${profit:.2f} in profit.</p>",
+        f"<p>I complete the ${qualifying_amount:.0f} qualifying action{code_sentence}. Then I open a separate ${position_amount:.0f} Yes position on {selection}. At ${entry_price:.2f} per contract, that buys about {contracts:.0f} contracts. A ${settlement_price:.2f} settlement pays about ${gross_payout:.2f}, or roughly ${profit:.2f} in profit.</p>",
+        f"<p>The ${qualifying_amount:.0f} qualifying action comes first{code_sentence}. Then I use a separate ${position_amount:.0f} Yes position on {selection}. At ${entry_price:.2f} per contract, that buys about {contracts:.0f} contracts. A close at ${settlement_price:.2f} returns about ${gross_payout:.2f}, or roughly ${profit:.2f} in profit.</p>",
+        f"<p>After the ${qualifying_amount:.0f} qualifying action{code_sentence}, I put ${position_amount:.0f} behind a Yes position on {selection}. At ${entry_price:.2f} per contract, that buys roughly {contracts:.0f} contracts. A ${settlement_price:.2f} settlement pays about ${gross_payout:.2f}, which means about ${profit:.2f} in profit.</p>",
     ]
     second_para_options = [
-        f"<p>If that position settles the other way, I lose the ${position_amount:.0f} position amount, but I still keep the {reward_phrase} from the offer. That makes the reward better for spreading into multiple smaller positions instead of forcing one large market view.</p>",
-        f"<p>If the market moves the other way, the ${position_amount:.0f} position can lose, but the {reward_phrase} from the offer is still there. That is why the reward works better as extra flexibility across several positions than as fuel for one oversized trade.</p>",
-        f"<p>If the position does not settle in my favor, I can still lose the ${position_amount:.0f} amount put into that market while keeping the {reward_phrase}. The better use of the reward is to spread into smaller follow-up positions instead of doubling down on one market view.</p>",
+        f"<p>The opposite settlement costs the ${position_amount:.0f} position amount, but the {reward_phrase} from the offer remains. That makes the reward better for several smaller positions instead of one large market view.</p>",
+        f"<p>A market move the other way puts the ${position_amount:.0f} position at risk, but the {reward_phrase} from the offer remains. Use that reward as extra flexibility across several positions, not as fuel for one oversized trade.</p>",
+        f"<p>An unfavorable settlement still risks the ${position_amount:.0f} amount in that market while the {reward_phrase} remains available. The cleaner use is several smaller follow-up positions instead of one doubled-down view.</p>",
     ]
     first_para = _choose_variant(variation_key, "pm_claim_p1", first_para_options, selection, reward_phrase)
     second_para = _choose_variant(variation_key, "pm_claim_p2", second_para_options, selection, reward_phrase)
@@ -3180,13 +3407,17 @@ def _render_bet_example_section_deterministic(
         if reward_amount_value and reward_amount_value >= 25
         else "A practical next step is saving those bonus bets for later markets tied to the same slate."
     )
-    code_sentence = f" Because I used <strong>{bonus_code}</strong> at sign-up," if bonus_code else ""
+    trigger_sentence = (
+        f"Because I used <strong>{bonus_code}</strong> at sign-up, the settled bet still triggers {reward_phrase}."
+        if bonus_code
+        else f"The settled bet still triggers {reward_phrase}."
+    )
 
     return (
-        f"<p>Here is a worked example using {book_label}. If I place a ${bet_amount:.0f} bet on {selection} at {odds_display}{event_clause}, "
-        f"I profit ${profit:.2f} if it wins and get back ${total_return:.2f} total (including stake).</p>"
-        f"<p>If the bet loses, I am down ${bet_amount:.0f} on the wager.{code_sentence} once it settles I still receive {reward_phrase}. "
-        f"{bonus_usage_sentence} Bonus bet stake is not returned with winnings, so think of it as a profit-only payout.</p>"
+        f"<p>Here is a worked example using {book_label}. I place a ${bet_amount:.0f} bet on {selection} at {odds_display}{event_clause}. "
+        f"A win returns ${total_return:.2f} total, including ${profit:.2f} in profit and the original stake.</p>"
+        f"<p>A loss leaves me down ${bet_amount:.0f} on the wager. {trigger_sentence} "
+        f"{bonus_usage_sentence} Bonus bet stake does not return with winnings, so treat it as a profit-only payout.</p>"
     )
 
 
@@ -3223,9 +3454,9 @@ def _render_dfs_example_section_deterministic(
         event_clause = f" for {event_label}"
 
     first_para_options = [
-        f"<p>If I use a ${entry_amount:.0f} DFS entry on {selection}{event_clause}{code_sentence}, that first play is the qualifier. If the card returns {payout_multiplier:.0f}x, I get back ${total_return:.0f} total including the original entry fee. If it misses, I am only out the ${entry_amount:.0f} entry fee, and the app still credits {reward_phrase} once the qualifying play posts.</p>",
-        f"<p>Say I start with a ${entry_amount:.0f} DFS entry on {selection}{event_clause}{code_sentence}. That opening entry is the qualifier. If the card comes back at {payout_multiplier:.0f}x, the total return is ${total_return:.0f} including the entry fee. If it does not cash, the loss is still just the ${entry_amount:.0f} entry fee, and the app posts {reward_phrase} after the qualifier settles.</p>",
-        f"<p>I can treat a ${entry_amount:.0f} DFS entry on {selection}{event_clause} as the trigger for the offer{code_sentence}. A {payout_multiplier:.0f}x result turns that into ${total_return:.0f} back in total, and a miss leaves me down only ${entry_amount:.0f} on the entry while the app still credits {reward_phrase} after the qualifying play posts.</p>",
+        f"<p>I use a ${entry_amount:.0f} DFS entry on {selection}{event_clause}{code_sentence}. That first play qualifies the offer. A {payout_multiplier:.0f}x card returns ${total_return:.0f} total, including the original entry fee. A miss costs only the ${entry_amount:.0f} entry fee, and the app still credits {reward_phrase} once the qualifying play posts.</p>",
+        f"<p>Say I start with a ${entry_amount:.0f} DFS entry on {selection}{event_clause}{code_sentence}. That opening entry triggers the offer. A {payout_multiplier:.0f}x result returns ${total_return:.0f} total, including the entry fee. A losing card keeps the loss at ${entry_amount:.0f}, then the app posts {reward_phrase} after settlement.</p>",
+        f"<p>A ${entry_amount:.0f} DFS entry on {selection}{event_clause} triggers the offer{code_sentence}. A {payout_multiplier:.0f}x result turns it into ${total_return:.0f} back in total. A miss leaves me down ${entry_amount:.0f} on the entry, while the app still credits {reward_phrase} after the qualifying play posts.</p>",
     ]
     second_para_options = [
         f"<p>From there, treat {reward_phrase} as contest-only entry credit. A clean next step is splitting it into five ${split_amount:.0f} entries across different builds, so one game script does not decide the whole slate.</p>",
@@ -3412,7 +3643,7 @@ async def generate_draft_from_outline(
         preferred_urls = [url for url in preferred_urls if "goal.com/en-ca/" in url.lower()]
     primary_internal_url = preferred_urls[0] if preferred_urls else primary_evergreen_url
     if primary_internal_url:
-        html_output = _ensure_primary_keyword_internal_link(html_output, keyword, primary_internal_url)
+        html_output = _ensure_first_paragraph_keyword_internal_link(html_output, keyword, primary_internal_url)
 
     # Ensure single disclaimer at the end
     disclaimer_state = "CANADA" if prefs.get("market") == "CA" and str(state or "").upper() == "ALL" else state
@@ -3454,7 +3685,9 @@ async def generate_draft_from_outline(
     html_output = _target_keyword_mentions(html_output, keyword)
     html_output = _enforce_secondary_keyword_mentions(html_output, prefs["secondary_keywords"])
     html_output = _clean_orphaned_keyword_page_references(html_output, keyword)
+    html_output = _unwrap_generic_offer_strong(html_output, brand)
     html_output = _strip_source_and_prompt_leaks(html_output)
+    html_output = _strip_unprovided_article_date(html_output, article_date)
     html_output = _strip_market_mismatch_phrasing(html_output, prefs.get("market", "US"))
     html_output = _strip_formatting_from_headings(html_output)
 
@@ -3500,12 +3733,18 @@ async def _generate_intro_section(
         dfs_mode=dfs_mode,
     )
     expiration_line = _offer_expiration_prompt_line(expiration_days)
-    date_str = article_date or today_long()
+    date_str = str(article_date or "").strip()
+    date_clause = f" ahead of {date_str}" if date_str else ""
+    date_instruction = (
+        f"ARTICLE DATE (use this exact date if a date is mentioned): {date_str}"
+        if date_str
+        else "ARTICLE DATE: not provided. Do not mention today's date; use only event dates/times from Event Context."
+    )
     style_guide = get_style_instructions()
     has_code = bool(bonus_code.strip())
     preferred_code_term = _preferred_code_term(brand)
     code_strong = f"<strong>{bonus_code}</strong>" if has_code else ""
-    link_anchor = f"<strong>{brand} offer</strong>" if brand else "<strong>the offer</strong>"
+    link_anchor = f"{brand} offer" if brand else "the offer"
     prompt_offers = [o for o in (all_offers or []) if o] or [offer]
     has_multiple_offers = len(prompt_offers) > 1
     multi_offer_context = _build_multi_offer_prompt_context(
@@ -3620,10 +3859,12 @@ Output clean HTML only - use <p>, <a>, <strong> tags. No markdown. No exclamatio
     if has_multiple_offers:
         requirements.append("This article includes multiple offers: mention the main offer first, and weave in one other offer only if it fits naturally.")
     if has_code:
+        generic_offer_label = f"{brand} offer" if brand else "the offer"
         requirements.extend([
             f"Use the {preferred_code_term} {bonus_code} naturally once or twice in plain text.",
-            f"Include at most ONE natural <strong> anchor, e.g., {link_anchor} or {code_strong}.",
+            f"Use <strong> only for the promo code when emphasis is needed, e.g., {code_strong}.",
             "Do NOT wrap every mention in <strong>.",
+            f"Do NOT bold generic offer labels like {generic_offer_label}.",
         ])
     else:
         requirements.append("Clearly state that no promo code is required. Do NOT invent a code. Do NOT wrap this in <strong>.")
@@ -3648,7 +3889,7 @@ Output clean HTML only - use <p>, <a>, <strong> tags. No markdown. No exclamatio
 
     if has_code:
         example_output = (
-            f"<p>The {preferred_code_term if brand else 'offer'} is live for [Game] tonight at [time] on [network], and {brand} is highlighting {offer_summary} ahead of {date_str}.</p>"
+            f"<p>The {preferred_code_term if brand else 'offer'} is live for [Game] tonight at [time] on [network], and {brand} is highlighting {offer_summary}{date_clause}.</p>"
             + (
                 f"<p>Sign up, enter {code_strong}, complete the qualifying action, and unlock the listed promotional credit.</p>"
                 if prediction_market
@@ -3659,7 +3900,7 @@ Output clean HTML only - use <p>, <a>, <strong> tags. No markdown. No exclamatio
         )
     else:
         example_output = (
-            f"<p>The {brand} offer is live for [Game] tonight at [time] on [network], and {brand} is highlighting {offer_summary} ahead of {date_str}.</p>"
+            f"<p>The {brand} offer is live for [Game] tonight at [time] on [network], and {brand} is highlighting {offer_summary}{date_clause}.</p>"
             + (
                 "<p>No promo code is required; complete the qualifying action described in the offer to unlock the listed promotional credit.</p>"
                 if prediction_market
@@ -3671,7 +3912,7 @@ Output clean HTML only - use <p>, <a>, <strong> tags. No markdown. No exclamatio
 
     user_prompt = f"""Write the intro paragraph for this promo article:
 
-DATE (include this): {date_str}
+{date_instruction}
 
 {game_hook}OFFER DETAILS:
 - Brand: {brand}
@@ -3822,19 +4063,19 @@ async def _generate_body_section(
     has_code = bool(bonus_code.strip())
     preferred_code_term = _preferred_code_term(brand)
     code_strong = f"<strong>{bonus_code}</strong>" if has_code else ""
-    link_anchor = f"<strong>{brand} offer</strong>" if brand else "<strong>the offer</strong>"
+    link_anchor = f"{brand} offer" if brand else "the offer"
 
     code_requirement = (
         f"Mention the {preferred_code_term} {bonus_code} at most once if it helps the section. "
-        f"Include at most ONE natural <strong> anchor for linking, e.g., {link_anchor} or {code_strong}."
+        f"Use <strong> only for the promo code when emphasis is needed, e.g., {code_strong}. Do not bold generic offer labels like {link_anchor}."
         if has_code
         else f"State clearly that no promo code is required (do not invent a code). "
-        f"Include at most ONE natural <strong> anchor for linking, e.g., {link_anchor}."
+        f"Do not bold generic offer labels like {link_anchor}."
     )
     code_relevance = (
-        f"If relevant, mention the {preferred_code_term} {bonus_code} once in plain text and optionally include one <strong> anchor like {link_anchor}."
+        f"Mention the {preferred_code_term} {bonus_code} once when relevant; use <strong> only for {code_strong}, not for {link_anchor}."
         if has_code
-        else f"If relevant, note that no promo code is required and optionally include one <strong> anchor like {link_anchor}."
+        else f"Note that no promo code is required when relevant, and do not bold {link_anchor}."
     )
 
     if has_multiple_offers:
@@ -3856,21 +4097,21 @@ async def _generate_body_section(
 
     if prediction_market:
         claim_intro = (
-            f'- "If I open a $50 position on [Market] at [price], I start by signing up and entering {code_strong}."'
+            f'- "I open a $50 position on [Market] at [price] after signing up and entering {code_strong}."'
             if has_code
-            else '- "If I open a $50 position on [Market] at [price], I start by signing up (no promo code required)."'
+            else '- "I open a $50 position on [Market] at [price] after signing up with no promo code required."'
         )
     elif dfs_mode:
         claim_intro = (
-            f"- \"If I enter a $50 pick'em contest on [Game/Slate], I start by signing up and entering {code_strong}.\""
+            f"- \"I enter a $50 pick'em contest on [Game/Slate] after signing up and entering {code_strong}.\""
             if has_code
-            else "- \"If I enter a $50 pick'em contest on [Game/Slate], I start by signing up (no promo code required).\""
+            else "- \"I enter a $50 pick'em contest on [Game/Slate] after signing up with no promo code required.\""
         )
     else:
         claim_intro = (
-            f'- "If I place a $50 moneyline bet on [Team] at [odds], I start by signing up and entering {code_strong}."'
+            f'- "I place a $50 moneyline bet on [Team] at [odds] after signing up and entering {code_strong}."'
             if has_code
-            else '- "If I place a $50 moneyline bet on [Team] at [odds], I start by signing up (no promo code required)."'
+            else '- "I place a $50 moneyline bet on [Team] at [odds] after signing up with no promo code required."'
         )
 
     try:
@@ -4064,9 +4305,9 @@ Follow the STYLE GUIDE provided in the prompt."""
 
 CRITICAL: This section must include a first-person market example with math:
 {claim_intro}
-- "If my position settles Yes at $1.00 after entering at $0.40, profit is $0.60 per contract."
-- "If it settles the other way, I can lose the position amount."
-- Then show how promo credits can be applied on a separate eligible market.
+- "A Yes settlement at $1.00 after a $0.40 entry profits $0.60 per contract."
+- "The opposite settlement risks the position amount."
+- Then show how promo credits apply on a separate eligible market.
 
 Use the worked example provided if available, or create one using the event context."""
         elif dfs_mode:
@@ -4074,8 +4315,8 @@ Use the worked example provided if available, or create one using the event cont
 
 CRITICAL: This section must include a first-person DFS entry example with math:
 {claim_intro}
-- \"If my $50 entry returns 2x on the contest payout structure, I receive $100 back total (including stake).\"
-- \"If it does not cash, I lose the entry fee, then explain the exact bonus entries/credits listed in the offer (do not guess).\"
+- \"A 2x result on my $50 entry returns $100 total, including the entry fee.\"
+- \"A losing entry costs the entry fee, then the exact bonus entries/credits listed in the offer post after settlement (do not guess).\"
 - Then show how bonus entries or promo credits can be used on a separate eligible contest.
 
 Use the worked example provided if available, or create one using the event context."""
@@ -4084,8 +4325,9 @@ Use the worked example provided if available, or create one using the event cont
 
 CRITICAL: This section must include a first-person bet example with math:
 {claim_intro}
-- "If my bet wins at +120, I profit $60 and get back my $50 stake, so I cash out $110 total."
-- "If it loses, I am down $50 on the bet, but I still receive [bonus amount] in bonus bets."
+- "A win at +120 profits $60 and returns $110 total, including my $50 stake."
+- "A loss leaves me down $50 on the bet, but the listed bonus amount still posts after settlement."
+- Do not start worked-example sentences with "If"; use direct constructions like "A win...", "A loss...", and "A later bonus bet...".
 - Then show how to use the bonus bets: "If I put $200 in bonus bets on [another pick] at -110 and it wins, the payout is profit-only: $200 × (100/110) = $181.82"
 
 Use the bet example provided if available, or create one using the event context.
@@ -4506,7 +4748,7 @@ async def generate_draft_from_outline_streaming(
         preferred_urls = [url for url in preferred_urls if "goal.com/en-ca/" in url.lower()]
     primary_internal_url = preferred_urls[0] if preferred_urls else primary_evergreen_url
     if primary_internal_url:
-        html_output = _ensure_primary_keyword_internal_link(html_output, keyword, primary_internal_url)
+        html_output = _ensure_first_paragraph_keyword_internal_link(html_output, keyword, primary_internal_url)
     disclaimer_state = "CANADA" if prefs.get("market") == "CA" and str(state or "").upper() == "ALL" else state
     disclaimer = get_disclaimer_for_state(disclaimer_state)
     if is_prediction_market:
@@ -4547,7 +4789,9 @@ async def generate_draft_from_outline_streaming(
     html_output = _target_keyword_mentions(html_output, keyword)
     html_output = _enforce_secondary_keyword_mentions(html_output, prefs["secondary_keywords"])
     html_output = _clean_orphaned_keyword_page_references(html_output, keyword)
+    html_output = _unwrap_generic_offer_strong(html_output, brand)
     html_output = _strip_source_and_prompt_leaks(html_output)
+    html_output = _strip_unprovided_article_date(html_output, article_date)
     html_output = _strip_market_mismatch_phrasing(html_output, prefs.get("market", "US"))
     html_output = _strip_formatting_from_headings(html_output)
 
