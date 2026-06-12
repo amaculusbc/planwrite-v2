@@ -45,6 +45,11 @@ from app.services.offer_parsing import (
 )
 
 
+TOP_STORY_TRACKING_TAG = """<script>
+  gtag('event', 'view_top_story');
+</script>"""
+
+
 def today_long(tz: str = "US/Eastern") -> str:
     """Get today's date in long format."""
     try:
@@ -2351,6 +2356,19 @@ def _unwrap_generic_offer_strong(html: str, brand: str = "") -> str:
     return result
 
 
+def _ensure_top_story_tracking_tag(content: str) -> str:
+    """Append the canonical analytics event tag once to every generated article."""
+    content = str(content or "")
+    pattern = re.compile(
+        r"<script\b[^>]*>\s*gtag\(\s*['\"]event['\"]\s*,\s*['\"]view_top_story['\"]\s*\)\s*;?\s*</script>",
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    cleaned = pattern.sub("", content).rstrip()
+    if not cleaned:
+        return TOP_STORY_TRACKING_TAG
+    return f"{cleaned}\n{TOP_STORY_TRACKING_TAG}"
+
+
 def _normalize_matchup_vs_notation(html: str) -> str:
     """Replace visible-text matchup '@' notation with 'vs.'."""
     if not html:
@@ -3693,9 +3711,9 @@ async def generate_draft_from_outline(
 
     if output_format == "markdown":
         # Convert back to markdown (basic)
-        return _html_to_markdown(html_output)
+        return _ensure_top_story_tracking_tag(_html_to_markdown(html_output))
 
-    return html_output
+    return _ensure_top_story_tracking_tag(html_output)
 
 
 async def _generate_intro_section(
@@ -4798,6 +4816,7 @@ async def generate_draft_from_outline_streaming(
     if output_format == "markdown":
         html_output = _html_to_markdown(html_output)
 
+    html_output = _ensure_top_story_tracking_tag(html_output)
     yield {"type": "done", "draft": html_output, "word_count": len(html_output.split())}
 
 

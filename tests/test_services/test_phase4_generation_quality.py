@@ -3,6 +3,7 @@
 import pytest
 
 from app.services.draft import (
+    TOP_STORY_TRACKING_TAG,
     _align_selected_link_anchors,
     _apply_generation_quality_postprocess,
     _build_signup_list,
@@ -10,6 +11,7 @@ from app.services.draft import (
     _enforce_secondary_keyword_mentions,
     _ensure_primary_keyword_internal_link,
     _ensure_first_paragraph_keyword_internal_link,
+    _ensure_top_story_tracking_tag,
     _ensure_intro_state_specificity,
     _ensure_keyword_in_first_paragraph,
     _extract_featured_label_from_event_context,
@@ -60,6 +62,21 @@ def test_soften_repetitive_intro_opener_rewrites_put_the_to_work():
     cleaned = _soften_repetitive_intro_opener(html)
     assert "Put the" not in cleaned
     assert "is live for Hawks @ Hornets tonight" in cleaned
+
+
+def test_ensure_top_story_tracking_tag_appends_exact_tag_once():
+    html = "<h1>Title</h1><p>Article body.</p>"
+    cleaned = _ensure_top_story_tracking_tag(html)
+    assert cleaned.endswith(TOP_STORY_TRACKING_TAG)
+    assert cleaned.count("view_top_story") == 1
+    assert "<h1>Title</h1>" in cleaned
+
+
+def test_ensure_top_story_tracking_tag_dedupes_existing_variant():
+    html = "<p>Article body.</p>\n<script>gtag(\"event\", \"view_top_story\")</script>"
+    cleaned = _ensure_top_story_tracking_tag(html)
+    assert cleaned == f"<p>Article body.</p>\n{TOP_STORY_TRACKING_TAG}"
+    assert cleaned.count("<script>") == 1
 
 
 def test_ensure_keyword_in_first_paragraph_inserts_exact_keyword():
