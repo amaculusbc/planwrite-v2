@@ -43,7 +43,7 @@ async def list_sports():
 
 @router.get("/games")
 async def list_games(
-    sport: str = Query("nfl", description="Sport code (nfl, nba, mlb, nhl, ncaaf, ncaab)"),
+    sport: str = Query("nfl", description="Sport code (nfl, nba, mlb, nhl, ncaaf, ncaab, soccer)"),
     date: str | None = Query(None, description="Date in YYYY-MM-DD format (defaults to today)"),
 ):
     """Get games for a specific sport and date."""

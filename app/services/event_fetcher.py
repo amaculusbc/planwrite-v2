@@ -16,6 +16,8 @@ SPORT_PATHS = {
     "nhl": "hockey/nhl",
     "ncaaf": "football/college-football",
     "ncaab": "basketball/mens-college-basketball",
+    # ESPN's FIFA World Cup scoreboard is the team-game source editors need for soccer examples.
+    "soccer": "soccer/fifa.world",
 }
 
 SPORT_LABELS = {
@@ -25,6 +27,7 @@ SPORT_LABELS = {
     "nhl": "NHL",
     "ncaaf": "CFB",
     "ncaab": "CBB",
+    "soccer": "Soccer",
 }
 
 

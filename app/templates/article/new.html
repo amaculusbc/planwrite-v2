@@ -159,7 +159,7 @@
                                 <span>Custom Event</span>
                             </label>
                         </div>
-                        <p class="mt-1 text-xs text-gray-500">Use custom events for UFC, NASCAR, golf, World Cup, WBC, and other niche coverage.</p>
+                        <p class="mt-1 text-xs text-gray-500">Use team games for major soccer and supported ESPN slates. Use custom events for UFC, NASCAR, golf, WBC, and other niche coverage.</p>
                     </div>
 
                     <div x-show="form.event_mode === 'team'" x-transition class="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -595,7 +595,7 @@
             <div class="bw-card p-4 space-y-2">
                 <h3 class="text-sm font-semibold text-gray-900">3. Game Context + Odds</h3>
                 <ul class="list-disc list-inside space-y-1 text-sm text-gray-700">
-                    <li>Select `Team Game` for supported ESPN slates, or `Custom Event` for UFC, NASCAR, golf, World Cup, and similar niches.</li>
+                    <li>Select `Team Game` for supported ESPN slates, including Soccer for World Cup-style games, or `Custom Event` for UFC, NASCAR, golf, and similar niches.</li>
                     <li>Use sport, date, and game to pull odds context when a team game is available.</li>
                     <li>Book selection auto-matches the selected offer brand when possible.</li>
                     <li>Odds panel shows away/home spread, moneyline, and total views.</li>
@@ -980,7 +980,8 @@ function articleWizard() {
             { code: 'mlb', label: 'MLB' },
             { code: 'nhl', label: 'NHL' },
             { code: 'ncaaf', label: 'CFB' },
-            { code: 'ncaab', label: 'CBB' }
+            { code: 'ncaab', label: 'CBB' },
+            { code: 'soccer', label: 'Soccer' }
         ],
         games: [],
         loadingGames: false,

@@ -24,6 +24,7 @@ class OddsFetcher:
         "nba": "nba",
         "mlb": "mlb",
         "nhl": "nhl",
+        "soccer": "soccer",
     }
 
     # Sportsbook name mapping (friendly names)
@@ -54,13 +55,13 @@ class OddsFetcher:
     WEEKLY_SPORTS = {"nfl", "ncaaf"}
 
     # Sports that use daily scheduling
-    DAILY_SPORTS = {"nba", "mlb", "nhl", "ncaab"}
+    DAILY_SPORTS = {"nba", "mlb", "nhl", "ncaab", "soccer"}
 
     def __init__(self, sport: str = "nfl"):
         """Initialize odds fetcher for a specific sport.
 
         Args:
-            sport: Sport code (nfl, ncaaf, ncaab, nba, mlb, nhl)
+            sport: Sport code (nfl, ncaaf, ncaab, nba, mlb, nhl, soccer)
         """
         self.sport = sport.lower()
         self.sport_path = self.SPORT_PATHS.get(self.sport, "nfl")
