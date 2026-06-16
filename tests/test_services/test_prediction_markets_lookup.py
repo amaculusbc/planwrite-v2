@@ -300,3 +300,101 @@ async def test_fetch_kalshi_uses_targeted_soccer_event_tickers(monkeypatch):
     assert "KXWC2H-26JUN16FRASEN" in requested_event_tickers
     assert candidates
     assert candidates[0].provider_market_id == "KXWC2H-26JUN16FRASEN-FRA"
+
+
+@pytest.mark.asyncio
+async def test_fetch_kalshi_uses_fallback_host_for_targeted_soccer_event():
+    requested_hosts = []
+
+    class FakeResponse:
+        def __init__(self, payload, status_code=200):
+            self._payload = payload
+            self.status_code = status_code
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise AssertionError(self.status_code)
+
+        def json(self):
+            return self._payload
+
+    class FakeClient:
+        async def get(self, url, params=None):
+            params = params or {}
+            if params.get("event_ticker") == "KXWC2H-26JUN16FRASEN":
+                requested_hosts.append(url)
+                if url.startswith(pm.KALSHI_BASE_URL):
+                    return FakeResponse({}, status_code=429)
+                return FakeResponse(
+                    {
+                        "markets": [
+                            {
+                                "ticker": "KXWC2H-26JUN16FRASEN-FRA",
+                                "event_ticker": "KXWC2H-26JUN16FRASEN",
+                                "title": "Will France win the 2nd Half?",
+                                "yes_sub_title": "France",
+                                "yes_ask_dollars": "0.55",
+                                "no_ask_dollars": "0.51",
+                                "close_time": "2026-06-16T21:00:00Z",
+                            }
+                        ]
+                    }
+                )
+            return FakeResponse({"markets": [], "cursor": ""})
+
+    candidates = await pm._fetch_kalshi(
+        pm.PredictionMarketSearch(
+            sport="soccer",
+            away_team="Senegal",
+            home_team="France",
+            event_name="Senegal vs France",
+            event_date="2026-06-16",
+            start_time="2026-06-16T19:00:00Z",
+            provider="kalshi",
+        ),
+        FakeClient(),
+    )
+
+    assert requested_hosts == [
+        f"{pm.KALSHI_BASE_URL}/markets",
+        f"{pm.KALSHI_FALLBACK_BASE_URL}/markets",
+    ]
+    assert candidates
+
+
+@pytest.mark.asyncio
+async def test_fetch_kalshi_skips_broad_scan_for_targeted_soccer_event():
+    broad_calls = 0
+
+    class FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"markets": [], "cursor": ""}
+
+    class FakeClient:
+        async def get(self, url, params=None):
+            nonlocal broad_calls
+            params = params or {}
+            if not params.get("event_ticker"):
+                broad_calls += 1
+            return FakeResponse()
+
+    candidates = await pm._fetch_kalshi(
+        pm.PredictionMarketSearch(
+            sport="soccer",
+            away_team="Senegal",
+            home_team="France",
+            event_name="Senegal vs France",
+            event_date="2026-06-16",
+            start_time="2026-06-16T19:00:00Z",
+            provider="kalshi",
+        ),
+        FakeClient(),
+    )
+
+    assert candidates == []
+    assert broad_calls == 0

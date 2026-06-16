@@ -18,6 +18,7 @@ import httpx
 
 POLYMARKET_GAMMA_BASE_URL = "https://gamma-api.polymarket.com"
 KALSHI_BASE_URL = "https://external-api.kalshi.com/trade-api/v2"
+KALSHI_FALLBACK_BASE_URL = "https://api.elections.kalshi.com/trade-api/v2"
 
 CACHE_TTL_SECONDS = 10 * 60
 CACHE_MAX_KEYS = 128
@@ -545,19 +546,26 @@ async def _fetch_kalshi(search: PredictionMarketSearch, client: httpx.AsyncClien
                     candidates.append(candidate)
                     seen.add(unique)
 
-    for event_ticker in _kalshi_soccer_event_tickers(search):
-        response = await client.get(
-            f"{KALSHI_BASE_URL}/markets",
-            params={**base_params, "event_ticker": event_ticker, "limit": 100},
-        )
-        if response.status_code >= 500:
-            response.raise_for_status()
-        if response.status_code != 200:
-            continue
-        payload = response.json()
-        await add_market_candidates(payload.get("markets") if isinstance(payload, dict) else [])
+    target_event_tickers = _kalshi_soccer_event_tickers(search)
+    for event_ticker in target_event_tickers:
+        for base_url in (KALSHI_BASE_URL, KALSHI_FALLBACK_BASE_URL):
+            response = await client.get(
+                f"{base_url}/markets",
+                params={**base_params, "event_ticker": event_ticker, "limit": 100},
+            )
+            if response.status_code != 200:
+                continue
+            payload = response.json()
+            await add_market_candidates(payload.get("markets") if isinstance(payload, dict) else [])
+            break
         if len(candidates) >= MAX_PROVIDER_CANDIDATES:
             return candidates[:MAX_PROVIDER_CANDIDATES]
+
+    # Soccer has compact event tickers we can target directly. Avoid the broad
+    # unauthenticated Kalshi market scan here because it is frequently rate-limited
+    # on hosted infrastructure and can hide valid targeted results.
+    if target_event_tickers:
+        return candidates[:MAX_PROVIDER_CANDIDATES]
 
     for params, page_count in param_sets:
         cursor = ""
