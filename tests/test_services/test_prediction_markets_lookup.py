@@ -194,6 +194,11 @@ def test_kalshi_no_side_uses_clear_no_label_when_provider_duplicates_label():
     assert candidates[1].selection == "No on Will Mexico beat South Africa?"
 
 
+def test_classify_exact_score_market_as_prop_not_winner():
+    assert pm._classify_market("Will the 1st half score be France wins 3-1?") == "prop"
+    assert pm._classify_market("Will France win the 2nd Half?") == "winner"
+
+
 def test_team_match_score_uses_kalshi_country_codes_in_ticker():
     score, reasons = pm._team_match_score(
         "KXWC2H-26JUN16FRASEN-SEN Will Senegal win the 2nd Half? Senegal",
@@ -222,3 +227,76 @@ def test_team_match_score_does_not_treat_frances_as_france_team_match():
 
     assert "both-teams" not in reasons
     assert score < 35
+
+
+def test_kalshi_soccer_event_tickers_include_home_away_country_codes():
+    tickers = pm._kalshi_soccer_event_tickers(
+        pm.PredictionMarketSearch(
+            sport="soccer",
+            away_team="Senegal",
+            home_team="France",
+            event_date="2026-06-16",
+            start_time="2026-06-16T19:00:00Z",
+        )
+    )
+
+    assert "KXWC2H-26JUN16FRASEN" in tickers
+    assert "KXWC2HSPREAD-26JUN16FRASEN" in tickers
+
+
+@pytest.mark.asyncio
+async def test_fetch_kalshi_uses_targeted_soccer_event_tickers(monkeypatch):
+    requested_event_tickers = []
+
+    class FakeResponse:
+        def __init__(self, payload, status_code=200):
+            self._payload = payload
+            self.status_code = status_code
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise AssertionError(self.status_code)
+
+        def json(self):
+            return self._payload
+
+    class FakeClient:
+        async def get(self, url, params=None):
+            params = params or {}
+            if params.get("event_ticker"):
+                requested_event_tickers.append(params["event_ticker"])
+            if params.get("event_ticker") == "KXWC2H-26JUN16FRASEN":
+                return FakeResponse(
+                    {
+                        "markets": [
+                            {
+                                "ticker": "KXWC2H-26JUN16FRASEN-FRA",
+                                "event_ticker": "KXWC2H-26JUN16FRASEN",
+                                "title": "Will France win the 2nd Half?",
+                                "yes_sub_title": "France",
+                                "yes_ask_dollars": "0.55",
+                                "no_ask_dollars": "0.51",
+                                "close_time": "2026-06-30T19:00:00Z",
+                            }
+                        ],
+                        "cursor": "",
+                    }
+                )
+            return FakeResponse({"markets": [], "cursor": ""})
+
+    candidates = await pm._fetch_kalshi(
+        pm.PredictionMarketSearch(
+            sport="soccer",
+            away_team="Senegal",
+            home_team="France",
+            event_name="Senegal vs France",
+            event_date="2026-06-16",
+            start_time="2026-06-16T19:00:00Z",
+            provider="kalshi",
+        ),
+        FakeClient(),
+    )
+
+    assert "KXWC2H-26JUN16FRASEN" in requested_event_tickers
+    assert candidates
+    assert candidates[0].provider_market_id == "KXWC2H-26JUN16FRASEN-FRA"

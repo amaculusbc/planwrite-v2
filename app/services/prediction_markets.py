@@ -197,6 +197,43 @@ def _event_dt(search: PredictionMarketSearch) -> datetime | None:
     return _parse_dt(search.start_time) or _parse_dt(search.event_date)
 
 
+def _kalshi_date_code(search: PredictionMarketSearch) -> str:
+    dt = _event_dt(search)
+    if not dt:
+        return ""
+    return dt.strftime("%y%b%d").upper()
+
+
+def _kalshi_soccer_event_tickers(search: PredictionMarketSearch) -> list[str]:
+    if search.sport.lower() != "soccer" or not search.away_team or not search.home_team:
+        return []
+    date_code = _kalshi_date_code(search)
+    if not date_code:
+        return []
+    away_codes = sorted(_team_alias_codes(search.away_team))[:2]
+    home_codes = sorted(_team_alias_codes(search.home_team))[:2]
+    if not away_codes or not home_codes:
+        return []
+
+    # Soccer markets use compact team-code event tickers, often home+away.
+    prefixes = [
+        "KXWC2H",
+        "KXWC2HSPREAD",
+        "KXWC1HSCORE",
+        "KXWC1H",
+        "KXWC1HSPREAD",
+        "KXWCTOTAL",
+        "KXWCSPREAD",
+    ]
+    tickers: list[str] = []
+    for prefix in prefixes:
+        for first, second in [(home_codes, away_codes), (away_codes, home_codes)]:
+            for first_code in first:
+                for second_code in second:
+                    tickers.append(f"{prefix}-{date_code}{first_code.upper()}{second_code.upper()}")
+    return list(dict.fromkeys(tickers))[:24]
+
+
 def _date_window_score(candidate_time: str, search: PredictionMarketSearch) -> tuple[int, str]:
     target = _event_dt(search)
     candidate = _parse_dt(candidate_time)
@@ -241,15 +278,25 @@ def _team_match_score(text: str, search: PredictionMarketSearch) -> tuple[int, l
 
 def _classify_market(text: str) -> str:
     lowered = _normalize(text)
+    if any(term in lowered for term in ["exact score", "score be", "score", "player"]):
+        return "prop"
     if any(term in lowered for term in ["win", "winner", "beat", "defeat", "moneyline"]):
         return "winner"
     if any(term in lowered for term in ["total", "over", "under", "goals", "points"]):
         return "total"
     if any(term in lowered for term in ["spread", "handicap", "line"]):
         return "spread"
-    if any(term in lowered for term in ["score", "goal", "player"]):
-        return "prop"
     return "event"
+
+
+def _market_type_priority(market_type: str) -> int:
+    return {
+        "winner": 5,
+        "event": 4,
+        "spread": 3,
+        "total": 2,
+        "prop": 1,
+    }.get(str(market_type or "").lower(), 0)
 
 
 def _score_candidate(candidate: PredictionMarketCandidate, search: PredictionMarketSearch) -> PredictionMarketCandidate:
@@ -267,6 +314,11 @@ def _score_candidate(candidate: PredictionMarketCandidate, search: PredictionMar
     if candidate.market_type in {"winner", "event"}:
         score += 5
         reasons.append("usable-market-type")
+    elif candidate.market_type in {"spread", "total"}:
+        score += 2
+        reasons.append("usable-market-type")
+    elif candidate.market_type == "prop":
+        score -= 10
     if candidate.volume:
         score += min(8, int(candidate.volume // 1000))
         reasons.append("volume")
@@ -479,6 +531,34 @@ async def _fetch_kalshi(search: PredictionMarketSearch, client: httpx.AsyncClien
 
     candidates: list[PredictionMarketCandidate] = []
     seen: set[str] = set()
+
+    async def add_market_candidates(markets: list[Any]) -> None:
+        for market in markets or []:
+            if not isinstance(market, dict):
+                continue
+            for candidate in _normalize_kalshi_market(market):
+                unique = f"{candidate.provider}:{candidate.provider_market_id}:{candidate.side}"
+                if unique in seen:
+                    continue
+                scored = _score_candidate(candidate, search)
+                if scored.score >= 25:
+                    candidates.append(candidate)
+                    seen.add(unique)
+
+    for event_ticker in _kalshi_soccer_event_tickers(search):
+        response = await client.get(
+            f"{KALSHI_BASE_URL}/markets",
+            params={**base_params, "event_ticker": event_ticker, "limit": 100},
+        )
+        if response.status_code >= 500:
+            response.raise_for_status()
+        if response.status_code != 200:
+            continue
+        payload = response.json()
+        await add_market_candidates(payload.get("markets") if isinstance(payload, dict) else [])
+        if len(candidates) >= MAX_PROVIDER_CANDIDATES:
+            return candidates[:MAX_PROVIDER_CANDIDATES]
+
     for params, page_count in param_sets:
         cursor = ""
         for _ in range(page_count):
@@ -489,19 +569,9 @@ async def _fetch_kalshi(search: PredictionMarketSearch, client: httpx.AsyncClien
             response.raise_for_status()
             payload = response.json()
             markets = payload.get("markets") if isinstance(payload, dict) else []
-            for market in markets or []:
-                if not isinstance(market, dict):
-                    continue
-                for candidate in _normalize_kalshi_market(market):
-                    unique = f"{candidate.provider}:{candidate.provider_market_id}:{candidate.side}"
-                    if unique in seen:
-                        continue
-                    scored = _score_candidate(candidate, search)
-                    if scored.score >= 25:
-                        candidates.append(candidate)
-                        seen.add(unique)
-                if len(candidates) >= MAX_PROVIDER_CANDIDATES:
-                    return candidates[:MAX_PROVIDER_CANDIDATES]
+            await add_market_candidates(markets or [])
+            if len(candidates) >= MAX_PROVIDER_CANDIDATES:
+                return candidates[:MAX_PROVIDER_CANDIDATES]
             cursor = str(payload.get("cursor") or "").strip() if isinstance(payload, dict) else ""
             if not cursor:
                 break
@@ -542,6 +612,7 @@ async def search_prediction_markets(search: PredictionMarketSearch) -> dict[str,
     kept.sort(
         key=lambda item: (
             item.score,
+            _market_type_priority(item.market_type),
             item.volume or 0,
             item.liquidity or 0,
             1 if item.side == "yes" else 0,
