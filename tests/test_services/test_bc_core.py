@@ -196,3 +196,63 @@ async def test_build_event_context_tolerates_null_names_in_bc_payload(monkeypatc
 
     assert context["matched"] is False
     assert "did not match both requested teams" in reason
+
+
+@pytest.mark.asyncio
+async def test_build_event_context_maps_soccer_with_selected_date(monkeypatch):
+    calls: list[tuple[str, dict | None]] = []
+
+    async def fake_get_json(path: str, *, params=None):
+        calls.append((path, params))
+        assert path == "/soccer/events"
+        return {
+            "results": [
+                {
+                    "id": 7001,
+                    "leagueId": 100,
+                    "name": "Mexico at South Africa",
+                    "scheduledDate": "2026-06-11T19:00:00Z",
+                    "teams": [
+                        {"id": 11, "name": "Mexico", "side": "AWAY"},
+                        {"id": 22, "name": "South Africa", "side": "HOME"},
+                    ],
+                    "players": [],
+                    "eventStatus": {"name": "Scheduled"},
+                    "season": {"name": "2026 Soccer"},
+                    "seasonSchedule": {"scheduleType": "Reg"},
+                    "broadcast": {"network": "FOX"},
+                    "venueId": 999,
+                }
+            ]
+        }
+
+    monkeypatch.setattr(bc_core, "_get_json", fake_get_json)
+    monkeypatch.setattr(bc_core, "bc_core_configured", lambda: True)
+
+    context, reason = await bc_core.build_event_context(
+        {
+            "title": "bet365 bonus code: Mexico vs. South Africa",
+            "event": {
+                "sport": "soccer",
+                "headline": "Mexico vs. South Africa",
+                "away_team": "Mexico",
+                "home_team": "South Africa",
+                "start_time": "2026-06-11T19:00:00Z",
+            },
+        }
+    )
+
+    assert reason == ""
+    assert context["matched"] is True
+    assert context["sport"] == "soccer"
+    assert context["event_id"] == 7001
+    assert context["league_id"] == 100
+    assert calls == [
+        (
+            "/soccer/events",
+            {
+                "start": "2026-06-11T00:00:00Z",
+                "end": "2026-06-12T00:00:00Z",
+            },
+        )
+    ]

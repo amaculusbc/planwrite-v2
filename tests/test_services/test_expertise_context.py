@@ -219,6 +219,110 @@ async def test_build_expertise_context_tolerates_missing_optional_enrichment(mon
 
 
 @pytest.mark.asyncio
+async def test_build_expertise_context_adds_soccer_lineups_absences_matchups_and_weather(monkeypatch):
+    async def fake_fetch(path: str, *, params=None):
+        if path == "/soccer/event/7001/participants-matchups/basic":
+            assert params == {"numPastEvents": 5}
+            return {
+                "results": [
+                    {
+                        "eventId": 6001,
+                        "name": "Mexico at South Africa",
+                        "scheduledDate": "2025-06-11T19:00:00Z",
+                        "teams": [
+                            {"teamId": 11, "teamName": "Mexico", "score": 2},
+                            {"teamId": 22, "teamName": "South Africa", "score": 1},
+                        ],
+                    }
+                ]
+            }
+        if path == "/soccer/event/7001/lineups":
+            return {
+                "results": [
+                    {
+                        "eventId": 7001,
+                        "teamLineups": [
+                            {
+                                "team": {"id": 11, "name": "Mexico"},
+                                "lineupFormationType": {"name": "4-3-3"},
+                                "isOfficial": True,
+                                "startingLineup": [{"player": {"shortName": "A. Player"}} for _ in range(11)],
+                                "reserves": [],
+                            },
+                            {
+                                "team": {"id": 22, "name": "South Africa"},
+                                "lineupFormationType": {"name": "4-2-3-1"},
+                                "isOfficial": False,
+                                "startingLineup": [{"player": {"shortName": "B. Player"}} for _ in range(11)],
+                                "reserves": [],
+                            },
+                        ],
+                    }
+                ]
+            }
+        if path == "/soccer/event/7001/players/absences":
+            return {
+                "results": [
+                    {
+                        "player": {"shortName": "J. Alvarez"},
+                        "teams": [{"id": 11, "name": "Mexico"}],
+                        "playerStatusType": {"name": "Out"},
+                        "playerStatusCondition": {"name": "Hamstring"},
+                    }
+                ]
+            }
+        if path == "/soccer/100/weather":
+            return {
+                "results": [
+                    {
+                        "venueId": 999,
+                        "temperature": 72,
+                        "windSpeed": 9,
+                        "windDirection": {"name": "NW"},
+                        "precipitationProbability": 15,
+                        "weatherCondition": {"name": "Clear"},
+                    }
+                ]
+            }
+        raise AssertionError(f"Unexpected BC Core path: {path}")
+
+    monkeypatch.setattr(expertise_context, "fetch_bc_core_json", fake_fetch)
+    monkeypatch.setattr(expertise_context, "get_bc_core_base_url", lambda: "https://core.example")
+
+    payload, reason = await expertise_context.build_expertise_context(
+        {},
+        {
+            "bc_core_event": {
+                "matched": True,
+                "sport": "soccer",
+                "league_id": 100,
+                "event_id": 7001,
+                "event_name": "Mexico at South Africa",
+                "away_team_id": 11,
+                "away_team": "Mexico",
+                "home_team_id": 22,
+                "home_team": "South Africa",
+                "venue_id": 999,
+                "source_urls": ["https://core.example/soccer/events"],
+            },
+            "source_urls": ["https://core.example/soccer/events"],
+        },
+    )
+
+    assert reason == ""
+    assert payload["matched"] is True
+    assert payload["sport"] == "soccer"
+    assert payload["matchups"]["matched"] is True
+    assert payload["lineups"]["matched"] is True
+    assert payload["absences"]["matched"] is True
+    assert payload["weather"]["matched"] is True
+    assert any("latest listed score was Mexico 2, South Africa 1" in point for point in payload["editorial_points"])
+    assert any("Mexico's official lineup lists 11 starters in a 4-3-3" in point for point in payload["editorial_points"])
+    assert any("Mexico has 1 listed player absence" in point for point in payload["editorial_points"])
+    assert any("/soccer/event/7001/lineups" in url for url in payload["source_urls"])
+
+
+@pytest.mark.asyncio
 async def test_build_expertise_context_keeps_trends_when_review_fails(monkeypatch):
     async def fake_fetch(path: str, *, params=None):
         if path == "/nba/seasons/standings":

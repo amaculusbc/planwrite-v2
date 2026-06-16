@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import atexit
 import re
 from typing import Any
@@ -27,6 +27,7 @@ SPORT_ENDPOINTS = {
     "ufc": "/ufc/events",
     "mma": "/ufc/events",
     "golf": "/golf/events",
+    "soccer": "/soccer/events",
 }
 
 SPORT_LEAGUE_IDS = {
@@ -412,6 +413,33 @@ def _team_alignment(source_facts: dict, event: dict) -> tuple[int, int]:
     return value(away_requested, away_team), value(home_requested, home_team)
 
 
+def _date_range_params_for_event(source_facts: dict) -> dict[str, str]:
+    """Use the selected article/game date to keep broad event endpoints small."""
+    requested_event = source_facts.get("event", {}) or {}
+    raw = str(requested_event.get("start_time") or requested_event.get("event_date") or "").strip()
+    if not raw:
+        return {}
+
+    dt: datetime
+    try:
+        if len(raw) == 10 and raw[4] == "-" and raw[7] == "-":
+            dt = datetime.fromisoformat(raw).replace(tzinfo=UTC)
+        else:
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=UTC)
+            dt = dt.astimezone(UTC)
+    except ValueError:
+        return {}
+
+    day_start = datetime(dt.year, dt.month, dt.day, tzinfo=UTC)
+    day_end = day_start + timedelta(days=1)
+    return {
+        "start": day_start.isoformat().replace("+00:00", "Z"),
+        "end": day_end.isoformat().replace("+00:00", "Z"),
+    }
+
+
 async def build_event_context(source_facts: dict) -> tuple[dict, str]:
     requested_event = source_facts.get("event", {}) or {}
     sport = str(requested_event.get("sport") or "").lower()
@@ -429,7 +457,8 @@ async def build_event_context(source_facts: dict) -> tuple[dict, str]:
         }, f"No BC Core event endpoint mapping for sport '{sport or 'unknown'}'"
 
     try:
-        payload = await _get_json(path)
+        params = _date_range_params_for_event(source_facts) if sport == "soccer" else None
+        payload = await _get_json(path, params=params)
     except httpx.HTTPError as exc:
         message = f"BC Core events request failed: {_exc_text(exc)}"
         return {

@@ -37,9 +37,10 @@ SPORT_API_FAMILIES = {
     "ncaaf": "football",
     "mlb": "baseball",
     "nhl": "hockey",
+    "soccer": "soccer",
 }
 
-OUTDOOR_WEATHER_SPORTS = {"nfl", "ncaaf", "mlb"}
+OUTDOOR_WEATHER_SPORTS = {"nfl", "ncaaf", "mlb", "soccer"}
 
 INJURY_PATHS = {
     "nba": "/basketball/{league_id}/injuries",
@@ -466,6 +467,180 @@ async def _build_golf_expertise_context(bc_event: dict) -> tuple[dict, str]:
     }, ""
 
 
+def _person_name(item: dict | None) -> str:
+    item = item or {}
+    return (
+        str(item.get("shortName") or "").strip()
+        or " ".join(str(part).strip() for part in [item.get("firstName"), item.get("lastName")] if str(part or "").strip())
+        or str(item.get("name") or "").strip()
+    )
+
+
+def _nested_name(item: dict | None) -> str:
+    item = item or {}
+    return str(item.get("name") or item.get("shortName") or "").strip()
+
+
+def _summarize_soccer_absences(results: list[dict]) -> tuple[dict, list[str]]:
+    by_team: dict[str, list[str]] = defaultdict(list)
+    statuses: Counter = Counter()
+    for item in results:
+        player = _person_name(item.get("player") if isinstance(item.get("player"), dict) else {})
+        status = _nested_name(item.get("playerStatusType") if isinstance(item.get("playerStatusType"), dict) else {})
+        condition = _nested_name(item.get("playerStatusCondition") if isinstance(item.get("playerStatusCondition"), dict) else {})
+        teams = item.get("teams") if isinstance(item.get("teams"), list) else []
+        team_name = _nested_name(teams[0]) if teams else "Unknown team"
+        if status:
+            statuses[status] += 1
+        label = player or "Player"
+        if status:
+            label = f"{label} ({status})"
+        if condition:
+            label = f"{label}, {condition}"
+        by_team[team_name].append(label)
+
+    points: list[str] = []
+    for team_name, players in list(by_team.items())[:2]:
+        if players:
+            points.append(f"{team_name} has {len(players)} listed player absence{'s' if len(players) != 1 else ''}: {', '.join(players[:3])}.")
+    return {
+        "matched": bool(results),
+        "total_count": len(results),
+        "status_counts": dict(statuses),
+        "teams": dict(by_team),
+    }, points
+
+
+def _summarize_soccer_lineups(results: list[dict]) -> tuple[dict, list[str]]:
+    lineups: list[dict] = []
+    points: list[str] = []
+    for event_lineup in results:
+        for team_lineup in event_lineup.get("teamLineups", []) or []:
+            team_name = _nested_name(team_lineup.get("team") if isinstance(team_lineup.get("team"), dict) else {})
+            formation = _nested_name(
+                team_lineup.get("lineupFormationType") if isinstance(team_lineup.get("lineupFormationType"), dict) else {}
+            )
+            starter_count = len(team_lineup.get("startingLineup", []) or [])
+            reserve_count = len(team_lineup.get("reserves", []) or [])
+            official = bool(team_lineup.get("isOfficial"))
+            lineups.append(
+                {
+                    "team_name": team_name,
+                    "formation": formation,
+                    "starter_count": starter_count,
+                    "reserve_count": reserve_count,
+                    "official": official,
+                }
+            )
+            if team_name and (formation or starter_count):
+                label = "official" if official else "projected"
+                formation_text = f" in a {formation}" if formation else ""
+                points.append(f"{team_name}'s {label} lineup lists {starter_count or 'multiple'} starters{formation_text}.")
+    return {"matched": bool(lineups), "teams": lineups}, points[:2]
+
+
+def _summarize_soccer_matchups(results: list[dict]) -> tuple[dict, list[str]]:
+    completed: list[dict] = []
+    for item in results:
+        teams = item.get("teams") if isinstance(item.get("teams"), list) else []
+        if len(teams) < 2:
+            continue
+        first, second = teams[0], teams[1]
+        completed.append(
+            {
+                "event_id": item.get("eventId"),
+                "name": item.get("name"),
+                "scheduled_date": item.get("scheduledDate"),
+                "teams": [
+                    {"team_id": first.get("teamId"), "team_name": first.get("teamName"), "score": first.get("score")},
+                    {"team_id": second.get("teamId"), "team_name": second.get("teamName"), "score": second.get("score")},
+                ],
+            }
+        )
+
+    points: list[str] = []
+    if completed:
+        latest = completed[0]
+        teams = latest.get("teams") or []
+        if len(teams) >= 2 and teams[0].get("score") is not None and teams[1].get("score") is not None:
+            points.append(
+                f"The recent matchup sample includes {len(completed)} meeting{'s' if len(completed) != 1 else ''}; the latest listed score was {teams[0].get('team_name')} {teams[0].get('score')}, {teams[1].get('team_name')} {teams[1].get('score')}."
+            )
+        else:
+            points.append(f"The recent matchup sample includes {len(completed)} previous meeting{'s' if len(completed) != 1 else ''}.")
+    return {"matched": bool(completed), "events": completed[:5]}, points
+
+
+async def _build_soccer_expertise_context(bc_event: dict) -> tuple[dict, str]:
+    base_url = get_bc_core_base_url()
+    event_id = bc_event.get("event_id")
+    league_id = bc_event.get("league_id")
+    if not event_id:
+        return {}, "Missing soccer event_id"
+
+    matchup_path = f"/soccer/event/{event_id}/participants-matchups/basic"
+    lineup_path = f"/soccer/event/{event_id}/lineups"
+    absences_path = f"/soccer/event/{event_id}/players/absences"
+    fetches = [
+        fetch_bc_core_json(matchup_path, params={"numPastEvents": 5}),
+        fetch_bc_core_json(lineup_path),
+        fetch_bc_core_json(absences_path),
+    ]
+    weather_path = f"/soccer/{league_id}/weather" if league_id else ""
+    if weather_path:
+        fetches.append(fetch_bc_core_json(weather_path))
+
+    results = await asyncio.gather(*fetches, return_exceptions=True)
+    matchup_payload = results[0] if not isinstance(results[0], Exception) else {}
+    lineup_payload = results[1] if not isinstance(results[1], Exception) else {}
+    absences_payload = results[2] if not isinstance(results[2], Exception) else {}
+    weather_payload = results[3] if len(results) > 3 and not isinstance(results[3], Exception) else {}
+
+    matchups, matchup_points = _summarize_soccer_matchups(matchup_payload.get("results", []) or [])
+    lineups, lineup_points = _summarize_soccer_lineups(lineup_payload.get("results", []) or [])
+    absences, absence_points = _summarize_soccer_absences(absences_payload.get("results", []) or [])
+    weather_results = weather_payload.get("results", []) if isinstance(weather_payload, dict) else []
+    weather_selected = _pick_primary_weather_entry(weather_results or [], bc_event.get("venue_id"))
+    weather_summary = _summarize_weather_entry(weather_selected) if weather_selected else {}
+    weather_point = _weather_editorial_point(weather_summary) if weather_summary else ""
+
+    source_urls = [
+        *bc_event.get("source_urls", []),
+        f"{base_url}{matchup_path}",
+        f"{base_url}{lineup_path}",
+        f"{base_url}{absences_path}",
+    ]
+    if weather_path:
+        source_urls.append(f"{base_url}{weather_path}")
+
+    editorial_points = [
+        *matchup_points[:1],
+        *lineup_points[:2],
+        *absence_points[:2],
+        weather_point,
+    ]
+
+    return {
+        "matched": bool(matchups.get("matched") or lineups.get("matched") or absences.get("matched") or weather_summary),
+        "provider": "bc_core",
+        "sport": "soccer",
+        "event_id": event_id,
+        "league_id": league_id,
+        "event_name": bc_event.get("event_name") or bc_event.get("headline", ""),
+        "teams": {
+            "away": {"team_id": bc_event.get("away_team_id"), "team_name": bc_event.get("away_team", "")},
+            "home": {"team_id": bc_event.get("home_team_id"), "team_name": bc_event.get("home_team", "")},
+        },
+        "matchups": matchups,
+        "lineups": lineups,
+        "absences": absences,
+        "weather": {"matched": bool(weather_summary), "forecast": weather_summary},
+        "editorial_points": [point for point in editorial_points if point][:8],
+        "source_urls": list(dict.fromkeys(source_urls)),
+        "checked_at": datetime.now(UTC).isoformat(),
+    }, ""
+
+
 def _per_game(total: int | float | None, games: int | None) -> float | None:
     if not games or total is None:
         return None
@@ -606,6 +781,18 @@ async def build_expertise_context(source_facts: dict, sports_context: dict) -> t
     if sport == "golf":
         try:
             payload, reason = await _build_golf_expertise_context(bc_event)
+            if payload:
+                return payload, reason
+        except Exception as exc:
+            return {
+                "matched": False,
+                "provider": "fallback",
+                "reason": str(exc),
+                "source_urls": bc_event.get("source_urls", []),
+            }, str(exc)
+    if sport == "soccer":
+        try:
+            payload, reason = await _build_soccer_expertise_context(bc_event)
             if payload:
                 return payload, reason
         except Exception as exc:
