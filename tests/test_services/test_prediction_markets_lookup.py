@@ -192,3 +192,33 @@ def test_kalshi_no_side_uses_clear_no_label_when_provider_duplicates_label():
 
     assert candidates[0].selection == "Mexico beats South Africa"
     assert candidates[1].selection == "No on Will Mexico beat South Africa?"
+
+
+def test_team_match_score_uses_kalshi_country_codes_in_ticker():
+    score, reasons = pm._team_match_score(
+        "KXWC2H-26JUN16FRASEN-SEN Will Senegal win the 2nd Half? Senegal",
+        pm.PredictionMarketSearch(
+            sport="soccer",
+            away_team="Senegal",
+            home_team="France",
+            event_name="Senegal vs France",
+        ),
+    )
+
+    assert score >= 60
+    assert "both-teams" in reasons
+
+
+def test_team_match_score_does_not_treat_frances_as_france_team_match():
+    score, reasons = pm._team_match_score(
+        "KXATPGTOTAL-26JUN17TIASHI Frances Tiafoe vs Sho Shimabukuro",
+        pm.PredictionMarketSearch(
+            sport="soccer",
+            away_team="Senegal",
+            home_team="France",
+            event_name="Senegal vs France",
+        ),
+    )
+
+    assert "both-teams" not in reasons
+    assert score < 35

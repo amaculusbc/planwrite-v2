@@ -22,10 +22,42 @@ KALSHI_BASE_URL = "https://external-api.kalshi.com/trade-api/v2"
 CACHE_TTL_SECONDS = 10 * 60
 CACHE_MAX_KEYS = 128
 DEFAULT_TIMEOUT_SECONDS = 4.0
-MAX_PROVIDER_CANDIDATES = 40
+MAX_PROVIDER_CANDIDATES = 80
 KALSHI_MAX_PAGES = 3
 KALSHI_DISCOVERY_PAGES = 1
-KALSHI_PAGE_LIMIT = 100
+KALSHI_PAGE_LIMIT = 1000
+
+TEAM_CODE_ALIASES = {
+    "argentina": {"arg"},
+    "australia": {"aus"},
+    "belgium": {"bel"},
+    "brazil": {"bra"},
+    "canada": {"can"},
+    "colombia": {"col"},
+    "croatia": {"cro"},
+    "denmark": {"den"},
+    "england": {"eng"},
+    "france": {"fra"},
+    "germany": {"ger"},
+    "ghana": {"gha"},
+    "iran": {"irn", "irq"},
+    "iraq": {"irq"},
+    "italy": {"ita"},
+    "japan": {"jpn"},
+    "mexico": {"mex"},
+    "morocco": {"mar", "mor"},
+    "netherlands": {"ned", "nld"},
+    "norway": {"nor"},
+    "poland": {"pol"},
+    "portugal": {"por"},
+    "senegal": {"sen"},
+    "south africa": {"rsa", "saf"},
+    "spain": {"esp"},
+    "sweden": {"swe"},
+    "switzerland": {"sui", "che"},
+    "united states": {"usa", "us"},
+    "usa": {"usa", "us"},
+}
 
 _CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 
@@ -79,6 +111,10 @@ def _normalize(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", str(value or "").lower()).strip()
 
 
+def _compact(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
+
+
 def _tokens(value: str) -> set[str]:
     stop = {
         "fc",
@@ -108,6 +144,15 @@ def _tokens(value: str) -> set[str]:
         "3rd",
     }
     return {token for token in re.findall(r"[a-z0-9]+", _normalize(value)) if len(token) >= 3 and token not in stop}
+
+
+def _team_alias_codes(team: str) -> set[str]:
+    normalized = _normalize(team)
+    compacted = _compact(team)
+    aliases = set(TEAM_CODE_ALIASES.get(normalized, set()))
+    if compacted and len(compacted) >= 3:
+        aliases.add(compacted[:3])
+    return {alias for alias in aliases if len(alias) >= 2}
 
 
 def _parse_jsonish(value: Any) -> Any:
@@ -167,6 +212,7 @@ def _date_window_score(candidate_time: str, search: PredictionMarketSearch) -> t
 
 def _team_match_score(text: str, search: PredictionMarketSearch) -> tuple[int, list[str]]:
     haystack = _tokens(text)
+    compact_text = _compact(text)
     away_tokens = _tokens(search.away_team)
     home_tokens = _tokens(search.home_team)
     event_tokens = _tokens(search.event_name)
@@ -175,13 +221,15 @@ def _team_match_score(text: str, search: PredictionMarketSearch) -> tuple[int, l
 
     away_hit = bool(away_tokens and (away_tokens & haystack))
     home_hit = bool(home_tokens and (home_tokens & haystack))
+    away_code_hit = any(code in compact_text for code in _team_alias_codes(search.away_team))
+    home_code_hit = any(code in compact_text for code in _team_alias_codes(search.home_team))
     event_overlap = event_tokens & haystack
     event_overlap_ratio = (len(event_overlap) / len(event_tokens)) if event_tokens else 0.0
 
-    if away_hit and home_hit:
+    if (away_hit or away_code_hit) and (home_hit or home_code_hit):
         score += 60
         reasons.append("both-teams")
-    elif away_hit or home_hit:
+    elif away_hit or home_hit or away_code_hit or home_code_hit:
         score += 20
         reasons.append("one-team")
     elif event_overlap and (len(event_overlap) >= 2 or event_overlap_ratio >= 0.35):
