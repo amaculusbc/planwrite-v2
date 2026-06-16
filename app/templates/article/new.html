@@ -277,6 +277,46 @@
                               Use the example builder below for prediction market and DFS examples. Live sportsbook odds are not required for those modes.
                           </p>
 
+                          <div x-show="currentContentMode() === 'prediction_market'" x-transition class="mt-4 rounded-lg border border-emerald-100 bg-emerald-50/50 p-3">
+                              <div class="flex items-start justify-between gap-3">
+                                  <div>
+                                      <h4 class="text-sm font-semibold text-gray-900">Prediction Market Lookup</h4>
+                                      <p class="mt-1 text-xs text-gray-600">Searches only the selected event and keeps a short cache. Pick one market to use in the example.</p>
+                                  </div>
+                                  <button type="button" @click="loadPredictionMarkets(true)"
+                                          class="shrink-0 rounded-md bg-white px-3 py-1.5 text-xs font-medium text-emerald-700 shadow-sm ring-1 ring-emerald-200 hover:bg-emerald-50"
+                                          :disabled="loadingPredictionMarkets">
+                                      <span x-text="loadingPredictionMarkets ? 'Searching...' : 'Find markets'"></span>
+                                  </button>
+                              </div>
+                              <p x-show="predictionMarketError" class="mt-2 text-xs text-red-600" x-text="predictionMarketError"></p>
+                              <div x-show="predictionMarkets.length" class="mt-3 space-y-2">
+                                  <template x-for="market in predictionMarkets" :key="`${market.provider}:${market.provider_market_id}:${market.selection}`">
+                                      <label class="block cursor-pointer rounded-md border bg-white p-2 text-sm shadow-sm hover:border-emerald-300"
+                                             :class="selectedPredictionMarketId === predictionMarketKey(market) ? 'border-emerald-500 ring-1 ring-emerald-300' : 'border-gray-200'">
+                                          <div class="flex gap-2">
+                                              <input type="radio" class="mt-1 text-emerald-600 focus:ring-emerald-500"
+                                                     x-model="selectedPredictionMarketId"
+                                                     :value="predictionMarketKey(market)">
+                                              <div class="min-w-0 flex-1">
+                                                  <div class="flex flex-wrap items-center gap-2">
+                                                      <span class="rounded bg-emerald-100 px-1.5 py-0.5 text-[11px] font-semibold uppercase text-emerald-700" x-text="market.provider"></span>
+                                                      <span class="text-xs text-gray-500" x-text="market.implied_probability_display || formatMarketPrice(market)"></span>
+                                                      <span class="text-xs text-gray-400" x-text="market.market_type"></span>
+                                                  </div>
+                                                  <p class="mt-1 font-medium text-gray-900" x-text="market.market_title"></p>
+                                                  <p class="text-xs text-gray-600">
+                                                      <span>Selection: </span><span x-text="market.selection"></span>
+                                                  </p>
+                                              </div>
+                                          </div>
+                                      </label>
+                                  </template>
+                              </div>
+                              <p x-show="predictionMarketsSearched && !loadingPredictionMarkets && !predictionMarkets.length && !predictionMarketError"
+                                 class="mt-2 text-xs text-gray-500">No strong event-level market match found. Use the local example builder or try a custom event label.</p>
+                          </div>
+
                         <!-- Bet Example Builder -->
                         <div class="mt-4 pt-4 border-t border-gray-200">
                             <h4 class="text-sm font-medium text-gray-900 mb-2">Bet Example Builder</h4>
@@ -988,6 +1028,11 @@ function articleWizard() {
           selectedGame: null,
           odds: null,
           selectedBook: '',
+          predictionMarkets: [],
+          predictionMarketsSearched: false,
+          loadingPredictionMarkets: false,
+          predictionMarketError: '',
+          selectedPredictionMarketId: '',
           sportsbookBrandMap: {
               draftkings: 'draftkings',
               fanduel: 'fanduel',
@@ -1193,6 +1238,79 @@ function articleWizard() {
             if (odds === null || odds === undefined || odds === '') return `${label} ${line}`;
             return `${label} ${line} (${this.formatAmericanOdds(odds)})`;
         },
+        predictionMarketProvider() {
+            const offer = this.selectedOffer();
+            const brand = String(offer?.brand || this.form.keyword || '').toLowerCase();
+            if (brand.includes('kalshi')) return 'kalshi';
+            if (brand.includes('polymarket')) return 'polymarket';
+            return 'all';
+        },
+        predictionMarketKey(market) {
+            return `${market?.provider || ''}:${market?.provider_market_id || ''}:${market?.selection || ''}`;
+        },
+        selectedPredictionMarket() {
+            if (!this.selectedPredictionMarketId) return null;
+            return this.predictionMarkets.find(m => this.predictionMarketKey(m) === this.selectedPredictionMarketId) || null;
+        },
+        formatMarketPrice(market) {
+            const raw = market?.implied_probability ?? market?.yes_price ?? market?.no_price;
+            const value = Number(raw);
+            if (!Number.isFinite(value)) return '';
+            return `${Math.round(value * 100)}%`;
+        },
+        resetPredictionMarketSelection() {
+            this.predictionMarkets = [];
+            this.predictionMarketsSearched = false;
+            this.predictionMarketError = '';
+            this.selectedPredictionMarketId = '';
+        },
+        async loadPredictionMarkets(force = false) {
+            if (this.currentContentMode() !== 'prediction_market') return;
+            const eventLabel = this.selectedEventLabel();
+            if (!eventLabel) {
+                this.predictionMarketError = 'Select a game or enter a custom event first.';
+                return;
+            }
+            if (this.predictionMarkets.length && !force) return;
+
+            this.loadingPredictionMarkets = true;
+            this.predictionMarketError = '';
+            this.predictionMarketsSearched = true;
+            try {
+                const params = new URLSearchParams({
+                    sport: this.isCustomEventMode() ? (this.form.custom_sport || '') : (this.form.sport || ''),
+                    away_team: this.selectedGame?.away_team || '',
+                    home_team: this.selectedGame?.home_team || '',
+                    event_name: eventLabel,
+                    event_date: this.form.game_date || '',
+                    start_time: this.isCustomEventMode() ? (this.form.custom_start_time || '') : (this.selectedGame?.start_time || ''),
+                    provider: this.predictionMarketProvider(),
+                    market_type: this.betBuilder.type || 'event',
+                    limit: '10'
+                });
+                const resp = await fetch(`/api/prediction-markets/search?${params}`);
+                if (!resp.ok) {
+                    throw new Error(`Market lookup failed (${resp.status})`);
+                }
+                const data = await resp.json();
+                this.predictionMarkets = data.markets || [];
+                this.selectedPredictionMarketId = this.predictionMarkets.length
+                    ? this.predictionMarketKey(this.predictionMarkets[0])
+                    : '';
+                if (data.errors && Object.keys(data.errors).length && !this.predictionMarkets.length) {
+                    this.predictionMarketError = Object.entries(data.errors)
+                        .map(([provider, message]) => `${provider}: ${message}`)
+                        .join('; ');
+                }
+            } catch (e) {
+                console.error('Failed to load prediction markets:', e);
+                this.predictionMarkets = [];
+                this.selectedPredictionMarketId = '';
+                this.predictionMarketError = 'Prediction market lookup failed. You can still generate a local example.';
+            } finally {
+                this.loadingPredictionMarkets = false;
+            }
+        },
         severityLabel(severity) {
             if (severity === 'error') return 'Error';
             if (severity === 'warning') return 'Warning';
@@ -1342,6 +1460,11 @@ function articleWizard() {
             this.form.game_id = '';
             this.selectedGame = null;
             this.odds = null;
+            this.predictionMarkets = [];
+            this.predictionMarketsSearched = false;
+            this.loadingPredictionMarkets = false;
+            this.predictionMarketError = '';
+            this.selectedPredictionMarketId = '';
             this.betExample = '';
             this.betExampleData = null;
             this.selectedBook = '';
@@ -1393,7 +1516,7 @@ function articleWizard() {
             if (this.isCustomEventMode()) {
                 const customEvent = (this.form.custom_event || '').trim();
                 if (!customEvent) return null;
-                return {
+                const gameContext = {
                     event_type: this.form.custom_event_type || 'custom',
                     custom_event: customEvent,
                     event_date: this.form.game_date || null,
@@ -1402,6 +1525,9 @@ function articleWizard() {
                     network: (this.form.custom_network || '').trim() || null,
                     headline: customEvent
                 };
+                if (this.betExample) gameContext.bet_example = this.betExample;
+                if (this.betExampleData) gameContext.bet_example_data = this.betExampleData;
+                return gameContext;
             }
 
             if (!this.selectedGame) return null;
@@ -1576,6 +1702,16 @@ function articleWizard() {
             this.selectedGame.headline = `${this.selectedGame.away_team} @ ${this.selectedGame.home_team}`;
             this.selectedGame.time_display = this.selectedGame.start_time_display || this.formatGameTime(this.selectedGame.start_time);
             this.refreshSuggestedTitle();
+            this.resetPredictionMarketSelection();
+
+            if (this.currentContentMode() === 'prediction_market') {
+                this.odds = null;
+                this.selectedBook = '';
+                this.betExample = '';
+                this.betExampleData = null;
+                await this.loadPredictionMarkets(false);
+                return;
+            }
 
                 try {
                     const awayParam = [this.selectedGame.away_abbrev, this.selectedGame.away_team]
@@ -1629,7 +1765,7 @@ function articleWizard() {
             }
 
             if (this.currentContentMode() === 'prediction_market') {
-                this.generatePredictionMarketExampleLocally();
+                await this.generatePredictionMarketExampleFromSelection();
                 return;
             }
 
@@ -1760,6 +1896,35 @@ function articleWizard() {
                 reward_amount: amounts.rewardAmount
             };
             this.betExample = `I complete the $${amounts.qualifyingAmount} qualifying action first. Then I open a separate $${positionAmount} ${sideLabel} position on ${eventLabel}. At $${entryPrice.toFixed(2)} per contract, that buys about ${contracts.toFixed(0)} contracts. A $${settlementPrice.toFixed(2)} settlement pays about $${payout.toFixed(2)}, or roughly $${profit.toFixed(2)} in profit.`;
+        },
+
+        async generatePredictionMarketExampleFromSelection() {
+            const selectedMarket = this.selectedPredictionMarket();
+            if (!selectedMarket) {
+                this.generatePredictionMarketExampleLocally();
+                return;
+            }
+            const amounts = this.parseOfferAmounts();
+            const positionAmount = parseInt(this.betBuilder.amount) || 10;
+            try {
+                const resp = await fetch('/api/prediction-markets/example', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        market: selectedMarket,
+                        position_amount: positionAmount,
+                        qualifying_amount: amounts.qualifyingAmount,
+                        reward_amount: amounts.rewardAmount
+                    })
+                });
+                if (!resp.ok) throw new Error(`Example failed (${resp.status})`);
+                const data = await resp.json();
+                this.betExample = data.example_text;
+                this.betExampleData = data;
+            } catch (e) {
+                console.error('Failed to generate prediction market example:', e);
+                this.generatePredictionMarketExampleLocally();
+            }
         },
 
         generateDfsExampleLocally() {

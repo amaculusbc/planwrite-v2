@@ -215,13 +215,14 @@ templates = Jinja2Templates(directory=settings.templates_dir)
 
 
 # Import and include routers
-from app.api import articles, generate, offers, events, odds, admin
+from app.api import articles, generate, offers, events, odds, admin, prediction_markets
 
 app.include_router(articles.router, prefix="/api/articles", tags=["articles"])
 app.include_router(offers.router, prefix="/api/offers", tags=["offers"])
 app.include_router(generate.router, prefix="/api/generate", tags=["generate"])
 app.include_router(events.router)  # Already has /api/events prefix
 app.include_router(odds.router)  # Already has /api/odds prefix
+app.include_router(prediction_markets.router)  # Already has /api/prediction-markets prefix
 app.include_router(admin.router)
 
 

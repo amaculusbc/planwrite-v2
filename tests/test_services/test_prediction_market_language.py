@@ -163,11 +163,39 @@ def test_render_prediction_market_example_section_deterministic_uses_contract_ma
     assert html is not None
     assert "contracts" in html.lower()
     assert "$50 in Novig Coins" in html
+
+
+def test_render_prediction_market_example_section_uses_selected_market_title():
+    html = _render_prediction_market_example_section_deterministic(
+        offer={
+            "brand": "Kalshi",
+            "offer_text": "Spend $10, Get $50 in promo credits",
+            "qualifying_amount": 10,
+            "reward_amount": 50,
+        },
+        bet_example_data={
+            "qualifying_amount": 10,
+            "position_amount": 25,
+            "entry_price": 0.56,
+            "settlement_price": 1,
+            "selection": "Mexico",
+            "market_title": "Will Mexico beat South Africa?",
+            "prediction_market": {
+                "provider": "kalshi",
+                "provider_market_id": "KXTEST",
+                "market_title": "Will Mexico beat South Africa?",
+            },
+        },
+        event_context="Featured event: Mexico vs. South Africa.",
+    )
+
+    assert html is not None
+    assert "Will Mexico beat South Africa?" in html
     assert "bonus bets" not in html.lower()
-    assert "$25 qualifying action" in html
+    assert "$10 qualifying action" in html
     assert "position on a Yes position on" not in html
     assert "If I complete" not in html
-    assert "A $1.00 settlement pays" in html or "A close at $1.00 returns" in html
+    assert "$1.00 settlement pays" in html or "A close at $1.00 returns" in html
 
 
 @pytest.mark.asyncio

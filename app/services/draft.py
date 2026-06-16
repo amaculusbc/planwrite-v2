@@ -3348,6 +3348,13 @@ def _render_prediction_market_example_section_deterministic(
     selection = str(data.get("selection") or "").strip()
     if not selection:
         return None
+    prediction_market_data = data.get("prediction_market") if isinstance(data.get("prediction_market"), dict) else {}
+    market_title = str(data.get("market_title") or prediction_market_data.get("market_title") or "").strip()
+    selection_phrase = selection
+    if market_title and selection.lower() not in market_title.lower():
+        selection_phrase = f"the {selection} side of {market_title}"
+    elif market_title:
+        selection_phrase = market_title
 
     contracts = position_amount / entry_price if entry_price > 0 else 0.0
     gross_payout = contracts * settlement_price
@@ -3357,17 +3364,17 @@ def _render_prediction_market_example_section_deterministic(
     code_sentence = f" after entering <strong>{bonus_code}</strong> at signup" if bonus_code else ""
 
     first_para_options = [
-        f"<p>I complete the ${qualifying_amount:.0f} qualifying action{code_sentence}. Then I open a separate ${position_amount:.0f} Yes position on {selection}. At ${entry_price:.2f} per contract, that buys about {contracts:.0f} contracts. A ${settlement_price:.2f} settlement pays about ${gross_payout:.2f}, or roughly ${profit:.2f} in profit.</p>",
-        f"<p>The ${qualifying_amount:.0f} qualifying action comes first{code_sentence}. Then I use a separate ${position_amount:.0f} Yes position on {selection}. At ${entry_price:.2f} per contract, that buys about {contracts:.0f} contracts. A close at ${settlement_price:.2f} returns about ${gross_payout:.2f}, or roughly ${profit:.2f} in profit.</p>",
-        f"<p>After the ${qualifying_amount:.0f} qualifying action{code_sentence}, I put ${position_amount:.0f} behind a Yes position on {selection}. At ${entry_price:.2f} per contract, that buys roughly {contracts:.0f} contracts. A ${settlement_price:.2f} settlement pays about ${gross_payout:.2f}, which means about ${profit:.2f} in profit.</p>",
+        f"<p>I complete the ${qualifying_amount:.0f} qualifying action{code_sentence}. Then I open a separate ${position_amount:.0f} position on {selection_phrase}. At ${entry_price:.2f} per contract, that buys about {contracts:.0f} contracts. A ${settlement_price:.2f} settlement pays about ${gross_payout:.2f}, or roughly ${profit:.2f} in profit.</p>",
+        f"<p>The ${qualifying_amount:.0f} qualifying action comes first{code_sentence}. Then I use a separate ${position_amount:.0f} position on {selection_phrase}. At ${entry_price:.2f} per contract, that buys about {contracts:.0f} contracts. A close at ${settlement_price:.2f} returns about ${gross_payout:.2f}, or roughly ${profit:.2f} in profit.</p>",
+        f"<p>After the ${qualifying_amount:.0f} qualifying action{code_sentence}, I put ${position_amount:.0f} behind {selection_phrase}. At ${entry_price:.2f} per contract, that buys roughly {contracts:.0f} contracts. A ${settlement_price:.2f} settlement pays about ${gross_payout:.2f}, which means about ${profit:.2f} in profit.</p>",
     ]
     second_para_options = [
         f"<p>The opposite settlement costs the ${position_amount:.0f} position amount, but the {reward_phrase} from the offer remains. That makes the reward better for several smaller positions instead of one large market view.</p>",
         f"<p>A market move the other way puts the ${position_amount:.0f} position at risk, but the {reward_phrase} from the offer remains. Use that reward as extra flexibility across several positions, not as fuel for one oversized trade.</p>",
         f"<p>An unfavorable settlement still risks the ${position_amount:.0f} amount in that market while the {reward_phrase} remains available. The cleaner use is several smaller follow-up positions instead of one doubled-down view.</p>",
     ]
-    first_para = _choose_variant(variation_key, "pm_claim_p1", first_para_options, selection, reward_phrase)
-    second_para = _choose_variant(variation_key, "pm_claim_p2", second_para_options, selection, reward_phrase)
+    first_para = _choose_variant(variation_key, "pm_claim_p1", first_para_options, selection_phrase, reward_phrase)
+    second_para = _choose_variant(variation_key, "pm_claim_p2", second_para_options, selection_phrase, reward_phrase)
     return first_para + second_para
 
 
