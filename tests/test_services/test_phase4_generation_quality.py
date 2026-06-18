@@ -28,6 +28,7 @@ from app.services.draft import (
     _adapt_disclaimer_for_dfs,
     _generate_body_section,
     _generate_intro_section,
+    generate_draft_from_outline,
     _polish_body_section_prose,
     _polish_conditional_user_openers,
     _polish_intro_fallback_phrases,
@@ -41,6 +42,7 @@ from app.services.draft import (
     _render_terms_section_html,
     _remove_inline_compliance_fragments,
     _resolve_intro_age_conflicts,
+    _select_bc_core_editorial_points,
     _soften_repetitive_intro_opener,
     _strip_formatting_from_headings,
     _strip_market_mismatch_phrasing,
@@ -115,6 +117,8 @@ def test_polish_worked_example_conditionals_rewrites_common_if_phrasing():
     assert "A win puts the profit at $45.45" in cleaned
     assert "A loss leaves me down $50" in cleaned
     assert "A later $200 bonus bet on another NBA pick at -110 pays profit-only" in cleaned
+    assert "$181.82" not in cleaned
+    assert "bonus-bet stake itself does not return" in cleaned
 
 
 def test_polish_conditional_user_openers_rewrites_if_youre_patterns():
@@ -501,6 +505,26 @@ def test_render_bet_example_section_deterministic_builds_contextual_fallback_for
     assert "$50 in bonus bets" in html.lower()
 
 
+def test_render_bet_example_section_deterministic_fallback_uses_offer_qualifying_amount():
+    offer = {
+        "brand": "bet365",
+        "offer_text": "Bet $10, Get $365 in Bonus Bets",
+        "bonus_code": "TOPACTION",
+        "qualifying_amount": "$10",
+        "bonus_amount": "$365",
+    }
+    html = _render_bet_example_section_deterministic(
+        offer=offer,
+        bet_example_data=None,
+        event_context="Featured game: Chelsea vs Arsenal. Game time: Saturday at 3:00 PM ET.",
+    )
+    assert html is not None
+    assert "I place a $10 bet" in html
+    assert "I place a $50 bet" not in html
+    assert "$365 in bonus bets" in html.lower()
+    assert "×" not in html
+
+
 def test_render_dfs_example_section_deterministic_uses_qualifying_entry_amount():
     offer = {
         "brand": "Underdog",
@@ -759,6 +783,48 @@ def test_build_signup_list_uses_exact_qualifying_amount_for_dfs_entries():
     assert "fantasy entry" in html or "qualifying contest" in html
 
 
+def test_build_signup_list_uses_sportsbook_deposit_amount_min_odds_and_bonus_timing():
+    html = _build_signup_list(
+        brand="bet365",
+        has_code=True,
+        code_strong="<strong>TOPACTION</strong>",
+        state="NJ",
+        event_context="Featured game: Chelsea vs Arsenal.",
+        signup_url="https://switchboard.actionnetwork.com/offers?x=1",
+        qualifying_amount="$10",
+        minimum_odds="-200",
+        reward_phrase="$365 in bonus bets",
+    )
+    assert "Deposit at least $10" in html or "Add at least $10" in html or "$10 or more" in html
+    assert "at least $10" in html
+    assert "-200 minimum odds" in html
+    assert "$365 in bonus bets" in html
+    assert "after" in html.lower() and "settles" in html.lower()
+
+
+def test_select_bc_core_editorial_points_prioritizes_soccer_specific_context():
+    points = _select_bc_core_editorial_points(
+        {
+            "event": {"matched": True, "network": "FOX", "season_name": "2026", "schedule_name": "World Cup"},
+            "expertise": {
+                "matched": True,
+                "editorial_points": [
+                    "Weather context points to 72 degrees, 9 mph NW wind, and 15% precipitation.",
+                    "Mexico's official lineup lists 11 starters in a 4-3-3.",
+                    "The latest listed score was Mexico 2, South Africa 1.",
+                    "Mexico has 1 listed player absence: J. Alvarez (Out, Hamstring).",
+                ],
+            },
+        },
+        section_kind="overview",
+        max_points=3,
+    )
+    joined = " ".join(points)
+    assert "latest listed score" in joined
+    assert "official lineup" in joined
+    assert "listed player absence" in joined
+
+
 def test_build_signup_list_varies_by_mode_and_generation_key():
     pm_html = _build_signup_list(
         brand="Kalshi",
@@ -786,6 +852,41 @@ def test_build_signup_list_varies_by_mode_and_generation_key():
     assert "position" in pm_html.lower() or "contract" in pm_html.lower()
     assert "bet" in sportsbook_html.lower() or "wager" in sportsbook_html.lower()
     assert "qualifying bet" not in pm_html.lower()
+
+
+@pytest.mark.asyncio
+async def test_generate_draft_shortcodes_keep_primary_offer_when_alt_offers_exist(monkeypatch):
+    async def _identity_humanizer(html, **kwargs):
+        return html
+
+    monkeypatch.setattr("app.services.draft._humanize_article_html", _identity_humanizer)
+
+    html = await generate_draft_from_outline(
+        outline=[
+            {"level": "shortcode", "title": "", "talking_points": [], "avoid": []},
+            {"level": "shortcode_1", "title": "", "talking_points": [], "avoid": []},
+        ],
+        keyword="bet365 bonus code",
+        title="bet365 bonus code test",
+        offer={
+            "brand": "bet365",
+            "offer_text": "Bet $10, Get $365 in Bonus Bets",
+            "bonus_code": "TOPACTION",
+            "shortcode": '[bam-inline-promotion placement-id="2037" property-id="1" context="web-article-top-stories" internal-id="evergreen" affiliate-type="sportsbook" affiliate="bet365"]',
+        },
+        alt_offers=[
+            {
+                "brand": "BetMGM",
+                "offer_text": "Bet $10, Get $200 in Bonus Bets",
+                "bonus_code": "MGM",
+                "shortcode": '[bam-inline-promotion placement-id="2037" property-id="1" context="web-article-top-stories" internal-id="evergreen" affiliate-type="sportsbook" affiliate="BetMGM"]',
+            }
+        ],
+        state="NJ",
+        offer_property="action_network",
+    )
+    assert html.count('affiliate="bet365"') == 2
+    assert 'affiliate="BetMGM"' not in html
 
 
 def test_strip_invalid_non_switchboard_links_unwraps_relative_urls():

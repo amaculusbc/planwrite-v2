@@ -127,7 +127,11 @@ def _bc_core_point_category(point: str) -> str:
     text = str(point or "").lower()
     if any(token in text for token in ["weather", "degrees", "wind", "precipitation", "cloudy", "rain"]):
         return "weather"
-    if "injury" in text:
+    if any(token in text for token in ["listed score", "latest listed score", "completed games", "went "]):
+        return "matchup"
+    if any(token in text for token in ["lineup", "formation", "starters"]):
+        return "lineup"
+    if any(token in text for token in ["injury", "absence", "out", "questionable"]):
         return "injury"
     if any(token in text for token in ["against the spread", "straight up", "ats", "last 10", "recent sample", "matchup sample"]):
         return "trend"
@@ -141,12 +145,14 @@ def _bc_core_point_category(point: str) -> str:
 def _prioritize_bc_core_points(points: list[str], max_points: int) -> list[str]:
     """Prefer a spread of categories before taking extra same-type notes."""
     category_priority = {
-        "trend": 0,
-        "weather": 1,
-        "stat": 2,
-        "injury": 3,
-        "schedule": 4,
-        "general": 5,
+        "matchup": 0,
+        "lineup": 1,
+        "trend": 2,
+        "stat": 3,
+        "injury": 4,
+        "weather": 5,
+        "schedule": 6,
+        "general": 7,
     }
     ordered_points = sorted(points, key=lambda point: category_priority.get(_bc_core_point_category(point), 99))
     chosen: list[str] = []
@@ -218,7 +224,7 @@ def _bc_core_marker_coverage(text: str, points: list[str]) -> int:
         for marker in re.findall(r"\b\d+(?:\.\d+)?(?:-\d+)?%?\b", point):
             if marker.lower() in haystack:
                 matched = True
-        for marker in re.findall(r"\b(?:playoffs?|nbc|espn|peacock|record|straight up|against the spread|injury|weather)\b", point, flags=re.IGNORECASE):
+        for marker in re.findall(r"\b(?:playoffs?|nbc|espn|peacock|record|straight up|against the spread|injury|absence|lineup|formation|starter|starters|score|weather)\b", point, flags=re.IGNORECASE):
             if marker.lower() in haystack:
                 matched = True
         if matched:
@@ -728,6 +734,8 @@ def _build_signup_list(
     event_context: str = "",
     signup_url: str = "",
     qualifying_amount: str = "",
+    minimum_odds: str = "",
+    reward_phrase: str = "",
     prediction_market: bool = False,
     dfs_mode: bool = False,
     variation_key: str = "",
@@ -745,6 +753,9 @@ def _build_signup_list(
         if dfs_mode
         else ""
     )
+    qualifying_display = str(qualifying_amount or "").strip()
+    min_odds_display = str(minimum_odds or "").strip()
+    reward_display = str(reward_phrase or "").strip()
 
     step_one_options = [
         f'Tap this <a data-id="switchboard_tracking" href="{signup_url}" rel="nofollow">{brand_label} sign-up link</a> to start registration in {location_label}.',
@@ -769,6 +780,15 @@ def _build_signup_list(
         "Verify your identity and location so the app can show eligible offers.",
         "Finish the required account verification before adding funds or entering a market.",
     ]
+    sportsbook_fund_options = [
+        f"Deposit at least {qualifying_display} using an approved payment method before choosing your first bet.",
+        f"Add at least {qualifying_display}, then head to the sportsbook lobby for the qualifying bet.",
+        f"Fund the account with {qualifying_display} or more so the first wager can satisfy the offer.",
+    ] if qualifying_display else [
+        "Deposit the required amount using an approved payment method.",
+        "Fund the account before choosing your first wager.",
+        "Add the minimum required deposit, then head to the sportsbook lobby.",
+    ]
     fund_options = (
         [
             "Add funds or coins using an approved payment method.",
@@ -782,14 +802,21 @@ def _build_signup_list(
             "Load the account, then move to the contest lobby.",
         ]
         if dfs_mode
-        else [
-            "Deposit the required amount using an approved payment method.",
-            "Fund the account before choosing your first wager.",
-            "Add the minimum required deposit, then head to the sportsbook lobby.",
-        ]
+        else sportsbook_fund_options
     )
 
-    qualifying_display = str(qualifying_amount or "").strip()
+    sportsbook_requirement = ""
+    if qualifying_display and min_odds_display:
+        sportsbook_requirement = f" The first wager must be at least {qualifying_display} and meet the {min_odds_display} minimum odds requirement."
+    elif qualifying_display:
+        sportsbook_requirement = f" The first wager must be at least {qualifying_display}."
+    elif min_odds_display:
+        sportsbook_requirement = f" The first wager must meet the {min_odds_display} minimum odds requirement."
+    bonus_timing = (
+        f" After that qualifying bet settles, confirm the {reward_display} posts according to the offer terms."
+        if reward_display
+        else " After that qualifying bet settles, confirm the bonus timing in the promo tracker."
+    )
     final_options = (
         [
             f"Open a qualifying position on {event_label or 'the featured market'} and review contract terms before settlement.",
@@ -804,9 +831,9 @@ def _build_signup_list(
         ]
         if dfs_mode
         else [
-            f"Place your first {qualifying_display or 'qualifying'} bet on {event_label or 'the featured event'} or any market you prefer, then wait for it to settle.",
-            f"Choose an eligible wager for {event_label or 'the featured event'}, confirm the stake, and submit it before the market closes.",
-            f"Make the first qualifying bet, then check the promo tracker for bonus timing after settlement.",
+            f"Place your first qualifying bet on {event_label or 'the featured event'} or any eligible market.{sportsbook_requirement}{bonus_timing}",
+            f"Choose an eligible wager for {event_label or 'the featured event'}, confirm the stake, and submit it before the market closes.{sportsbook_requirement}{bonus_timing}",
+            f"Make the first qualifying bet tied to the offer.{sportsbook_requirement}{bonus_timing}",
         ]
     )
     seed_key = variation_key or f"{brand}|{state}|{event_label}|{prediction_market}|{dfs_mode}"
@@ -1871,12 +1898,12 @@ def _polish_worked_example_conditionals(html: str) -> str:
             "The opposite settlement risks",
         ),
         (
-            r"\bIf I put (\$[\d,]+) in bonus bets on ([^\.]+?) and it wins,\s+the payout is profit-only:",
-            r"A later \1 bonus bet on \2 pays profit-only:",
+            r"\bIf I put (\$[\d,]+) in bonus bets on ([^\.]+?) and it wins,\s+the payout is profit-only:\s*[^\.]*(?:\.|$)",
+            r"A later \1 bonus bet on \2 pays profit-only; the bonus-bet stake itself does not return.",
         ),
         (
-            r"\bI put (\$[\d,]+) in bonus bets on ([^\.]+?) and it wins,\s+the payout is profit-only:",
-            r"A later \1 bonus bet on \2 pays profit-only:",
+            r"\bI put (\$[\d,]+) in bonus bets on ([^\.]+?) and it wins,\s+the payout is profit-only:\s*[^\.]*(?:\.|$)",
+            r"A later \1 bonus bet on \2 pays profit-only; the bonus-bet stake itself does not return.",
         ),
     ]
     cleaned = html
@@ -3079,8 +3106,9 @@ def _build_fallback_bet_example_data(
 
     label_lower = event_label.lower()
     odds = 120 if any(token in label_lower for token in ("ufc", "mma", "boxing", "wbc", "fight night")) else -110
+    qualifying_amount = _parse_money_value(_offer_qualifying_amount_text(offer)) or 50.0
     return {
-        "bet_amount": 50,
+        "bet_amount": qualifying_amount,
         "selection": _default_selection_for_event(event_label),
         "odds": odds,
         "sportsbook_used": str(offer.get("brand") or "").strip().lower(),
@@ -3428,9 +3456,9 @@ def _render_bet_example_section_deterministic(
     reward_phrase = _offer_reward_phrase(offer)
     reward_amount_value = _parse_money_value(offer.get("bonus_amount")) or _parse_money_value(reward_phrase)
     bonus_usage_sentence = (
-        f"A practical next step is splitting that into five ${reward_amount_value / 5:.0f} bonus bets for later markets."
-        if reward_amount_value and reward_amount_value >= 25
-        else "A practical next step is saving those bonus bets for later markets tied to the same slate."
+        "Use those bonus bets on later eligible markets, and remember that only the winnings return from a bonus-bet stake."
+        if reward_amount_value
+        else "Use those bonus bets on later eligible markets once they appear in the account."
     )
     trigger_sentence = (
         f"Because I used <strong>{bonus_code}</strong> at sign-up, the settled bet still triggers {reward_phrase}."
@@ -3442,7 +3470,7 @@ def _render_bet_example_section_deterministic(
         f"<p>Here is a worked example using {book_label}. I place a ${bet_amount:.0f} bet on {selection} at {odds_display}{event_clause}. "
         f"A win returns ${total_return:.2f} total, including ${profit:.2f} in profit and the original stake.</p>"
         f"<p>A loss leaves me down ${bet_amount:.0f} on the wager. {trigger_sentence} "
-        f"{bonus_usage_sentence} Bonus bet stake does not return with winnings, so treat it as a profit-only payout.</p>"
+        f"{bonus_usage_sentence}</p>"
     )
 
 
@@ -3559,15 +3587,8 @@ async def generate_draft_from_outline(
     def select_offer_for_shortcode(level: str) -> dict[str, Any] | None:
         if not all_offers:
             return None
-        if level in ("shortcode", "shortcode_main"):
+        if level.startswith("shortcode"):
             return all_offers[0]
-        if level.startswith("shortcode_"):
-            suffix = level.split("_", 1)[1]
-            if suffix.isdigit():
-                idx = int(suffix)
-                if idx < len(all_offers):
-                    return all_offers[idx]
-            return None
         return all_offers[0]
 
     parts = []
@@ -4215,7 +4236,9 @@ async def _generate_body_section(
             state=state,
             event_context=event_context,
             signup_url=signup_url,
-            qualifying_amount=str(primary_offer.get("qualifying_amount") or "").strip(),
+            qualifying_amount=_offer_qualifying_amount_text(primary_offer),
+            minimum_odds=str(primary_offer.get("minimum_odds") or extract_minimum_odds(terms) or "").strip(),
+            reward_phrase=_offer_reward_phrase_visible(primary_offer),
             prediction_market=prediction_market,
             dfs_mode=dfs_mode,
             variation_key=variation_key,
@@ -4353,7 +4376,7 @@ CRITICAL: This section must include a first-person bet example with math:
 - "A win at +120 profits $60 and returns $110 total, including my $50 stake."
 - "A loss leaves me down $50 on the bet, but the listed bonus amount still posts after settlement."
 - Do not start worked-example sentences with "If"; use direct constructions like "A win...", "A loss...", and "A later bonus bet...".
-- Then show how to use the bonus bets: "If I put $200 in bonus bets on [another pick] at -110 and it wins, the payout is profit-only: $200 × (100/110) = $181.82"
+- Then explain that bonus-bet stakes are profit-only in plain language. Do not show formulas or multiplication.
 
 Use the bet example provided if available, or create one using the event context.
 If structured bet example data is provided, the first paragraph MUST use that exact amount, selection, and odds."""
@@ -4654,15 +4677,8 @@ async def generate_draft_from_outline_streaming(
     def select_offer_for_shortcode(level: str) -> dict[str, Any] | None:
         if not all_offers:
             return None
-        if level in ("shortcode", "shortcode_main"):
+        if level.startswith("shortcode"):
             return all_offers[0]
-        if level.startswith("shortcode_"):
-            suffix = level.split("_", 1)[1]
-            if suffix.isdigit():
-                idx = int(suffix)
-                if idx < len(all_offers):
-                    return all_offers[idx]
-            return None
         return all_offers[0]
 
     parts = []

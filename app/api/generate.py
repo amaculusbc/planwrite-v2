@@ -191,34 +191,6 @@ async def _enrich_with_bc_core(
     return source_facts, event_context
 
 
-def _inject_alt_shortcodes(outline: list[dict], alt_offer_count: int) -> list[dict]:
-    """Insert [SHORTCODE_1]/[SHORTCODE_2] placeholders for multi-offer modules."""
-    if alt_offer_count <= 0:
-        return outline
-
-    max_alt = min(alt_offer_count, 2)
-    alt_sections = [
-        {"level": f"shortcode_{idx}", "title": "", "talking_points": [], "avoid": []}
-        for idx in range(1, max_alt + 1)
-    ]
-
-    result: list[dict] = []
-    inserted = False
-    for section in outline:
-        result.append(section)
-        if not inserted and str(section.get("level", "")) == "shortcode":
-            result.extend(alt_sections)
-            inserted = True
-
-    if not inserted:
-        intro_idx = next((i for i, s in enumerate(result) if str(s.get("level", "")) == "intro"), -1)
-        insert_at = intro_idx + 1 if intro_idx >= 0 else 0
-        for offset, section in enumerate(alt_sections):
-            result.insert(insert_at + offset, section)
-
-    return result
-
-
 def _resolve_outline_from_request(request: DraftRequest) -> list[dict]:
     """Resolve structured outline from structured/text/token request formats."""
     if request.outline_text:
@@ -310,7 +282,6 @@ async def _stream_outline(request: OutlineRequest, db: AsyncSession) -> AsyncGen
             competitor_context=competitor_context,
             article_preferences=prefs,
         )
-        outline_structured = _inject_alt_shortcodes(outline_structured, len(alt_offers))
         tokens = structured_to_tokens(outline_structured)
         outline_text = outline_to_text(outline_structured)
 
@@ -484,7 +455,6 @@ async def generate_outline_sync(
         competitor_context=competitor_context,
         article_preferences=prefs,
     )
-    outline_structured = _inject_alt_shortcodes(outline_structured, len(alt_offers))
     tokens = structured_to_tokens(outline_structured)
     outline_text = outline_to_text(outline_structured)
     artifact_run.write_stage(
