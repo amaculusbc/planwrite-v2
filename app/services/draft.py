@@ -2536,6 +2536,9 @@ def _strip_source_and_prompt_leaks(html: str) -> str:
         r"\s*[^.]*\bfor this article(?:'|â€™|’)?s requested state context[^.]*\.?",
         r"\s*[^.]*\bno matched event data here[^.]*\.?",
         r"\s*[^.]*\bpre-loaded market match[^.]*\.?",
+        r"\s*[^.]*\bclean event match\b[^.]*\bfeed\b[^.]*\.?",
+        r"\s*[^.]*\bour feed\b[^.]*\.?",
+        r"\s*[^.]*\bon our end\b[^.]*\.?",
         r"\s*[^.]*\binternal expertise notes?[^.]*\.?",
         r"\s*[^.]*\binternal matchup notes?[^.]*\.?",
         r"\s*[^.]*\bBC Core\b[^.]*\.?",
@@ -2554,6 +2557,7 @@ def _strip_source_and_prompt_leaks(html: str) -> str:
         (r"\bcheck the live board\b", "use the selected market"),
         (r"\bcheck live now\b", "review the selected market"),
         (r"\bminimum odds\s+([+-]?\d+)\s+of greater\b", r"Minimum odds \1 or greater"),
+        (r"\bEPL wager\b", "soccer wager"),
     ]
     for pattern, replacement in replacements:
         cleaned = _rewrite_html_text_nodes(

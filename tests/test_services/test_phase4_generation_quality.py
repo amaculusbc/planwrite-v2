@@ -211,12 +211,19 @@ def test_strip_source_and_prompt_leaks_removes_market_match_leak_and_terms_typo(
     html = (
         "<p>One quick note: we do not have a clean, pre-loaded market match for both teams, "
         "so double-check the game.</p>"
+        "<p>One note on our end: we did not have a clean event match for both teams in our feed, "
+        "so double-check the listing.</p>"
+        "<p>This is a clean EPL wager for Chelsea vs. Arsenal.</p>"
         "<p>Minimum odds -500 of greater.</p>"
     )
 
     cleaned = _strip_source_and_prompt_leaks(html)
 
     assert "pre-loaded market match" not in cleaned
+    assert "clean event match" not in cleaned
+    assert "our feed" not in cleaned
+    assert "EPL wager" not in cleaned
+    assert "soccer wager" in cleaned
     assert "Minimum odds -500 or greater" in cleaned
 
 
