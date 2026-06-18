@@ -103,6 +103,13 @@ def test_polish_intro_fallback_phrases_rewrites_if_youre_following_linked_keywor
     assert 'For readers tracking <a href="https://example.com">bet365 bonus code</a>' in cleaned
 
 
+def test_polish_intro_fallback_phrases_rewrites_if_youre_looking_for_keyword():
+    html = '<p>Chelsea vs. Arsenal kicks off tonight. If you\'re looking for <a href="https://example.com">bet365 bonus code</a>, this is the offer.</p>'
+    cleaned = _polish_intro_fallback_phrases(html)
+    assert "If you" not in cleaned
+    assert 'For readers looking for <a href="https://example.com">bet365 bonus code</a>' in cleaned
+
+
 def test_polish_worked_example_conditionals_rewrites_common_if_phrasing():
     html = (
         "<p>If it wins, my profit is $45.45, and I get my $50 stake back. "
@@ -196,6 +203,19 @@ def test_strip_source_and_prompt_leaks_removes_internal_context_phrasing():
     assert "BC Core" not in cleaned
     assert "playoff-style" not in cleaned
     assert "typically see" not in cleaned
+
+
+def test_strip_source_and_prompt_leaks_removes_market_match_leak_and_terms_typo():
+    html = (
+        "<p>One quick note: we do not have a clean, pre-loaded market match for both teams, "
+        "so double-check the game.</p>"
+        "<p>Minimum odds -500 of greater.</p>"
+    )
+
+    cleaned = _strip_source_and_prompt_leaks(html)
+
+    assert "pre-loaded market match" not in cleaned
+    assert "Minimum odds -500 or greater" in cleaned
 
 
 def test_strip_source_and_prompt_leaks_removes_excerpt_alignment_commentary():
