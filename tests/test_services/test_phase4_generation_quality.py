@@ -8,6 +8,7 @@ from app.services.draft import (
     _apply_generation_quality_postprocess,
     _build_signup_list,
     _body_word_count_for_editorial_target,
+    _cap_primary_keyword_density,
     _clean_orphaned_keyword_page_references,
     _count_keyword,
     _enforce_secondary_keyword_mentions,
@@ -1139,6 +1140,14 @@ def test_ensure_editorial_body_length_adds_useful_section_before_terms():
     assert expanded.index("What to Watch Before Using bet365") < expanded.index("bet365 Bonus Code Terms")
     assert "filler" not in expanded.lower()
     assert _body_word_count_for_editorial_target(expanded) > _body_word_count_for_editorial_target(html)
+
+
+def test_cap_primary_keyword_density_reduces_late_plain_mentions():
+    html = "".join(f"<p>bet365 bonus code mention {idx}.</p>" for idx in range(11))
+    capped = _cap_primary_keyword_density(html, "bet365 bonus code", max_count=9)
+
+    assert _count_keyword(capped, "bet365 bonus code") == 9
+    assert "bet365 mention 10" in capped
 
 
 def test_strip_invalid_non_switchboard_links_unwraps_relative_urls():

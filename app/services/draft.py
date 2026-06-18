@@ -2357,6 +2357,41 @@ def _enforce_primary_keyword_density(html: str, keyword: str, min_count: int = 5
     return "".join(pieces)
 
 
+def _cap_primary_keyword_density(html: str, keyword: str, max_count: int = 9) -> str:
+    """Reduce exact keyword overage by converting later plain mentions to brand-only text."""
+    if not html or not keyword or _count_keyword(html, keyword) <= max_count:
+        return html
+    brand = keyword.split()[0] if keyword.split() else keyword
+    pattern = re.compile(re.escape(keyword), flags=re.IGNORECASE)
+    count = 0
+    inside_anchor = 0
+    inside_strong = 0
+    out: list[str] = []
+    for token in re.findall(r"<[^>]+>|[^<]+", html, flags=re.DOTALL):
+        if token.startswith("<"):
+            tag = token.lower()
+            if re.match(r"<a\b", tag):
+                inside_anchor += 1
+            elif re.match(r"</a\b", tag):
+                inside_anchor = max(0, inside_anchor - 1)
+            elif re.match(r"<strong\b", tag):
+                inside_strong += 1
+            elif re.match(r"</strong\b", tag):
+                inside_strong = max(0, inside_strong - 1)
+            out.append(token)
+            continue
+
+        def _repl(match: re.Match[str]) -> str:
+            nonlocal count
+            count += 1
+            if count <= max_count or inside_anchor or inside_strong:
+                return match.group(0)
+            return brand
+
+        out.append(pattern.sub(_repl, token))
+    return "".join(out)
+
+
 def _build_length_expansion_section(
     *,
     keyword: str,
@@ -4014,6 +4049,7 @@ async def generate_draft_from_outline(
         bc_core_context=bc_core_context,
         content_mode=content_mode,
     )
+    html_output = _cap_primary_keyword_density(html_output, keyword)
 
     if output_format == "markdown":
         # Convert back to markdown (basic)
@@ -5126,6 +5162,7 @@ async def generate_draft_from_outline_streaming(
         bc_core_context=bc_core_context,
         content_mode=content_mode,
     )
+    html_output = _cap_primary_keyword_density(html_output, keyword)
 
     if output_format == "markdown":
         html_output = _html_to_markdown(html_output)
