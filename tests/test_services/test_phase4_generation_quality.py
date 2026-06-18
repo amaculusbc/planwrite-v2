@@ -217,6 +217,8 @@ def test_strip_source_and_prompt_leaks_removes_market_match_leak_and_terms_typo(
         "<p>One note on our end: we did not have a clean event match for both teams in our feed, "
         "so double-check the listing.</p>"
         "<p>One quick note: our event feed did not align cleanly with both teams for extra market callouts.</p>"
+        "<p>One quick note: our event feed did not cleanly match both teams for Chelsea vs Arsenal, "
+        "so you may need to search for the match manually.</p>"
         "<p>This is a clean EPL wager for Chelsea vs. Arsenal.</p>"
         "<p>Minimum odds -500 of greater.</p>"
     )
@@ -1139,6 +1141,7 @@ def test_ensure_editorial_body_length_adds_useful_section_before_terms():
     assert "What to Watch Before Using bet365" in expanded
     assert expanded.index("What to Watch Before Using bet365") < expanded.index("bet365 Bonus Code Terms")
     assert "filler" not in expanded.lower()
+    assert "payout math" not in expanded.lower()
     assert _body_word_count_for_editorial_target(expanded) > _body_word_count_for_editorial_target(html)
 
 
@@ -1250,6 +1253,13 @@ def test_trim_dangling_paragraph_endings_removes_trailing_conjunction_fragment()
     html = '<p>If you want the full breakdown of the <a href="https://www.actionnetwork.com/online-sports-betting/reviews/bet365">bet365 bonus code</a> details, that page lays it out, and</p>'
     cleaned = _trim_dangling_paragraph_endings(html)
     assert cleaned.endswith("details, that page lays it out.</p>")
+
+
+def test_trim_dangling_paragraph_endings_removes_trailing_remember_fragment():
+    html = '<p>For a step-by-step walkthrough, use this <strong>bet365 bonus code</strong> guide, and remember</p><h2>How to Claim</h2>'
+    cleaned = _trim_dangling_paragraph_endings(html)
+    assert "and remember" not in cleaned
+    assert cleaned.startswith('<p>For a step-by-step walkthrough, use this <strong>bet365 bonus code</strong> guide.</p>')
 
 
 def test_offer_states_text_uses_curated_underdog_states_for_dfs():

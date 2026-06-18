@@ -2446,7 +2446,7 @@ def _build_length_expansion_section(
         )
         fifth = (
             "After the qualifying bet, the better user experience is to explain what happens next: where the bonus appears, how it can be used, and why bonus-bet stakes usually do not return with winnings. "
-            "Those details give the article more practical value than extra payout math."
+            "Those details give the article more practical value than extra payout breakdowns."
         )
 
     third = ""
@@ -2691,6 +2691,7 @@ def _trim_dangling_paragraph_endings(html: str) -> str:
     if not html:
         return html
     patterns = [
+        (r",?\s*(?:and\s+)?remember\s*</p>", ".</p>"),
         (r",\s*(?:and|but|so|then)\s*</p>", ".</p>"),
         (r"\(\s*</p>", ".</p>"),
     ]
@@ -2711,6 +2712,7 @@ def _strip_source_and_prompt_leaks(html: str) -> str:
         r"\s*[^.]*\bpre-loaded market match[^.]*\.?",
         r"\s*[^.]*\bclean event match\b[^.]*\bfeed\b[^.]*\.?",
         r"\s*[^.]*\bevent feed\b[^.]*\balign[^.]*\.?",
+        r"\s*[^.]*\bevent feed\b[^.]*\.?",
         r"\s*[^.]*\bour feed\b[^.]*\.?",
         r"\s*[^.]*\bon our end\b[^.]*\.?",
         r"\s*[^.]*\binternal expertise notes?[^.]*\.?",
