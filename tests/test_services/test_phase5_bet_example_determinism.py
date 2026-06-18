@@ -27,14 +27,15 @@ def test_render_bet_example_section_deterministic_uses_selected_values():
     assert "$100" in html
     assert "Atlanta Hawks ML" in html
     assert "+170" in html
-    assert "$170.00" in html
-    assert "$270.00" in html
+    assert "$270.00" not in html
+    assert "matched to that losing stake" in html
+    assert "not a guaranteed payout" in html
     assert "TOPACTION" in html
     assert "Atlanta Hawks vs Charlotte Hornets" in html
 
 
 @pytest.mark.asyncio
-async def test_generate_body_section_claim_uses_ai_prompt_with_exact_bet_mechanics(monkeypatch):
+async def test_generate_body_section_claim_uses_deterministic_exact_bet_mechanics(monkeypatch):
     prompts: list[str] = []
 
     async def _fake_query_articles(*args, **kwargs):
@@ -45,9 +46,7 @@ async def test_generate_body_section_claim_uses_ai_prompt_with_exact_bet_mechani
 
     async def _fake_generate_completion(*, prompt, system_prompt, temperature, max_tokens):
         prompts.append(prompt)
-        if len(prompts) == 1:
-            return "<p>If I place $75 on Boston Celtics ML at -105, the bet returns less than the requested example.</p><p>Second paragraph.</p>"
-        return "<p>If I place $100 on Atlanta Hawks ML at +170, the upside is $170.00 in profit and $270.00 back overall.</p><p>If the bet loses, the offer still returns bonus bets tied to the same first-bet setup.</p>"
+        return "<p>This should not be used.</p>"
 
     monkeypatch.setattr(draft_mod, "query_articles", _fake_query_articles)
     monkeypatch.setattr(draft_mod, "suggest_links_for_section", _fake_suggest_links)
@@ -84,18 +83,32 @@ async def test_generate_body_section_claim_uses_ai_prompt_with_exact_bet_mechani
         dfs_mode=False,
     )
 
-    assert len(prompts) == 2
-    assert "EXACT MECHANICS REFERENCE" in prompts[0]
-    assert "Atlanta Hawks ML" in prompts[0]
-    assert "+170" in prompts[0]
-    assert "$270.00" in prompts[0]
-    assert "MANDATORY CORRECTION" in prompts[1]
-    assert "exact first-bet amount" in prompts[1]
+    assert prompts == []
     assert "Atlanta Hawks ML" in content
     assert "+170" in content
-    assert "$170.00" in content
-    assert "$270.00" in content
+    assert "$270.00" not in content
+    assert "guaranteed payout" in content or "matched to that losing stake" in content
     assert "[another pick]" not in content
+
+
+def test_render_bet_example_section_deterministic_bet_and_get_uses_qualifier_not_big_example():
+    html = _render_bet_example_section_deterministic(
+        offer={
+            "brand": "theScore Bet",
+            "offer_text": "Bet $10, Get $1000 in Bonus Bets",
+            "bonus_code": "SCORE1000",
+            "qualifying_amount": "$10",
+            "bonus_amount": "$1000",
+        },
+        bet_example_data=None,
+        event_context="Featured game: Toronto Maple Leafs vs Boston Bruins.",
+    )
+
+    assert html is not None
+    assert "$10" in html
+    assert "$50" not in html
+    assert "$1000 payout" not in html.lower()
+    assert "separate from the result of the wager" in html
 
 
 @pytest.mark.asyncio

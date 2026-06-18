@@ -8,12 +8,14 @@ from app.services.draft import (
     _apply_generation_quality_postprocess,
     _build_signup_list,
     _clean_orphaned_keyword_page_references,
+    _count_keyword,
     _enforce_secondary_keyword_mentions,
     _ensure_primary_keyword_internal_link,
     _ensure_first_paragraph_keyword_internal_link,
     _ensure_top_story_tracking_tag,
     _ensure_intro_state_specificity,
     _ensure_keyword_in_first_paragraph,
+    _enforce_primary_keyword_density,
     _extract_featured_label_from_event_context,
     _generate_signup_steps_structured,
     _humanize_article_html,
@@ -505,7 +507,8 @@ def test_render_bet_example_section_deterministic_uses_reward_phrase_not_raw_off
     assert "Bet $10 Get $50 in Bonus Bets" not in html
     assert "$50 in bonus bets" in html.lower()
     assert "If I place" not in html
-    assert "A win returns" in html
+    assert "A winning bet pays normally" in html
+    assert "separate from the result of the wager" in html
 
 
 def test_render_bet_example_section_deterministic_builds_contextual_fallback_for_custom_event():
@@ -539,7 +542,7 @@ def test_render_bet_example_section_deterministic_fallback_uses_offer_qualifying
         event_context="Featured game: Chelsea vs Arsenal. Game time: Saturday at 3:00 PM ET.",
     )
     assert html is not None
-    assert "I place a $10 bet" in html
+    assert "qualifying $10 bet" in html
     assert "I place a $50 bet" not in html
     assert "$365 in bonus bets" in html.lower()
     assert "×" not in html
@@ -913,6 +916,44 @@ def test_build_signup_list_uses_sportsbook_deposit_amount_min_odds_and_bonus_tim
     assert "after" in html.lower() and "settles" in html.lower()
 
 
+def test_build_signup_list_uses_bet_and_get_bonus_timing():
+    html = _build_signup_list(
+        brand="bet365",
+        has_code=True,
+        code_strong="<strong>GOALBET</strong>",
+        state="NJ",
+        event_context="Featured game: Chelsea vs Arsenal.",
+        qualifying_amount="$10",
+        minimum_odds="-500",
+        reward_phrase="$365 in Bonus Bets",
+        offer_mechanic="bet_and_get",
+        variation_key="bet-and-get",
+    )
+
+    assert "at least $10" in html
+    assert "-500 minimum odds" in html
+    assert "Once the qualifying wager is placed" in html
+
+
+def test_build_signup_list_uses_money_back_bonus_timing():
+    html = _build_signup_list(
+        brand="theScore Bet",
+        has_code=True,
+        code_strong="<strong>SCORE</strong>",
+        state="NJ",
+        event_context="Featured game: Rangers vs Devils.",
+        qualifying_amount="$10",
+        minimum_odds="-200",
+        reward_phrase="$1000 in bonus bets",
+        offer_mechanic="money_back",
+        variation_key="money-back",
+    )
+
+    assert "at least $10" in html
+    assert "If the first bet loses" in html
+    assert "matched with $1000 in bonus bets" in html
+
+
 def test_select_bc_core_editorial_points_prioritizes_soccer_specific_context():
     points = _select_bc_core_editorial_points(
         {
@@ -996,8 +1037,52 @@ async def test_generate_draft_shortcodes_keep_primary_offer_when_alt_offers_exis
         state="NJ",
         offer_property="action_network",
     )
-    assert html.count('affiliate="bet365"') == 2
-    assert 'affiliate="BetMGM"' not in html
+    assert html.count('affiliate="bet365"') == 1
+    assert html.count('affiliate="BetMGM"') == 1
+
+
+@pytest.mark.asyncio
+async def test_generate_draft_does_not_duplicate_single_selected_bam_unit(monkeypatch):
+    async def _identity_humanizer(html, **kwargs):
+        return html
+
+    monkeypatch.setattr("app.services.draft._humanize_article_html", _identity_humanizer)
+
+    html = await generate_draft_from_outline(
+        outline=[
+            {"level": "shortcode", "title": "", "talking_points": [], "avoid": []},
+            {"level": "shortcode_1", "title": "", "talking_points": [], "avoid": []},
+            {"level": "shortcode_2", "title": "", "talking_points": [], "avoid": []},
+        ],
+        keyword="bet365 bonus code",
+        title="bet365 bonus code test",
+        offer={
+            "brand": "bet365",
+            "offer_text": "Bet $10, Get $365 in Bonus Bets",
+            "bonus_code": "TOPACTION",
+            "shortcode": '[bam-inline-promotion placement-id="2037" property-id="1" context="web-article-top-stories" internal-id="evergreen" affiliate-type="sportsbook" affiliate="bet365"]',
+        },
+        alt_offers=[],
+        state="NJ",
+        offer_property="action_network",
+    )
+    assert html.count("[bam-inline-promotion") == 1
+    assert html.count('affiliate="bet365"') == 1
+
+
+def test_enforce_primary_keyword_density_adds_plain_text_mentions_without_ctas():
+    html = (
+        '<p><a href="https://example.com">bet365 bonus code</a> starts the article.</p>'
+        "<p>The offer details are clear for the matchup.</p>"
+        "<p>The signup flow uses the selected operator.</p>"
+        "<p>The example keeps the stake aligned with the offer.</p>"
+        "<p>Terms apply. 21+.</p>"
+    )
+
+    cleaned = _enforce_primary_keyword_density(html, "bet365 bonus code")
+
+    assert _count_keyword(cleaned, "bet365 bonus code") >= 5
+    assert cleaned.count("href=") == 1
 
 
 def test_strip_invalid_non_switchboard_links_unwraps_relative_urls():

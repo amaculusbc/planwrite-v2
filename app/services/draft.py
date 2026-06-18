@@ -75,6 +75,20 @@ def _count_keyword(text: str, keyword: str) -> int:
     return len(pattern.findall(text))
 
 
+def _shortcode_index(level: str) -> int:
+    """Map shortcode tokens to selected offer index: shortcode -> 0, shortcode_1 -> 1."""
+    raw = str(level or "").strip().lower()
+    if raw == "shortcode":
+        return 0
+    match = re.match(r"shortcode[_-](\d+)$", raw)
+    if not match:
+        return 0
+    try:
+        return int(match.group(1))
+    except ValueError:
+        return 0
+
+
 def _naturalize_bc_core_editorial_point(point: str) -> str:
     """Rewrite internal BC Core notes into reader-facing editorial language."""
     text = str(point or "").strip()
@@ -740,6 +754,7 @@ def _build_signup_list(
     dfs_mode: bool = False,
     variation_key: str = "",
     market: str = "US",
+    offer_mechanic: str = "generic",
 ) -> str:
     """Build a deterministic 5-step signup list as HTML."""
     brand_label = brand or ("the operator" if prediction_market else "the DFS app" if dfs_mode else "the sportsbook")
@@ -812,11 +827,24 @@ def _build_signup_list(
         sportsbook_requirement = f" The first wager must be at least {qualifying_display}."
     elif min_odds_display:
         sportsbook_requirement = f" The first wager must meet the {min_odds_display} minimum odds requirement."
-    bonus_timing = (
-        f" After that qualifying bet settles, confirm the {reward_display} posts according to the offer terms."
-        if reward_display
-        else " After that qualifying bet settles, confirm the bonus timing in the promo tracker."
-    )
+    if offer_mechanic == "bet_and_get":
+        bonus_timing = (
+            f" Once the qualifying wager is placed, confirm the {reward_display} posts according to the offer terms."
+            if reward_display
+            else " Once the qualifying wager is placed, confirm the bonus timing in the promo tracker."
+        )
+    elif offer_mechanic == "money_back":
+        bonus_timing = (
+            f" If the first bet loses, confirm the losing stake is matched with {reward_display} after settlement according to the offer terms."
+            if reward_display
+            else " If the first bet loses, confirm the matched bonus timing after settlement in the promo tracker."
+        )
+    else:
+        bonus_timing = (
+            f" After that qualifying bet settles, confirm the {reward_display} posts according to the offer terms."
+            if reward_display
+            else " After that qualifying bet settles, confirm the bonus timing in the promo tracker."
+        )
     final_options = (
         [
             f"Open a qualifying position on {event_label or 'the featured market'} and review contract terms before settlement.",
@@ -2247,6 +2275,55 @@ def _target_keyword_mentions(html: str, keyword: str) -> str:
     return "".join(out)
 
 
+def _enforce_primary_keyword_density(html: str, keyword: str, min_count: int = 5, max_count: int = 9) -> str:
+    """Add plain-text exact keyword mentions when generated copy falls below target."""
+    if not html or not keyword:
+        return html
+    current = _count_keyword(html, keyword)
+    if current >= min_count:
+        return html
+
+    additions_needed = min(max_count - current, min_count - current)
+    if additions_needed <= 0:
+        return html
+
+    variants = [
+        f" This keeps the {keyword} tied to the selected offer mechanics.",
+        f" The {keyword} should stay matched to this exact offer.",
+        f" That gives the {keyword} a clear role in the signup flow.",
+        f" Use the {keyword} only with the selected operator offer.",
+    ]
+    para_pattern = re.compile(r"<p\b([^>]*)>(.*?)</p>", flags=re.IGNORECASE | re.DOTALL)
+    pieces: list[str] = []
+    last = 0
+    added = 0
+
+    for match in para_pattern.finditer(html):
+        pieces.append(html[last:match.start()])
+        full = match.group(0)
+        attrs = match.group(1) or ""
+        inner = match.group(2) or ""
+        plain = _html_to_plain_text(inner).lower()
+        skip = (
+            added >= additions_needed
+            or "[bam-inline-promotion" in inner.lower()
+            or "switchboard_tracking" in inner.lower()
+            or "gambling problem" in plain
+            or "terms apply" in plain
+            or "minimum odds" in plain
+            or ("states available" in plain and len(plain.split()) < 25)
+        )
+        if skip:
+            pieces.append(full)
+        else:
+            pieces.append(f"<p{attrs}>{inner.rstrip()}{variants[added % len(variants)]}</p>")
+            added += 1
+        last = match.end()
+
+    pieces.append(html[last:])
+    return "".join(pieces)
+
+
 def _secondary_keyword_count(html: str, phrase: str) -> int:
     if not html or not phrase:
         return 0
@@ -2945,6 +3022,50 @@ def _offer_qualifying_amount_text(offer: dict[str, Any]) -> str:
     return str(raw).strip()
 
 
+def _offer_mechanic_type(offer: dict[str, Any]) -> str:
+    """Classify offer mechanics for compliant examples."""
+    text = " ".join(
+        str(offer.get(key) or "")
+        for key in ("offer_text", "affiliate_offer", "terms", "name", "title")
+    ).lower()
+    if re.search(r"\b(first bet|bet)\s+(?:loses|loss)\b", text) or any(
+        phrase in text for phrase in ("money back", "refund", "safety net", "no sweat")
+    ):
+        return "money_back"
+    if re.search(r"\bbet\s*\$?\d", text) and re.search(r"\bget\s*\$?\d", text):
+        return "bet_and_get"
+    if "win or lose" in text:
+        return "bet_and_get"
+    if "deposit" in text and re.search(r"\bmatch(?:ed)?\b", text):
+        return "deposit_match"
+    return "generic"
+
+
+def _offer_bonus_timing_sentence(offer: dict[str, Any], *, bet_amount: float, reward_phrase: str) -> str:
+    """Explain reward timing without implying a bonus is the same as wager payout."""
+    mechanic = _offer_mechanic_type(offer)
+    reward_amount = _parse_money_value(offer.get("bonus_amount") or offer.get("reward_amount") or reward_phrase)
+    cap_phrase = f" up to {reward_phrase}" if reward_amount else ""
+    if mechanic == "money_back":
+        return (
+            f"If the first bet loses, the bonus is matched to that losing stake{cap_phrase} after settlement. "
+            "It is not a guaranteed payout from the wager itself."
+        )
+    if mechanic == "bet_and_get":
+        return (
+            f"Once the eligible first wager is placed, the offer credits {reward_phrase} under the listed terms. "
+            "That bonus is separate from the result of the wager."
+        )
+    if mechanic == "deposit_match":
+        return (
+            f"The bonus is tied to the eligible deposit and offer terms, not to a guaranteed result from this wager."
+        )
+    return (
+        f"After the qualifying wager settles, the offer credits {reward_phrase} under the listed terms. "
+        "The bonus is separate from the wager payout."
+    )
+
+
 def _event_schedule_text(event_context: str) -> str:
     """Build a concise schedule phrase like 'tips Tuesday at 8:30 PM ET on NBC'."""
     if not event_context:
@@ -3464,23 +3585,17 @@ def _render_bet_example_section_deterministic(
 
     bonus_code = str(offer.get("bonus_code") or "").strip()
     reward_phrase = _offer_reward_phrase(offer)
-    reward_amount_value = _parse_money_value(offer.get("bonus_amount")) or _parse_money_value(reward_phrase)
-    bonus_usage_sentence = (
-        "Use those bonus bets on later eligible markets, and remember that only the winnings return from a bonus-bet stake."
-        if reward_amount_value
-        else "Use those bonus bets on later eligible markets once they appear in the account."
+    timing_sentence = _offer_bonus_timing_sentence(
+        offer,
+        bet_amount=bet_amount,
+        reward_phrase=reward_phrase,
     )
-    trigger_sentence = (
-        f"Because I used <strong>{bonus_code}</strong> at sign-up, the settled bet still triggers {reward_phrase}."
-        if bonus_code
-        else f"The settled bet still triggers {reward_phrase}."
-    )
+    code_clause = f" after entering <strong>{bonus_code}</strong>" if bonus_code else ""
 
     return (
-        f"<p>Here is a worked example using {book_label}. I place a ${bet_amount:.0f} bet on {selection} at {odds_display}{event_clause}. "
-        f"A win returns ${total_return:.2f} total, including ${profit:.2f} in profit and the original stake.</p>"
-        f"<p>A loss leaves me down ${bet_amount:.0f} on the wager. {trigger_sentence} "
-        f"{bonus_usage_sentence}</p>"
+        f"<p>Here is the clean version using {book_label}: place the qualifying ${bet_amount:.0f} bet on {selection} at {odds_display}{event_clause}{code_clause}. "
+        f"A winning bet pays normally at the selected odds; a losing bet costs the ${bet_amount:.0f} stake.</p>"
+        f"<p>{timing_sentence} Use any bonus bets on later eligible markets, and remember that bonus-bet stakes usually do not return with winnings.</p>"
     )
 
 
@@ -3597,9 +3712,10 @@ async def generate_draft_from_outline(
     def select_offer_for_shortcode(level: str) -> dict[str, Any] | None:
         if not all_offers:
             return None
-        if level.startswith("shortcode"):
-            return all_offers[0]
-        return all_offers[0]
+        idx = _shortcode_index(level)
+        if idx < 0 or idx >= len(all_offers):
+            return None
+        return all_offers[idx]
 
     parts = []
     parts.append(f"<h1>{title}</h1>")
@@ -3644,8 +3760,6 @@ async def generate_draft_from_outline(
                 ) or switchboard_url
                 block = _render_html_offer_block(current_offer, current_switchboard, property_key=offer_property)
                 parts.append(block)
-            else:
-                parts.append("<!-- Promo module placeholder -->")
 
         elif level in ("h2", "h3"):
             normalized = _normalize_heading(section_title)
@@ -3739,6 +3853,7 @@ async def generate_draft_from_outline(
     html_output = _apply_content_mode_language_guardrails(html_output, content_mode)
     html_output = _normalize_brand_keyword_text(html_output, brand)
     html_output = _target_keyword_mentions(html_output, keyword)
+    html_output = _enforce_primary_keyword_density(html_output, keyword)
     html_output = _enforce_secondary_keyword_mentions(html_output, prefs["secondary_keywords"])
     html_output = _clean_orphaned_keyword_page_references(html_output, keyword)
     html_output = _unwrap_generic_offer_strong(html_output, brand)
@@ -4253,6 +4368,7 @@ async def _generate_body_section(
             dfs_mode=dfs_mode,
             variation_key=variation_key,
             market=prefs.get("market", "US"),
+            offer_mechanic=_offer_mechanic_type(primary_offer),
         )
 
     section_kind = "claim" if is_how_to_claim else "overview" if is_overview else "general"
@@ -4294,6 +4410,8 @@ async def _generate_body_section(
                 event_context=event_context,
             )
         if deterministic_claim:
+            if not prediction_market and not dfs_mode:
+                return deterministic_claim
             reference_mechanics = _html_to_plain_text(deterministic_claim)
         exact_qualifying_amount = str(
             primary_offer.get("qualifying_amount")
@@ -4381,12 +4499,12 @@ Use the worked example provided if available, or create one using the event cont
         else:
             section_objective = f"""SECTION OBJECTIVE: Provide a WORKED EXAMPLE with actual dollar amounts.
 
-CRITICAL: This section must include a first-person bet example with math:
+CRITICAL: This section must include a first-person bet example with selected offer mechanics:
 {claim_intro}
-- "A win at +120 profits $60 and returns $110 total, including my $50 stake."
-- "A loss leaves me down $50 on the bet, but the listed bonus amount still posts after settlement."
+- "A win pays normally at the selected odds."
+- "A loss costs the first stake, and the selected offer determines whether bonus bets post after placement or after settlement."
 - Do not start worked-example sentences with "If"; use direct constructions like "A win...", "A loss...", and "A later bonus bet...".
-- Then explain that bonus-bet stakes are profit-only in plain language. Do not show formulas or multiplication.
+- Explain the bonus timing in plain language. Do not show formulas, multiplication, or payout tables.
 
 Use the bet example provided if available, or create one using the event context.
 If structured bet example data is provided, the first paragraph MUST use that exact amount, selection, and odds."""
@@ -4687,9 +4805,10 @@ async def generate_draft_from_outline_streaming(
     def select_offer_for_shortcode(level: str) -> dict[str, Any] | None:
         if not all_offers:
             return None
-        if level.startswith("shortcode"):
-            return all_offers[0]
-        return all_offers[0]
+        idx = _shortcode_index(level)
+        if idx < 0 or idx >= len(all_offers):
+            return None
+        return all_offers[idx]
 
     parts = []
     previous_content = ""
@@ -4838,6 +4957,7 @@ async def generate_draft_from_outline_streaming(
     html_output = _apply_content_mode_language_guardrails(html_output, content_mode)
     html_output = _normalize_brand_keyword_text(html_output, brand)
     html_output = _target_keyword_mentions(html_output, keyword)
+    html_output = _enforce_primary_keyword_density(html_output, keyword)
     html_output = _enforce_secondary_keyword_mentions(html_output, prefs["secondary_keywords"])
     html_output = _clean_orphaned_keyword_page_references(html_output, keyword)
     html_output = _unwrap_generic_offer_strong(html_output, brand)
