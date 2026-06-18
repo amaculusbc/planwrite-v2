@@ -829,9 +829,9 @@ def _build_signup_list(
         sportsbook_requirement = f" The first wager must meet the {min_odds_display} minimum odds requirement."
     if offer_mechanic == "bet_and_get":
         bonus_timing = (
-            f" Once the qualifying wager is placed, confirm the {reward_display} posts according to the offer terms."
+            f" Once you place the qualifying wager, confirm the {reward_display} posts according to the offer terms."
             if reward_display
-            else " Once the qualifying wager is placed, confirm the bonus timing in the promo tracker."
+            else " Once you place the qualifying wager, confirm the bonus timing in the promo tracker."
         )
     elif offer_mechanic == "money_back":
         bonus_timing = (
@@ -2558,6 +2558,8 @@ def _strip_source_and_prompt_leaks(html: str) -> str:
         (r"\bcheck live now\b", "review the selected market"),
         (r"\bminimum odds\s+([+-]?\d+)\s+of greater\b", r"Minimum odds \1 or greater"),
         (r"\bEPL wager\b", "soccer wager"),
+        (r"\bhas to be placed at odds of\b", "must meet odds of"),
+        (r"\bmust be placed at odds of\b", "must meet odds of"),
     ]
     for pattern, replacement in replacements:
         cleaned = _rewrite_html_text_nodes(
@@ -3057,7 +3059,7 @@ def _offer_bonus_timing_sentence(offer: dict[str, Any], *, bet_amount: float, re
         )
     if mechanic == "bet_and_get":
         return (
-            f"Once the eligible first wager is placed, the offer credits {reward_phrase} under the listed terms. "
+            f"Once you place the eligible first wager, the offer credits {reward_phrase} under the listed terms. "
             "That bonus is separate from the result of the wager."
         )
     if mechanic == "deposit_match":

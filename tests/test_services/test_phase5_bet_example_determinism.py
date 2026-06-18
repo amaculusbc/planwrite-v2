@@ -108,6 +108,7 @@ def test_render_bet_example_section_deterministic_bet_and_get_uses_qualifier_not
     assert "$10" in html
     assert "$50" not in html
     assert "$1000 payout" not in html.lower()
+    assert "Once you place the eligible first wager" in html
     assert "separate from the result of the wager" in html
 
 

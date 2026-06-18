@@ -939,7 +939,7 @@ def test_build_signup_list_uses_bet_and_get_bonus_timing():
 
     assert "at least $10" in html
     assert "-500 minimum odds" in html
-    assert "Once the qualifying wager is placed" in html
+    assert "Once you place the qualifying wager" in html
 
 
 def test_build_signup_list_uses_money_back_bonus_timing():
