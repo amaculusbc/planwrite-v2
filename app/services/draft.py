@@ -346,6 +346,39 @@ def _html_to_plain_text(html: str) -> str:
     return text.strip()
 
 
+def _body_word_count_for_editorial_target(html: str) -> int:
+    """Count article body words excluding signup steps, shortcodes, terms, scripts, and disclaimers."""
+    if not html:
+        return 0
+    count = 0
+    blocked_heading = ""
+    for match in re.finditer(
+        r"<h[1-6]\b[^>]*>(.*?)</h[1-6]>|<p\b[^>]*>(.*?)</p>",
+        html,
+        flags=re.IGNORECASE | re.DOTALL,
+    ):
+        heading = match.group(1)
+        paragraph = match.group(2)
+        if heading is not None:
+            blocked_heading = _html_to_plain_text(heading).lower()
+            continue
+        if paragraph is None:
+            continue
+        paragraph_lc = paragraph.lower()
+        plain = _html_to_plain_text(paragraph)
+        plain_lc = plain.lower()
+        if not plain:
+            continue
+        if any(token in blocked_heading for token in ("sign up", "sign-up", "signup", "claim", "terms", "conditions", "fine print", "rules")):
+            continue
+        if "[bam-inline-promotion" in paragraph_lc or "switchboard_tracking" in paragraph_lc:
+            continue
+        if "gambling problem" in plain_lc or "terms apply" in plain_lc or "21+" in plain_lc:
+            continue
+        count += len(re.findall(r"\b[\w'-]+\b", plain))
+    return count
+
+
 def _first_paragraph_plain_text(html: str) -> str:
     """Return the first paragraph as compact plain text for validation."""
     if not html:
@@ -2324,6 +2357,100 @@ def _enforce_primary_keyword_density(html: str, keyword: str, min_count: int = 5
     return "".join(pieces)
 
 
+def _build_length_expansion_section(
+    *,
+    keyword: str,
+    offer: dict[str, Any],
+    event_context: str = "",
+    bc_core_context: dict[str, Any] | None = None,
+    content_mode: str = CONTENT_MODE_SPORTSBOOK,
+) -> str:
+    """Create a useful extra editorial section when body copy is under target length."""
+    brand = str(offer.get("brand") or "the operator").strip()
+    event_label = _extract_featured_label_from_event_context(event_context)
+    reward_phrase = _offer_reward_phrase_visible(offer)
+    qualifying_amount = _offer_qualifying_amount_text(offer)
+    min_odds = str(offer.get("minimum_odds") or extract_minimum_odds(str(offer.get("terms") or "")) or "").strip()
+    bc_points = _select_bc_core_editorial_points(bc_core_context, section_kind="overview", max_points=3)
+
+    if content_mode == CONTENT_MODE_PREDICTION_MARKET:
+        heading = f"What to Watch Before Using {brand}"
+        first = (
+            f"Before using {keyword}, start with the market you actually want to trade for {event_label or 'the featured event'}. "
+            f"The offer works best when the first qualifying action lines up with a real view, not a rushed position just to trigger {reward_phrase}."
+        )
+        second = (
+            "Price movement matters because small contract changes can alter the risk/reward profile quickly. "
+            "Check the displayed price, settlement rules, and available liquidity before opening the position."
+        )
+    elif content_mode == CONTENT_MODE_DFS:
+        heading = f"What to Watch Before Using {brand}"
+        first = (
+            f"Before using {keyword}, look at the contest format and player pool for {event_label or 'the featured slate'}. "
+            f"The offer works best when the qualifying entry fits the lineup or pick'em card you already wanted to build."
+        )
+        second = (
+            f"Treat {reward_phrase} as extra entry flexibility rather than a reason to force one oversized contest. "
+            "Smaller entries across a few different builds usually give the bonus more practical value."
+        )
+    else:
+        heading = f"What to Watch Before Using {brand}"
+        qualifier = f" The qualifying wager is {qualifying_amount}" if qualifying_amount else ""
+        odds_note = f" and must meet {min_odds} minimum odds" if min_odds else ""
+        first = (
+            f"Before using {keyword}, pick the market for {event_label or 'the featured event'} first and then confirm it fits the offer rules."
+            f"{qualifier}{odds_note}, so the best example is the bet you were already comfortable making."
+        )
+        second = (
+            f"The bonus value comes after the qualifying action, not from changing the payout on the first wager. "
+            f"That makes {reward_phrase} more useful for follow-up markets than for chasing a bigger first bet."
+        )
+
+    third = ""
+    if bc_points:
+        clean_points = [point for point in bc_points if point]
+        if len(clean_points) >= 2:
+            third = f"<p>{clean_points[0]} {clean_points[1]}</p>"
+        elif clean_points:
+            third = f"<p>{clean_points[0]}</p>"
+
+    return f"<h2>{heading}</h2>\n<p>{first}</p>\n<p>{second}</p>{third}"
+
+
+def _ensure_editorial_body_length(
+    html: str,
+    *,
+    keyword: str,
+    offer: dict[str, Any],
+    event_context: str = "",
+    bc_core_context: dict[str, Any] | None = None,
+    content_mode: str = CONTENT_MODE_SPORTSBOOK,
+    target_words: int = 500,
+) -> str:
+    """Aim for ~500 editorial body words, excluding signup steps and compliance sections."""
+    if not html or target_words <= 0:
+        return html
+    if _body_word_count_for_editorial_target(html) >= target_words:
+        return html
+    if re.search(r"<h[1-6]\b[^>]*>\s*What to Watch Before Using\b", html, flags=re.IGNORECASE):
+        return html
+
+    section = _build_length_expansion_section(
+        keyword=keyword,
+        offer=offer,
+        event_context=event_context,
+        bc_core_context=bc_core_context,
+        content_mode=content_mode,
+    )
+    insert_before = re.search(r"<h[1-6]\b[^>]*>[^<]*(?:Terms|Conditions|Fine Print|Rules)[^<]*</h[1-6]>", html, flags=re.IGNORECASE)
+    if insert_before:
+        return html[:insert_before.start()] + section + "\n" + html[insert_before.start():]
+    disclaimer = re.search(r"<p><em>.*?(?:Gambling problem|Please play responsibly|Terms apply).*?</em></p>", html, flags=re.IGNORECASE | re.DOTALL)
+    if disclaimer:
+        return html[:disclaimer.start()] + section + "\n" + html[disclaimer.start():]
+    return f"{html}\n{section}"
+
+
 def _secondary_keyword_count(html: str, phrase: str) -> int:
     if not html or not phrase:
         return 0
@@ -3867,6 +3994,14 @@ async def generate_draft_from_outline(
     html_output = _strip_unprovided_article_date(html_output, article_date)
     html_output = _strip_market_mismatch_phrasing(html_output, prefs.get("market", "US"))
     html_output = _strip_formatting_from_headings(html_output)
+    html_output = _ensure_editorial_body_length(
+        html_output,
+        keyword=keyword,
+        offer=offer,
+        event_context=event_context,
+        bc_core_context=bc_core_context,
+        content_mode=content_mode,
+    )
 
     if output_format == "markdown":
         # Convert back to markdown (basic)
@@ -4971,6 +5106,14 @@ async def generate_draft_from_outline_streaming(
     html_output = _strip_unprovided_article_date(html_output, article_date)
     html_output = _strip_market_mismatch_phrasing(html_output, prefs.get("market", "US"))
     html_output = _strip_formatting_from_headings(html_output)
+    html_output = _ensure_editorial_body_length(
+        html_output,
+        keyword=keyword,
+        offer=offer,
+        event_context=event_context,
+        bc_core_context=bc_core_context,
+        content_mode=content_mode,
+    )
 
     if output_format == "markdown":
         html_output = _html_to_markdown(html_output)

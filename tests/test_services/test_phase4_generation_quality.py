@@ -7,6 +7,7 @@ from app.services.draft import (
     _align_selected_link_anchors,
     _apply_generation_quality_postprocess,
     _build_signup_list,
+    _body_word_count_for_editorial_target,
     _clean_orphaned_keyword_page_references,
     _count_keyword,
     _enforce_secondary_keyword_mentions,
@@ -16,6 +17,7 @@ from app.services.draft import (
     _ensure_intro_state_specificity,
     _ensure_keyword_in_first_paragraph,
     _enforce_primary_keyword_density,
+    _ensure_editorial_body_length,
     _extract_featured_label_from_event_context,
     _generate_signup_steps_structured,
     _humanize_article_html,
@@ -1090,6 +1092,51 @@ def test_enforce_primary_keyword_density_adds_plain_text_mentions_without_ctas()
 
     assert _count_keyword(cleaned, "bet365 bonus code") >= 5
     assert cleaned.count("href=") == 1
+
+
+def test_body_word_count_excludes_signup_terms_shortcodes_and_disclaimers():
+    html = (
+        "<h1>Title</h1>"
+        "<p>Intro body words count here for the editorial target.</p>"
+        '[bam-inline-promotion placement-id="2066" property-id="326" affiliate="bet365"]'
+        "<h2>How to Claim bet365 Bonus Code</h2>"
+        "<ol><li>Sign up step one has many many words that should not count.</li></ol>"
+        "<h2>Terms and Conditions</h2>"
+        "<p>Terms apply. 21+. Minimum odds -500 or greater.</p>"
+        "<p><em>21+. Gambling problem? Call 1-800-GAMBLER.</em></p>"
+    )
+
+    assert _body_word_count_for_editorial_target(html) == 9
+
+
+def test_ensure_editorial_body_length_adds_useful_section_before_terms():
+    html = (
+        "<h1>bet365 bonus code test</h1>"
+        "<p>Short intro for the selected offer.</p>"
+        "<h2>bet365 Bonus Code Details</h2>"
+        "<p>The selected offer requires a $10 qualifying wager.</p>"
+        "<h2>bet365 Bonus Code Terms</h2>"
+        "<p>Terms apply. 21+.</p>"
+    )
+
+    expanded = _ensure_editorial_body_length(
+        html,
+        keyword="bet365 bonus code",
+        offer={
+            "brand": "bet365",
+            "offer_text": "Bet $10, Get $365 in Bonus Bets",
+            "qualifying_amount": "$10",
+            "bonus_amount": "$365",
+            "minimum_odds": "-500",
+        },
+        event_context="Featured game: Chelsea vs Arsenal.",
+        target_words=120,
+    )
+
+    assert "What to Watch Before Using bet365" in expanded
+    assert expanded.index("What to Watch Before Using bet365") < expanded.index("bet365 Bonus Code Terms")
+    assert "filler" not in expanded.lower()
+    assert _body_word_count_for_editorial_target(expanded) > _body_word_count_for_editorial_target(html)
 
 
 def test_strip_invalid_non_switchboard_links_unwraps_relative_urls():
