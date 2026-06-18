@@ -2405,6 +2405,14 @@ def _build_length_expansion_section(
             f"The bonus value comes after the qualifying action, not from changing the payout on the first wager. "
             f"That makes {reward_phrase} more useful for follow-up markets than for chasing a bigger first bet."
         )
+        fourth = (
+            f"For {event_label or 'the featured event'}, keep the first wager tied to a market you can explain clearly: moneyline, spread, total, or another standard option that fits the offer rules. "
+            "That keeps the example useful for readers and avoids turning the promo section into a generic betting slip."
+        )
+        fifth = (
+            "After the qualifying bet, the better user experience is to explain what happens next: where the bonus appears, how it can be used, and why bonus-bet stakes usually do not return with winnings. "
+            "Those details give the article more practical value than extra payout math."
+        )
 
     third = ""
     if bc_points:
@@ -2414,7 +2422,10 @@ def _build_length_expansion_section(
         elif clean_points:
             third = f"<p>{clean_points[0]}</p>"
 
-    return f"<h2>{heading}</h2>\n<p>{first}</p>\n<p>{second}</p>{third}"
+    extra = ""
+    if content_mode == CONTENT_MODE_SPORTSBOOK:
+        extra = f"\n<p>{fourth}</p>\n<p>{fifth}</p>"
+    return f"<h2>{heading}</h2>\n<p>{first}</p>\n<p>{second}</p>{third}{extra}"
 
 
 def _ensure_editorial_body_length(
@@ -2664,6 +2675,7 @@ def _strip_source_and_prompt_leaks(html: str) -> str:
         r"\s*[^.]*\bno matched event data here[^.]*\.?",
         r"\s*[^.]*\bpre-loaded market match[^.]*\.?",
         r"\s*[^.]*\bclean event match\b[^.]*\bfeed\b[^.]*\.?",
+        r"\s*[^.]*\bevent feed\b[^.]*\balign[^.]*\.?",
         r"\s*[^.]*\bour feed\b[^.]*\.?",
         r"\s*[^.]*\bon our end\b[^.]*\.?",
         r"\s*[^.]*\binternal expertise notes?[^.]*\.?",

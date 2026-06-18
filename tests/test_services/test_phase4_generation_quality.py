@@ -215,6 +215,7 @@ def test_strip_source_and_prompt_leaks_removes_market_match_leak_and_terms_typo(
         "so double-check the game.</p>"
         "<p>One note on our end: we did not have a clean event match for both teams in our feed, "
         "so double-check the listing.</p>"
+        "<p>One quick note: our event feed did not align cleanly with both teams for extra market callouts.</p>"
         "<p>This is a clean EPL wager for Chelsea vs. Arsenal.</p>"
         "<p>Minimum odds -500 of greater.</p>"
     )
@@ -224,6 +225,7 @@ def test_strip_source_and_prompt_leaks_removes_market_match_leak_and_terms_typo(
     assert "pre-loaded market match" not in cleaned
     assert "clean event match" not in cleaned
     assert "our feed" not in cleaned
+    assert "event feed" not in cleaned
     assert "EPL wager" not in cleaned
     assert "soccer wager" in cleaned
     assert "Minimum odds -500 or greater" in cleaned
