@@ -2407,6 +2407,7 @@ def _build_length_expansion_section(
     qualifying_amount = _offer_qualifying_amount_text(offer)
     min_odds = str(offer.get("minimum_odds") or extract_minimum_odds(str(offer.get("terms") or "")) or "").strip()
     bc_points = _select_bc_core_editorial_points(bc_core_context, section_kind="overview", max_points=3)
+    extra_paragraphs: list[str] = []
 
     if content_mode == CONTENT_MODE_PREDICTION_MARKET:
         heading = f"What to Watch Before Using {brand}"
@@ -2418,6 +2419,20 @@ def _build_length_expansion_section(
             "Price movement matters because small contract changes can alter the risk/reward profile quickly. "
             "Check the displayed price, settlement rules, and available liquidity before opening the position."
         )
+        extra_paragraphs.extend([
+            (
+                "Keep the example tied to one clear market side instead of jumping across several contracts. "
+                "Readers need to understand the position, the entry price, and what has to happen for the contract to settle in their favor."
+            ),
+            (
+                f"Use {reward_phrase} as extra flexibility after the qualifying action, not as a reason to force a larger position. "
+                "That framing keeps the promo explanation useful without turning the article into a trading calculator."
+            ),
+            (
+                "Close the section by separating the market opinion from the promo mechanics. "
+                "That gives the article a useful read on the event while keeping the offer rules easy to scan."
+            ),
+        ])
     elif content_mode == CONTENT_MODE_DFS:
         heading = f"What to Watch Before Using {brand}"
         first = (
@@ -2428,6 +2443,20 @@ def _build_length_expansion_section(
             f"Treat {reward_phrase} as extra entry flexibility rather than a reason to force one oversized contest. "
             "Smaller entries across a few different builds usually give the bonus more practical value."
         )
+        extra_paragraphs.extend([
+            (
+                "Use the matchup context to decide how aggressive the first entry should be. "
+                "A focused single-game slate rewards cleaner correlations, while a larger slate gives you more room to separate player combinations."
+            ),
+            (
+                "The best user experience explains what the bonus can and cannot do after it posts. "
+                "Readers should know whether the reward works as contest entry credit, when it expires, and why it is not withdrawable cash."
+            ),
+            (
+                "Keep the section focused on fantasy decisions instead of sportsbook language. "
+                "Mention entries, lineups, projections, and contest rules so the copy matches how DFS users actually claim the offer."
+            ),
+        ])
     else:
         heading = f"What to Watch Before Using {brand}"
         qualifier = f" The qualifying wager is {qualifying_amount}" if qualifying_amount else ""
@@ -2448,6 +2477,19 @@ def _build_length_expansion_section(
             "After the qualifying bet, the better user experience is to explain what happens next: where the bonus appears, how it can be used, and why bonus-bet stakes usually do not return with winnings. "
             "Those details give the article more practical value than extra payout breakdowns."
         )
+        sixth = (
+            "Keep the stake aligned with the offer requirement instead of inflating the example. "
+            f"When the promo asks for {qualifying_amount or 'a qualifying wager'}, the clearest walkthrough starts there and then explains the bonus sequence after settlement or placement."
+        )
+        seventh = (
+            f"Use the match angle to make the section feel current: mention the selected side, the kickoff window, and why a standard market works for {event_label or 'the featured event'}. "
+            "That gives editors practical matchup context while keeping the compliance language separate in the terms section."
+        )
+        eighth = (
+            "Save eligibility, time limits, and bonus restrictions for the terms block unless they change the example itself. "
+            "That keeps the main copy focused on why the offer fits the event and what the reader should do next."
+        )
+        extra_paragraphs.extend([fourth, fifth, sixth, seventh, eighth])
 
     third = ""
     if bc_points:
@@ -2458,8 +2500,8 @@ def _build_length_expansion_section(
             third = f"<p>{clean_points[0]}</p>"
 
     extra = ""
-    if content_mode == CONTENT_MODE_SPORTSBOOK:
-        extra = f"\n<p>{fourth}</p>\n<p>{fifth}</p>"
+    if extra_paragraphs:
+        extra = "\n" + "\n".join(f"<p>{paragraph}</p>" for paragraph in extra_paragraphs)
     return f"<h2>{heading}</h2>\n<p>{first}</p>\n<p>{second}</p>{third}{extra}"
 
 
