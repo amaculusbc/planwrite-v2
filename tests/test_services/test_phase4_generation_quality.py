@@ -722,6 +722,46 @@ async def test_generate_intro_section_does_not_default_to_today_when_article_dat
 
 
 @pytest.mark.asyncio
+async def test_generate_intro_section_excludes_alternate_offers_from_prompt(monkeypatch):
+    captured: dict[str, str] = {}
+    primary_offer = {
+        "brand": "bet365",
+        "offer_text": "Bet $10, Get $365 in Bonus Bets",
+        "bonus_code": "TOPACTION",
+        "qualifying_amount": "$10",
+        "bonus_amount": "$365",
+        "states": ["NJ"],
+    }
+    alternate_offer = {
+        "brand": "BetMGM",
+        "offer_text": "Bet $10, Get $150 in Bonus Bets",
+        "bonus_code": "MGM150",
+    }
+
+    async def _fake_generate_completion(*, prompt, system_prompt, temperature, max_tokens):
+        captured["prompt"] = prompt
+        return "<p>bet365 bonus code TOPACTION works for Chelsea vs. Arsenal.</p><p>States Available: NJ.</p>"
+
+    monkeypatch.setattr("app.services.draft.generate_completion", _fake_generate_completion)
+
+    await _generate_intro_section(
+        keyword="bet365 bonus code",
+        title="bet365 bonus code TOPACTION: $365 Bonus for Chelsea vs. Arsenal",
+        offer=primary_offer,
+        all_offers=[primary_offer, alternate_offer],
+        state="NJ",
+        talking_points=[],
+        event_context="Featured game: Chelsea vs Arsenal. Game time: Thursday, June 18, 2026 at 3:00 PM ET. Network: FOX.",
+        article_date="Thursday, June 18, 2026",
+    )
+
+    assert "bet365" in captured["prompt"]
+    assert "TOPACTION" in captured["prompt"]
+    assert "BetMGM" not in captured["prompt"]
+    assert "MGM150" not in captured["prompt"]
+
+
+@pytest.mark.asyncio
 async def test_generate_body_section_uses_ai_prompt_for_dfs_overview(monkeypatch):
     captured: dict[str, str] = {}
 
@@ -766,6 +806,57 @@ async def test_generate_body_section_uses_ai_prompt_for_dfs_overview(monkeypatch
     assert "How Underdog promo code fits Lakers vs. Thunder" in captured["prompt"]
     assert "sign-up guide" not in html.lower()
     assert "more builds" in html.lower()
+
+
+@pytest.mark.asyncio
+async def test_generate_body_section_excludes_alternate_offers_from_prompt(monkeypatch):
+    captured: dict[str, str] = {}
+    primary_offer = {
+        "brand": "bet365",
+        "offer_text": "Bet $10, Get $365 in Bonus Bets",
+        "bonus_code": "TOPACTION",
+        "qualifying_amount": "$10",
+        "bonus_amount": "$365",
+        "states": ["NJ"],
+    }
+    alternate_offer = {
+        "brand": "BetMGM",
+        "offer_text": "Bet $10, Get $150 in Bonus Bets",
+        "bonus_code": "MGM150",
+    }
+
+    async def _fake_query_articles(*args, **kwargs):
+        return []
+
+    async def _fake_suggest_links(*args, **kwargs):
+        return []
+
+    async def _fake_generate_completion(*, prompt, system_prompt, temperature, max_tokens):
+        captured["prompt"] = prompt
+        return "<p>The $10 qualifying bet keeps the example aligned with the selected bet365 offer.</p>"
+
+    monkeypatch.setattr("app.services.draft.generate_completion", _fake_generate_completion)
+    monkeypatch.setattr("app.services.draft.query_articles", _fake_query_articles)
+    monkeypatch.setattr("app.services.draft.suggest_links_for_section", _fake_suggest_links)
+
+    await _generate_body_section(
+        section_title="bet365 Bonus Code TOPACTION Details",
+        level="h2",
+        keyword="bet365 bonus code",
+        offer=primary_offer,
+        all_offers=[primary_offer, alternate_offer],
+        state="NJ",
+        offer_property="goal_com",
+        talking_points=[],
+        avoid=[],
+        previous_content="",
+        event_context="Featured game: Chelsea vs Arsenal. Game time: Thursday, June 18, 2026 at 3:00 PM ET. Network: FOX.",
+    )
+
+    assert "bet365" in captured["prompt"]
+    assert "TOPACTION" in captured["prompt"]
+    assert "BetMGM" not in captured["prompt"]
+    assert "MGM150" not in captured["prompt"]
 
 
 def test_build_signup_list_uses_exact_qualifying_amount_for_dfs_entries():

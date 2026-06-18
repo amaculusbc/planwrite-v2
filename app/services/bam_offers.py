@@ -731,18 +731,12 @@ async def get_offer_by_id_bam(
     state: str | None = None,
     market: str | None = None,
 ) -> Optional[dict]:
-    """Get a single offer by its ID."""
+    """Get a single offer by its ID.
+
+    Match the picker catalog first so draft generation uses the same merged,
+    state-aware variant the editor selected in the UI.
+    """
     geo_params = _geo_params_for_state(state)
-    offers = await fetch_offers_from_bam(
-        property_key=property_key,
-        context=context,
-        **geo_params,
-    )
-    for offer in offers:
-        if offer.get("id") == offer_id:
-            if not state or str(state).strip().upper() == "ALL":
-                break
-            return offer
     catalog_offers = await get_offer_catalog_bam(
         state=state,
         property_key=property_key,
@@ -752,6 +746,12 @@ async def get_offer_by_id_bam(
     for offer in catalog_offers:
         if offer.get("id") == offer_id:
             return offer
+
+    offers = await fetch_offers_from_bam(
+        property_key=property_key,
+        context=context,
+        **geo_params,
+    )
     for offer in offers:
         if offer.get("id") == offer_id:
             return offer

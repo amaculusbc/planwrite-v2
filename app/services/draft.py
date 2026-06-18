@@ -3791,7 +3791,7 @@ async def _generate_intro_section(
     preferred_code_term = _preferred_code_term(brand)
     code_strong = f"<strong>{bonus_code}</strong>" if has_code else ""
     link_anchor = f"{brand} offer" if brand else "the offer"
-    prompt_offers = [o for o in (all_offers or []) if o] or [offer]
+    prompt_offers = [offer] if offer else []
     has_multiple_offers = len(prompt_offers) > 1
     multi_offer_context = _build_multi_offer_prompt_context(
         prompt_offers,
@@ -4065,8 +4065,8 @@ async def _generate_body_section(
     bc_core_context: dict[str, Any] | None = None,
 ) -> str:
     """Generate a body section (H2 or H3)."""
-    prompt_offers = [o for o in (all_offers or []) if o] or ([offer] if offer else [])
-    primary_offer = offer or (prompt_offers[0] if prompt_offers else {})
+    primary_offer = offer or {}
+    prompt_offers = [primary_offer] if primary_offer else []
     has_multiple_offers = len(prompt_offers) > 1
 
     brand = primary_offer.get("brand", "")
