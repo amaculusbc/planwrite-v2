@@ -138,6 +138,7 @@ def _naturalize_bc_core_editorial_point(point: str) -> str:
     text = re.sub(r"\bbaseball_pitchingruns\b", "runs allowed", text, flags=re.IGNORECASE)
     text = re.sub(r"\bbaseball_pitchingstrikeouts\b", "strikeouts", text, flags=re.IGNORECASE)
     text = text.replace("FromRight", "from right field").replace("FromLeft", "from left field")
+    text = text.replace("LeftToRight", "left-to-right").replace("RightToLeft", "right-to-left")
     text = re.sub(r"\btrend sample\b", "recent sample", text, flags=re.IGNORECASE)
     text = re.sub(r"\boverall sample\b", "recent sample", text, flags=re.IGNORECASE)
     text = re.sub(r"\s*\bin the selected event\b", "", text, flags=re.IGNORECASE)
@@ -2858,6 +2859,8 @@ async def _compose_numbers_narrative_section(
     fallback_brand = _sportsbook_display_name(keyword.split()[0]) if keyword.split() else "the operator"
     brand = str(offer.get("brand") or fallback_brand).strip()
     reward_phrase = _offer_reward_phrase_visible(offer)
+    if prediction_market:
+        reward_phrase = reward_phrase.replace("bonus bets", "promo credits")
     qualifying_amount = _offer_qualifying_amount_text(offer)
     min_odds = str(offer.get("minimum_odds") or extract_minimum_odds(str(offer.get("terms") or "")) or "").strip()
 
@@ -2908,17 +2911,18 @@ async def _compose_numbers_narrative_section(
             else ""
         )
 
+    close_clause = "then a clear play" if selection else "closing on the sharpest takeaway for one side"
     system_prompt = (
         (
             "You are a senior prediction-market editor for Action Network's Top Stories. "
-            "You write tight, confident, data-driven matchup analysis: stakes first, then the numbers built into an argument for one side, then a clear play. "
+            f"You write tight, confident, data-driven matchup analysis: stakes first, then the numbers built into an argument for one side, {close_clause}. "
             "Use prediction-market language only: market, position, contract, trade, settle. Never use bet, betting, wager, sportsbook, or bonus bets. "
             "Output clean HTML only: exactly 3 or 4 separate <p> paragraphs. No headings, no lists, no markdown, no exclamation points."
         )
         if prediction_market
         else (
             "You are a senior sports betting editor for Action Network's Top Stories. "
-            "You write tight, confident, data-driven matchup analysis: stakes first, then the numbers built into an argument for one side, then a clear play. "
+            f"You write tight, confident, data-driven matchup analysis: stakes first, then the numbers built into an argument for one side, {close_clause}. "
             "Output clean HTML only: exactly 3 or 4 separate <p> paragraphs. No headings, no lists, no markdown, no exclamation points."
         )
     )
@@ -2935,7 +2939,7 @@ OFFER TIE-IN: one short sentence at the end of the second-to-last paragraph, mod
 - Build the facts into an argument for one side instead of listing them. Connect them with editorial reasoning, e.g. "that is the profile of a team that...", "which is exactly the matchup where...".
 - Do not invent injuries, crowd, venue, weather, or history that is not listed. Never mention data sources, feeds, models, or anything internal.
 - 120 to 220 words total. No exclamation points.
-- Use the primary keyword "{keyword}" at most once, as a natural phrase such as "the {keyword} offer" - or not at all."""
+- Use the primary keyword "{keyword}" at most once, as a natural phrase such as "the {keyword} offer" - or not at all.{'' if selection else chr(10) + '- Do not include a "The play:" line or recommend a specific position; close on the strongest takeaway instead.'}"""
 
     allowed_numbers = _extract_fact_numbers(
         bc_points
