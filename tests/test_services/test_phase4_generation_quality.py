@@ -27,9 +27,12 @@ from app.services.draft import (
     _keep_only_primary_non_switchboard_link,
     _is_signup_heading,
     _is_daily_promos_heading,
+    _convert_availability_labels_to_prose,
     _naturalize_bc_core_editorial_point,
     _normalize_brand_casing,
     _normalize_matchup_vs_notation,
+    _offer_reward_phrase_visible,
+    _title_case_headings,
     _offer_excluded_states_text,
     _offer_states_text,
     _adapt_disclaimer_for_dfs,
@@ -298,13 +301,14 @@ def test_offer_states_text_prefers_selected_sportsbook_offer_states_over_operato
     assert rendered == "ON, QC"
 
 
-def test_ensure_intro_state_specificity_respects_existing_province_label():
+def test_ensure_intro_state_specificity_converts_province_label_to_prose():
     html = "<p>Use the offer before tip. Provinces Available: AB, BC, QC.</p>"
 
     cleaned = _ensure_intro_state_specificity(html, "AB, BC, QC")
 
-    assert cleaned.count("Provinces Available") == 1
+    assert "Provinces Available" not in cleaned
     assert "States Available" not in cleaned
+    assert cleaned.count("The offer is available in AB, BC, QC.") == 1
 
 
 def test_trim_repeated_see_full_terms_mentions_caps_phrase():
@@ -421,7 +425,8 @@ def test_render_terms_section_html_uses_current_state_for_multi_offer_headers():
         wagering="",
         state="NJ",
     )
-    assert "States Available: NJ" in html
+    assert "Available in NJ" in html
+    assert "States Available" not in html
 
 
 def test_remove_inline_compliance_fragments_strips_standalone_21_plus():
@@ -605,7 +610,8 @@ def test_render_dfs_intro_deterministic_uses_exact_state_and_age_copy():
         event_context="Featured game: Los Angeles Lakers vs Oklahoma City Thunder. Game time: Tuesday, May 5, 2026 at 8:30 PM ET. Network: NBC.",
         article_date="Monday, May 4, 2026",
     )
-    assert "States Available: AL, AK, AR, CA, DC" in html
+    assert "It's available in AL, AK, AR, CA, DC" in html
+    assert "States Available" not in html
     assert "Excluded:" not in html
     assert "18+ (age varies by state)." in html
     assert "21+ required" not in html
@@ -727,7 +733,8 @@ async def test_generate_intro_section_uses_ai_prompt_for_dfs_intro(monkeypatch):
     assert "The intro should feel fresh on each run" in captured["prompt"]
     assert "DFS writer" in captured["system_prompt"]
     assert "TOPACTION" in html
-    assert "States Available:" in html
+    assert "The offer is available in TX." in html
+    assert "States Available" not in html
 
 
 @pytest.mark.asyncio
@@ -1178,7 +1185,7 @@ async def test_generate_draft_tolerates_missing_primary_offer(monkeypatch):
         offer_property="goal_com",
     )
 
-    assert "<h1>bet365 bonus code test</h1>" in html
+    assert "<h1>bet365 Bonus Code Test</h1>" in html
     assert "view_top_story" in html
 
 
@@ -1346,6 +1353,52 @@ def test_normalize_brand_casing_keeps_bet365_lowercase_and_skips_unknown_lowerca
 
     unknown = "<p>Use Novig promo code today.</p>"
     assert _normalize_brand_casing(unknown, "novig") == unknown
+
+
+def test_convert_availability_labels_to_prose_handles_lists_and_generic():
+    html = (
+        "<p>States Available: NJ, PA.</p>"
+        "<p>Provinces Available: AB, BC.</p>"
+        "<p>States Available: eligible states listed by the operator.</p>"
+    )
+    fixed = _convert_availability_labels_to_prose(html)
+    assert "The offer is available in NJ, PA." in fixed
+    assert "The offer is available in AB, BC." in fixed
+    assert "Availability varies by state, so confirm eligibility during signup." in fixed
+    assert "Available:" not in fixed
+
+
+def test_convert_availability_labels_to_prose_rewrites_generic_prose_fallback():
+    html = "<p>It's available in eligible states listed by the operator.</p>"
+    fixed = _convert_availability_labels_to_prose(html)
+    assert "eligible states listed by the operator" not in fixed
+    assert "Availability varies by state, so confirm eligibility during signup." in fixed
+
+
+def test_title_case_headings_preserves_brands_acronyms_and_small_words():
+    html = (
+        "<h1>draftkings promo code: nationals vs. red sox MLB offer</h1>"
+        "<h2>What the Numbers Say About Nationals vs Red Sox</h2>"
+        "<h2>bet365 bonus code terms</h2>"
+        "<p>body text stays lowercase</p>"
+    )
+    fixed = _title_case_headings(html)
+    assert "<h1>Draftkings Promo Code: Nationals vs. Red Sox MLB Offer</h1>" in fixed
+    assert "<h2>What the Numbers Say About Nationals vs Red Sox</h2>" in fixed
+    assert "<h2>bet365 Bonus Code Terms</h2>" in fixed
+    assert "body text stays lowercase" in fixed
+
+
+def test_offer_reward_phrase_visible_decapitalizes_marketing_but_keeps_branded_labels():
+    shouty = _offer_reward_phrase_visible(
+        {"brand": "DraftKings", "bonus_amount": "$200", "reward_label": "Bonus Bets Instantly"}
+    )
+    assert shouty == "$200 in bonus bets instantly"
+
+    branded = _offer_reward_phrase_visible(
+        {"brand": "Novig", "bonus_amount": "$50", "reward_label": "Novig Coins"}
+    )
+    assert branded == "$50 in Novig Coins"
 
 
 def test_cap_primary_keyword_density_reduces_late_plain_mentions():

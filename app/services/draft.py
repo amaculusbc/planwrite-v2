@@ -140,6 +140,7 @@ def _naturalize_bc_core_editorial_point(point: str) -> str:
     text = text.replace("FromRight", "from right field").replace("FromLeft", "from left field")
     text = re.sub(r"\btrend sample\b", "recent sample", text, flags=re.IGNORECASE)
     text = re.sub(r"\boverall sample\b", "recent sample", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s*\bin the selected event\b", "", text, flags=re.IGNORECASE)
     text = re.sub(r"\s{2,}", " ", text).strip()
     if text and not text.endswith("."):
         text += "."
@@ -1550,21 +1551,21 @@ def _render_daily_promos_placeholder(
 
     if prediction_market:
         items = [
-            "<li><strong>[Operator 1]:</strong> [Promo details]. Code: [CODE]. States Available: [state list].</li>",
-            "<li><strong>[Operator 2]:</strong> [Promo details]. Code: [CODE]. States Available: [state list].</li>",
-            "<li><strong>[Operator 3]:</strong> [Promo details]. Code: [CODE]. States Available: [state list].</li>",
+            "<li><strong>[Operator 1]:</strong> [Promo details]. Code: [CODE]. Available in [state list].</li>",
+            "<li><strong>[Operator 2]:</strong> [Promo details]. Code: [CODE]. Available in [state list].</li>",
+            "<li><strong>[Operator 3]:</strong> [Promo details]. Code: [CODE]. Available in [state list].</li>",
         ]
     elif dfs_mode:
         items = [
-            "<li><strong>[DFS App 1]:</strong> [Promo details]. Code: [CODE]. States Available: [state list].</li>",
-            "<li><strong>[DFS App 2]:</strong> [Promo details]. Code: [CODE]. States Available: [state list].</li>",
-            "<li><strong>[DFS App 3]:</strong> [Promo details]. Code: [CODE]. States Available: [state list].</li>",
+            "<li><strong>[DFS App 1]:</strong> [Promo details]. Code: [CODE]. Available in [state list].</li>",
+            "<li><strong>[DFS App 2]:</strong> [Promo details]. Code: [CODE]. Available in [state list].</li>",
+            "<li><strong>[DFS App 3]:</strong> [Promo details]. Code: [CODE]. Available in [state list].</li>",
         ]
     else:
         items = [
-            "<li><strong>[Sportsbook 1]:</strong> [Promo details]. Code: [CODE]. States Available: [state list].</li>",
-            "<li><strong>[Sportsbook 2]:</strong> [Promo details]. Code: [CODE]. States Available: [state list].</li>",
-            "<li><strong>[Sportsbook 3]:</strong> [Promo details]. Code: [CODE]. States Available: [state list].</li>",
+            "<li><strong>[Sportsbook 1]:</strong> [Promo details]. Code: [CODE]. Available in [state list].</li>",
+            "<li><strong>[Sportsbook 2]:</strong> [Promo details]. Code: [CODE]. Available in [state list].</li>",
+            "<li><strong>[Sportsbook 3]:</strong> [Promo details]. Code: [CODE]. Available in [state list].</li>",
         ]
 
     lines.append("<ul>")
@@ -1606,7 +1607,7 @@ def _render_terms_section_html(
             elif not prediction_market and not dfs_mode:
                 header_parts.append("No promo code required")
             if states_text:
-                header_parts.append(f"States Available: {states_text}")
+                header_parts.append(f"Available in {states_text}")
             blocks.append(f"<p>{'. '.join(header_parts)}.</p>")
 
             if offer_terms:
@@ -1645,7 +1646,7 @@ def _render_terms_section_html(
                 dfs_mode=dfs_mode,
             )
             if states_text and not any(re.search(r"states available|available in", p, flags=re.IGNORECASE) for p in paras):
-                paras.insert(0, f"States Available: {states_text}.")
+                paras.insert(0, _availability_prose(states_text))
             return "\n".join(f"<p>{p}</p>" for p in paras)
 
     points: list[str] = []
@@ -1843,14 +1844,14 @@ def _ensure_two_paragraphs(
         else:
             details.append("No promo code is required.")
         if states_text:
-            details.append(f"States Available: {states_text}.")
+            details.append(_availability_prose(states_text))
         second = " ".join(details) or "Full operator terms apply."
 
     return f"<p>{first}</p>\n<p>{second}</p>"
 
 
 def _ensure_intro_state_specificity(html: str, states_text: str) -> str:
-    """Ensure intro copy uses explicit states when state list is known."""
+    """Ensure intro copy names explicit states, phrased as prose rather than a label."""
     if not html or not states_text:
         return html
 
@@ -1858,14 +1859,16 @@ def _ensure_intro_state_specificity(html: str, states_text: str) -> str:
     if not normalized_states or normalized_states.lower().startswith("all eligible states"):
         return html
 
+    html = _convert_availability_labels_to_prose(html)
+
+    state_code_list = r"(?:[A-Z]{2}|District of Columbia)(?:,\s*(?:[A-Z]{2}|District of Columbia))*"
     if re.fullmatch(r"[A-Z]{2}|District of Columbia", normalized_states):
         html = _rewrite_html_text_nodes(
             html,
             lambda text: re.sub(
-                r"(?:States|Provinces) Available:\s*[^.]+",
-                lambda match: f"{match.group(0).split(':', 1)[0]}: {normalized_states}",
+                rf"\bavailable in {state_code_list}",
+                f"available in {normalized_states}",
                 text,
-                flags=re.IGNORECASE,
             ),
         )
 
@@ -1873,13 +1876,14 @@ def _ensure_intro_state_specificity(html: str, states_text: str) -> str:
     html = re.sub(r"\bnationwide states\b", normalized_states, html, flags=re.IGNORECASE)
 
     state_tokens = [s.strip().upper() for s in normalized_states.split(",") if s.strip()]
-    plain = re.sub(r"<[^>]+>", " ", html).upper()
-    has_states_available_phrase = "STATES AVAILABLE:" in plain or "PROVINCES AVAILABLE:" in plain
-    has_explicit_state = any(re.search(rf"\b{re.escape(token)}\b", plain) for token in state_tokens)
-    if has_explicit_state and has_states_available_phrase:
+    plain = re.sub(r"<[^>]+>", " ", html)
+    has_availability_phrase = bool(re.search(r"\bavailable in\b", plain, flags=re.IGNORECASE))
+    plain_upper = plain.upper()
+    has_explicit_state = any(re.search(rf"\b{re.escape(token)}\b", plain_upper) for token in state_tokens)
+    if has_explicit_state and has_availability_phrase:
         return html
 
-    addition = f" States Available: {normalized_states}."
+    addition = f" {_availability_prose(normalized_states)}"
     paragraphs = re.findall(r"<p>.*?</p>", html, flags=re.DOTALL)
     if paragraphs:
         last_para = paragraphs[-1]
@@ -2110,12 +2114,58 @@ def _normalize_visible_punctuation(html: str) -> str:
     return _rewrite_html_text_nodes(html, _transform)
 
 
+def _availability_prose(states_text: str, *, market: str = "US") -> str:
+    """Reader-facing availability sentence instead of a 'States Available:' label."""
+    states = str(states_text or "").strip().rstrip(".")
+    if not states:
+        return ""
+    noun = "province" if str(market or "US").strip().upper() == "CA" else "state"
+    if "listed by the operator" in states.lower() or states.lower().startswith("all eligible"):
+        return f"Availability varies by {noun}, so confirm eligibility during signup."
+    return f"The offer is available in {states}."
+
+
+def _convert_availability_labels_to_prose(html: str) -> str:
+    """Rewrite 'States Available: X, Y.' label output into reader-facing prose."""
+    if not html:
+        return html
+
+    def _transform(text: str) -> str:
+        def _repl(match: re.Match[str]) -> str:
+            noun = "province" if match.group(1).lower().startswith("province") else "state"
+            values = match.group(2).strip().rstrip(".")
+            if not values:
+                return ""
+            if "listed by the operator" in values.lower():
+                return f"Availability varies by {noun}, so confirm eligibility during signup."
+            return f"The offer is available in {values}."
+
+        text = re.sub(
+            r"\b(States|Provinces)\s+Available:\s*([^.]*)\.?",
+            _repl,
+            text,
+            flags=re.IGNORECASE,
+        )
+        return re.sub(
+            r"\b(?:It(?:'|’)s|The offer is) available in eligible (states|provinces) listed by the operator\.?",
+            lambda m: f"Availability varies by {m.group(1).lower().rstrip('s')}, so confirm eligibility during signup.",
+            text,
+            flags=re.IGNORECASE,
+        )
+
+    return _rewrite_html_text_nodes(html, _transform)
+
+
 def _remove_generic_state_fallbacks(html: str) -> str:
     """Drop vague operator-state filler when exact state lists already appear in the same section."""
     if not html:
         return html
     plain = re.sub(r"<[^>]+>", " ", html)
-    if not re.search(r"States Available:\s*(?:[A-Z]{2}|District of Columbia)", plain):
+    explicit_list = (
+        r"(?:States Available:|Provinces Available:|available in)\s*"
+        r"(?:[A-Z]{2}|District of Columbia)"
+    )
+    if not re.search(explicit_list, plain):
         return html
 
     cleaned = _rewrite_html_text_nodes(
@@ -2366,10 +2416,10 @@ def _enforce_primary_keyword_density(html: str, keyword: str, min_count: int = 5
         return html
 
     variants = [
-        f" This keeps the {keyword} tied to the selected offer mechanics.",
-        f" The {keyword} should stay matched to this exact offer.",
-        f" That gives the {keyword} a clear role in the signup flow.",
-        f" Use the {keyword} only with the selected operator offer.",
+        f" That is what the {keyword} unlocks right now.",
+        f" The {keyword} applies to this exact offer, so match the first bet to its rules.",
+        f" New users get the most from the {keyword} by starting here.",
+        f" The {keyword} is tied to this offer, not older versions of the promo.",
     ]
     para_pattern = re.compile(r"<p\b([^>]*)>(.*?)</p>", flags=re.IGNORECASE | re.DOTALL)
     pieces: list[str] = []
@@ -2435,6 +2485,60 @@ def _cap_primary_keyword_density(html: str, keyword: str, max_count: int = 9) ->
 
         out.append(pattern.sub(_repl, token))
     return "".join(out)
+
+
+_HEADING_LOWERCASE_WORDS = {
+    "a", "an", "and", "as", "at", "but", "by", "for", "from", "in",
+    "nor", "of", "on", "or", "per", "the", "to", "via", "vs", "vs.", "with",
+}
+
+
+def _title_case_headings(html: str) -> str:
+    """Apply house title case to h1-h3 headings without touching brand or acronym casing."""
+    if not html:
+        return html
+
+    def _title_case_text(text: str, at_start: bool) -> tuple[str, bool]:
+        parts = re.split(r"(\s+)", text)
+        out: list[str] = []
+        start = at_start
+        for part in parts:
+            if not part or part.isspace():
+                out.append(part)
+                continue
+            core = part.strip(".,:;!?()\"'")
+            transformed = part
+            if not core or any(ch.isdigit() for ch in core) or "$" in core:
+                pass  # $10, bet365, 24hr keep casing
+            elif core.upper() == core and len(core) > 1:
+                pass  # MLB, TOPACTION, acronyms and codes
+            elif core.lower() in _HEADING_LOWERCASE_WORDS and not start:
+                transformed = part.replace(core, core.lower(), 1)
+            elif part[:1].islower():
+                transformed = part[:1].upper() + part[1:]
+            start = part.rstrip().endswith((":", "-", "—", "–"))
+            out.append(transformed)
+        return "".join(out), start
+
+    def _fix_heading(match: re.Match[str]) -> str:
+        open_tag, inner, close_tag = match.group(1), match.group(3), match.group(4)
+        tokens = re.findall(r"<[^>]+>|[^<]+", inner, flags=re.DOTALL)
+        rebuilt: list[str] = []
+        at_start = True
+        for token in tokens:
+            if token.startswith("<"):
+                rebuilt.append(token)
+                continue
+            fixed, at_start = _title_case_text(token, at_start)
+            rebuilt.append(fixed)
+        return f"{open_tag}{''.join(rebuilt)}{close_tag}"
+
+    return re.sub(
+        r"(<h([1-3])\b[^>]*>)(.*?)(</h\2>)",
+        _fix_heading,
+        html,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
 
 
 def _normalize_brand_casing(html: str, brand: str) -> str:
@@ -2935,6 +3039,7 @@ def _strip_market_mismatch_phrasing(html: str, market: str = "US") -> str:
         (r"\beligible states\b", "listed provinces"),
         (r"\bEligible States\b", "Eligible Provinces"),
         (r"\bStates Available\b", "Provinces Available"),
+        (r"\bvaries by state\b", "varies by province"),
         (r"\bstate availability\b", "province availability"),
         (r"\bstate-specific\b", "province-specific"),
         (r"\bnationwide\b", "available in listed provinces"),
@@ -2968,6 +3073,7 @@ def _apply_generation_quality_postprocess(html: str, keyword: str, market: str =
     html = _trim_repeated_phrase_in_html(html, "see full terms", max_occurrences=2, replacement="see terms")
     html = _remove_inline_compliance_fragments(html)
     html = _strip_source_and_prompt_leaks(html)
+    html = _convert_availability_labels_to_prose(html)
     html = _strip_market_mismatch_phrasing(html, market)
     html = _trim_dangling_paragraph_endings(html)
     html = _normalize_visible_punctuation(html)
@@ -3029,6 +3135,7 @@ def _extract_humanizer_markers(html: str, offer: dict[str, Any] | None = None) -
         r"\b(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),?\s+[A-Z][a-z]+\s+\d{1,2}(?:,\s+\d{4})?\b",
         r"\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2}(?:,\s+\d{4})?\b",
         r"States Available:\s*[^.]+",
+        r"(?:The offer is|It(?:'|’)s) available in\s+[^.]+",
         r"(?:Offer not valid in|not valid in)\s+[^.]+",
         r"\b(?:ESPN\+|ESPN|ABC|CBS|NBC|FOX|FS1|TBS|TNT|Peacock)\b",
     ]
@@ -3344,8 +3451,24 @@ def _offer_reward_phrase(offer: dict[str, Any]) -> str:
     return reward_label
 
 
+def _decapitalize_marketing_words(label: str, brand: str = "") -> str:
+    """Lowercase Title-Case marketing words mid-sentence, keeping branded labels intact."""
+    words = str(label or "").split()
+    brand_tokens = {token.lower() for token in str(brand or "").split() if token}
+    if brand_tokens and any(word.lower().strip(".,") in brand_tokens for word in words):
+        # Branded currency labels ("Novig Coins", "FanCash") keep their casing.
+        return " ".join(words)
+    out: list[str] = []
+    for word in words:
+        # Plain Title-Case words ("Bonus", "Bets", "Instantly") read as marketing
+        # shouting mid-sentence; brands (DraftKings), acronyms (DFS), and tokens
+        # with digits ($200, 24hr) keep their casing.
+        out.append(word.lower() if re.fullmatch(r"[A-Z][a-z]+", word) else word)
+    return " ".join(out)
+
+
 def _offer_reward_phrase_visible(offer: dict[str, Any]) -> str:
-    """Return a visible-copy reward phrase while preserving branded label casing."""
+    """Return a visible-copy reward phrase that reads naturally mid-sentence."""
     offer = offer or {}
     offer_text = str(offer.get("offer_text") or offer.get("affiliate_offer") or "").strip()
     details = extract_offer_amount_details(offer_text)
@@ -3355,7 +3478,10 @@ def _offer_reward_phrase_visible(offer: dict[str, Any]) -> str:
         or details.get("reward_amount")
         or extract_bonus_amount(offer_text)
     )
-    reward_label = str(offer.get("reward_label") or details.get("reward_label") or "").strip()
+    reward_label = _decapitalize_marketing_words(
+        str(offer.get("reward_label") or details.get("reward_label") or "").strip(),
+        brand=str(offer.get("brand") or ""),
+    )
     if not reward_label:
         reward_label = "bonus bets"
     if reward_amount:
@@ -3648,15 +3774,15 @@ def _render_dfs_intro_deterministic(
     second_para_templates = []
     if bonus_code:
         second_para_templates.extend([
-            f"<p>Enter {bonus_code} at signup, make your first {qualifying_amount} play, and the {brand} fantasy app adds the reward as contest credit for more entries. States Available: {states_text}.{f' Excluded: {excluded_states_text}.' if excluded_states_text else ''}{f' {age_summary}.' if age_summary else ''}</p>",
-            f"<p>Use {bonus_code} during registration, then let the first {qualifying_amount} play qualify the offer. After that, the {brand} fantasy app posts the reward as entry credit for more contests. States Available: {states_text}.{f' Excluded: {excluded_states_text}.' if excluded_states_text else ''}{f' {age_summary}.' if age_summary else ''}</p>",
-            f"<p>Once {bonus_code} is attached to the account, the first {qualifying_amount} play does the rest and the {brand} fantasy app adds the reward as contest credit. States Available: {states_text}.{f' Excluded: {excluded_states_text}.' if excluded_states_text else ''}{f' {age_summary}.' if age_summary else ''}</p>",
+            f"<p>Enter {bonus_code} at signup, make your first {qualifying_amount} play, and the {brand} fantasy app adds the reward as contest credit for more entries. It's available in {states_text}.{f" It isn't offered in {excluded_states_text}." if excluded_states_text else ''}{f' {age_summary}.' if age_summary else ''}</p>",
+            f"<p>Use {bonus_code} during registration, then let the first {qualifying_amount} play qualify the offer. After that, the {brand} fantasy app posts the reward as entry credit for more contests. It's available in {states_text}.{f" It isn't offered in {excluded_states_text}." if excluded_states_text else ''}{f' {age_summary}.' if age_summary else ''}</p>",
+            f"<p>Once {bonus_code} is attached to the account, the first {qualifying_amount} play does the rest and the {brand} fantasy app adds the reward as contest credit. It's available in {states_text}.{f" It isn't offered in {excluded_states_text}." if excluded_states_text else ''}{f' {age_summary}.' if age_summary else ''}</p>",
         ])
     else:
         second_para_templates.extend([
-            f"<p>Make your first {qualifying_amount} play and the {brand} fantasy app adds the reward as contest credit for more entries. States Available: {states_text}.{f' Excluded: {excluded_states_text}.' if excluded_states_text else ''}{f' {age_summary}.' if age_summary else ''}</p>",
-            f"<p>After the first {qualifying_amount} play qualifies, the {brand} fantasy app posts the reward as entry credit for more contests. States Available: {states_text}.{f' Excluded: {excluded_states_text}.' if excluded_states_text else ''}{f' {age_summary}.' if age_summary else ''}</p>",
-            f"<p>The first {qualifying_amount} play unlocks the reward inside the {brand} fantasy app as contest credit for more entries. States Available: {states_text}.{f' Excluded: {excluded_states_text}.' if excluded_states_text else ''}{f' {age_summary}.' if age_summary else ''}</p>",
+            f"<p>Make your first {qualifying_amount} play and the {brand} fantasy app adds the reward as contest credit for more entries. It's available in {states_text}.{f" It isn't offered in {excluded_states_text}." if excluded_states_text else ''}{f' {age_summary}.' if age_summary else ''}</p>",
+            f"<p>After the first {qualifying_amount} play qualifies, the {brand} fantasy app posts the reward as entry credit for more contests. It's available in {states_text}.{f" It isn't offered in {excluded_states_text}." if excluded_states_text else ''}{f' {age_summary}.' if age_summary else ''}</p>",
+            f"<p>The first {qualifying_amount} play unlocks the reward inside the {brand} fantasy app as contest credit for more entries. It's available in {states_text}.{f" It isn't offered in {excluded_states_text}." if excluded_states_text else ''}{f' {age_summary}.' if age_summary else ''}</p>",
         ])
 
     first_para = _choose_variant(variation_key, "dfs_intro_p1", first_para_templates, keyword, brand, hook)
@@ -3741,15 +3867,15 @@ def _render_prediction_market_intro_deterministic(
     second_para_templates = []
     if bonus_code:
         second_para_templates.extend([
-            f"<p>Enter {bonus_code} at signup, complete the first {qualifying_amount} qualifying action, and the {brand} app adds the reward as promotional credit for more market positions. States Available: {states_text}.{f' Excluded: {excluded_states_text}.' if excluded_states_text else ''}{f' {age_summary}.' if age_summary else ''}</p>",
-            f"<p>Use {bonus_code} during registration, then let the first {qualifying_amount} qualifying action unlock the offer. After that, the {brand} app posts the reward as promotional credit for more positions. States Available: {states_text}.{f' Excluded: {excluded_states_text}.' if excluded_states_text else ''}{f' {age_summary}.' if age_summary else ''}</p>",
-            f"<p>Once {bonus_code} is attached to the account, the first {qualifying_amount} qualifying action does the rest and the {brand} app adds the reward as promotional credit. States Available: {states_text}.{f' Excluded: {excluded_states_text}.' if excluded_states_text else ''}{f' {age_summary}.' if age_summary else ''}</p>",
+            f"<p>Enter {bonus_code} at signup, complete the first {qualifying_amount} qualifying action, and the {brand} app adds the reward as promotional credit for more market positions. It's available in {states_text}.{f" It isn't offered in {excluded_states_text}." if excluded_states_text else ''}{f' {age_summary}.' if age_summary else ''}</p>",
+            f"<p>Use {bonus_code} during registration, then let the first {qualifying_amount} qualifying action unlock the offer. After that, the {brand} app posts the reward as promotional credit for more positions. It's available in {states_text}.{f" It isn't offered in {excluded_states_text}." if excluded_states_text else ''}{f' {age_summary}.' if age_summary else ''}</p>",
+            f"<p>Once {bonus_code} is attached to the account, the first {qualifying_amount} qualifying action does the rest and the {brand} app adds the reward as promotional credit. It's available in {states_text}.{f" It isn't offered in {excluded_states_text}." if excluded_states_text else ''}{f' {age_summary}.' if age_summary else ''}</p>",
         ])
     else:
         second_para_templates.extend([
-            f"<p>Complete the first {qualifying_amount} qualifying action and the {brand} app adds the reward as promotional credit for more market positions. States Available: {states_text}.{f' Excluded: {excluded_states_text}.' if excluded_states_text else ''}{f' {age_summary}.' if age_summary else ''}</p>",
-            f"<p>After the first {qualifying_amount} qualifying action, the {brand} app posts the reward as promotional credit for more market positions. States Available: {states_text}.{f' Excluded: {excluded_states_text}.' if excluded_states_text else ''}{f' {age_summary}.' if age_summary else ''}</p>",
-            f"<p>The first {qualifying_amount} qualifying action unlocks the reward inside the {brand} app as promotional credit for later positions. States Available: {states_text}.{f' Excluded: {excluded_states_text}.' if excluded_states_text else ''}{f' {age_summary}.' if age_summary else ''}</p>",
+            f"<p>Complete the first {qualifying_amount} qualifying action and the {brand} app adds the reward as promotional credit for more market positions. It's available in {states_text}.{f" It isn't offered in {excluded_states_text}." if excluded_states_text else ''}{f' {age_summary}.' if age_summary else ''}</p>",
+            f"<p>After the first {qualifying_amount} qualifying action, the {brand} app posts the reward as promotional credit for more market positions. It's available in {states_text}.{f" It isn't offered in {excluded_states_text}." if excluded_states_text else ''}{f' {age_summary}.' if age_summary else ''}</p>",
+            f"<p>The first {qualifying_amount} qualifying action unlocks the reward inside the {brand} app as promotional credit for later positions. It's available in {states_text}.{f" It isn't offered in {excluded_states_text}." if excluded_states_text else ''}{f' {age_summary}.' if age_summary else ''}</p>",
         ])
     first_para = _choose_variant(variation_key, "pm_intro_p1", first_para_templates, keyword, brand, hook)
     second_para = _choose_variant(variation_key, "pm_intro_p2", second_para_templates, keyword, brand, states_text)
@@ -4230,6 +4356,7 @@ async def generate_draft_from_outline(
         bet_example_data=bet_example_data,
     )
     html_output = _cap_primary_keyword_density(html_output, keyword)
+    html_output = _title_case_headings(html_output)
     html_output = _normalize_brand_casing(
         html_output,
         brand or (keyword.split()[0] if keyword.split() else ""),
@@ -4317,7 +4444,6 @@ async def _generate_intro_section(
     prefs = _normalize_article_preferences(article_preferences)
     is_canada_market = prefs.get("market") == "CA"
     availability_label = "province" if is_canada_market else "state"
-    availability_heading = "Provinces Available" if is_canada_market else "States Available"
     availability_context_label = "Eligible Provinces" if is_canada_market else "Eligible States"
     excluded_context_label = "Excluded Provinces" if is_canada_market else "Excluded States"
 
@@ -4381,8 +4507,9 @@ Output clean HTML only - use <p>, <a>, <strong> tags. No markdown. No exclamatio
         "If there is a game hook, open sentence one with the matchup/time/network context and the offer value (do not reuse the same stock opener).",
         "If no game hook, start with a direct offer statement; avoid generic openers like \"If you are looking for a valuable offer...\"",
         f"Use explicit eligible {availability_label}s from source data. Do not say nationwide.",
-        f"When listing availability, use this exact label format: '{availability_heading}: AB, BC, ...'." if is_canada_market else "When listing state eligibility, use this exact label format: 'States Available: AZ, CO, ...'.",
+        "When mentioning availability, write it as natural prose, e.g. 'The offer is available in AB, BC, ...'. Never use a 'Provinces Available:' or 'States Available:' label format." if is_canada_market else "When mentioning state eligibility, write it as natural prose, e.g. 'The offer is available in AZ, CO, ...'. Never use a 'States Available:' label format.",
         "Do not paste the full raw offer string more than once. Prefer a natural summary.",
+        "Quote each provided stat exactly and keep each stat in its own clause; never merge two different numbers into one figure.",
         "Do not mention 21+, minimum odds, or long legal disclaimers in the intro.",
         "If expiration is mentioned, it must describe the bonus/credit expiration, not the offer itself.",
         "Do NOT include responsible gaming disclaimers here (handled at the end of the article).",
@@ -4603,9 +4730,9 @@ async def _generate_body_section(
     availability_label = "provinces" if is_canada_market else "states"
     availability_context_label = "Eligible Provinces" if is_canada_market else "Eligible States"
     availability_format_example = (
-        'If provinces are listed, render as: "Provinces Available: AB, BC, ..."'
+        'If provinces are listed, write them as prose, e.g. "The offer is available in AB, BC, ..." - never as a "Provinces Available:" label.'
         if is_canada_market
-        else 'If states are listed, render as: "States Available: AZ, CO, ..."'
+        else 'If states are listed, write them as prose, e.g. "The offer is available in AZ, CO, ..." - never as a "States Available:" label.'
     )
 
     style_guide = get_style_instructions()
@@ -5363,6 +5490,7 @@ async def generate_draft_from_outline_streaming(
         bet_example_data=bet_example_data,
     )
     html_output = _cap_primary_keyword_density(html_output, keyword)
+    html_output = _title_case_headings(html_output)
     html_output = _normalize_brand_casing(
         html_output,
         brand or (keyword.split()[0] if keyword.split() else ""),

@@ -778,7 +778,7 @@ def _summarize_projection_context(results: list[dict], bc_event: dict) -> tuple[
         )
     projections.sort(key=lambda row: float(row.get("projection") or 0), reverse=True)
     points = [
-        f"{row['player_name']} projects for {row['projection']} {str(row['stat']).lower()} in the selected event."
+        f"{row['player_name']} projects for {row['projection']} {str(row['stat']).lower()}."
         for row in projections[:3]
     ]
     return {"matched": bool(projections), "projections": projections[:8]}, points
