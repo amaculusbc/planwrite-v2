@@ -27,6 +27,7 @@ from app.services.draft import (
     _keep_only_primary_non_switchboard_link,
     _is_signup_heading,
     _is_daily_promos_heading,
+    _naturalize_bc_core_editorial_point,
     _normalize_matchup_vs_notation,
     _offer_excluded_states_text,
     _offer_states_text,
@@ -1012,7 +1013,7 @@ def test_select_bc_core_editorial_points_prioritizes_market_intelligence():
     joined = " ".join(points)
     assert "projects for 29.5 points" in joined
     assert "DFS lines list" in joined
-    assert "Market percents show 64%" in joined
+    assert "Ticket data shows 64%" in joined
 
 
 def test_select_bc_core_editorial_points_filters_by_content_mode():
@@ -1048,6 +1049,19 @@ def test_select_bc_core_editorial_points_filters_by_content_mode():
     assert any("DFS lines list" in point for point in dfs_points)
     assert not any("Market percents show" in point for point in dfs_points)
     assert not any("covered three" in point for point in dfs_points)
+
+
+def test_naturalize_bc_core_point_cleans_market_intelligence_labels():
+    projection = _naturalize_bc_core_editorial_point(
+        "Payton Tolle projects for 6.25 baseball_pitchinghits in the selected event."
+    )
+    percent = _naturalize_bc_core_editorial_point(
+        "Market percents show 83% of ticket on Total tied to Over."
+    )
+
+    assert "baseball_pitchinghits" not in projection
+    assert "pitching hits allowed" in projection
+    assert percent == "Ticket data shows 83% of tickets on Total tied to Over."
 
 
 def test_build_signup_list_varies_by_mode_and_generation_key():

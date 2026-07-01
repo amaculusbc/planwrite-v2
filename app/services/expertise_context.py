@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections import Counter, defaultdict
 from datetime import UTC, datetime
+import re
 from statistics import mean
 
 from app.services.bc_core import fetch_bc_core_json, get_bc_core_base_url
@@ -726,10 +727,34 @@ def _market_stat_name(item: dict) -> str:
         if isinstance(value, dict):
             name = _nested_name(value)
             if name:
-                return name
+                return _humanize_market_stat_label(name)
         elif value:
-            return str(value).strip()
+            return _humanize_market_stat_label(str(value).strip())
     return ""
+
+
+def _humanize_market_stat_label(value: str) -> str:
+    """Convert BC stat enum names into reader-facing labels."""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    replacements = {
+        "baseball_pitchingouts": "pitching outs",
+        "baseball_pitchinghits": "pitching hits allowed",
+        "baseball_pitchingruns": "runs allowed",
+        "baseball_pitchingstrikeouts": "strikeouts",
+        "baseball_battinghits": "hits",
+        "baseball_battingruns": "runs",
+        "baseball_battingrbi": "RBIs",
+        "baseball_battingtotalbases": "total bases",
+    }
+    normalized = re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")
+    if normalized in replacements:
+        return replacements[normalized]
+    text = re.sub(r"^(?:baseball|basketball|football|hockey|soccer)_", "", normalized)
+    text = text.replace("_", " ")
+    text = re.sub(r"(?<!^)([A-Z])", r" \1", str(value or "").strip()).strip() if not text else text
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def _summarize_projection_context(results: list[dict], bc_event: dict) -> tuple[dict, list[str]]:

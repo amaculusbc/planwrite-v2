@@ -127,6 +127,16 @@ def _naturalize_bc_core_editorial_point(point: str) -> str:
         flags=re.IGNORECASE,
     )
     text = re.sub(r"\s*weather at the venue points to\s*", " Weather context points to ", text, flags=re.IGNORECASE)
+    text = re.sub(
+        r"^Market percents show (?P<pct>\d+)% of (?P<kind>ticket|tickets|handle|market activity) on (?P<market>[^.]+?) tied to (?P<side>[^.]+)\.$",
+        lambda m: f"Ticket data shows {m.group('pct')}% of {('tickets' if m.group('kind').lower().startswith('ticket') else m.group('kind').lower())} on {m.group('market')} tied to {m.group('side')}.",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(r"\bbaseball_pitchingouts\b", "pitching outs", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bbaseball_pitchinghits\b", "pitching hits allowed", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bbaseball_pitchingruns\b", "runs allowed", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bbaseball_pitchingstrikeouts\b", "strikeouts", text, flags=re.IGNORECASE)
     text = text.replace("FromRight", "from right field").replace("FromLeft", "from left field")
     text = re.sub(r"\btrend sample\b", "recent sample", text, flags=re.IGNORECASE)
     text = re.sub(r"\boverall sample\b", "recent sample", text, flags=re.IGNORECASE)
