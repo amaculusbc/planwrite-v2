@@ -19,6 +19,7 @@ from app.services.draft import (
     _ensure_keyword_in_first_paragraph,
     _enforce_primary_keyword_density,
     _ensure_editorial_body_length,
+    _ensure_matchup_analysis_section,
     _extract_featured_label_from_event_context,
     _generate_signup_steps_structured,
     _humanize_article_html,
@@ -1388,6 +1389,67 @@ async def test_ensure_editorial_body_length_uses_narrative_composition_when_vali
     assert "The play: back Boston Red Sox ML at -140" in expanded
     # The deterministic fallback's stock sentence must not appear when the narrative is used.
     assert "That is the backdrop for the first bet" not in expanded
+
+
+@pytest.mark.asyncio
+async def test_ensure_matchup_analysis_section_renders_even_when_body_is_long(monkeypatch):
+    narrative = (
+        "<p>Boston walk in at 44-43 and everything about this spot says the margin for error is gone. "
+        "A team sitting one game over even in July is not coasting; it is fighting for its season every night, "
+        "and that urgency is exactly what this matchup demands.</p>"
+        "<p>Washington have covered in six of their last ten, a 6-4 run against the spread that reads like a team "
+        "playing better than its record. Payton Tolle projects for 6.25 pitching hits allowed, the profile of a "
+        "starter who keeps traffic off the bases. For a first bet with bet365, the $10 qualifying wager fits a "
+        "straightforward market here, with $365 in bonus bets to follow.</p>"
+        "<p>The play: back Boston Red Sox ML at -140 with the qualifying bet, then keep the bonus bets for later "
+        "eligible markets once they post.</p>"
+    )
+
+    async def _compose(**kwargs):
+        return narrative
+
+    monkeypatch.setattr("app.services.draft.generate_completion", _compose)
+
+    long_body = "".join(f"<p>Editorial paragraph {i} about the matchup and the offer in depth.</p>" for i in range(60))
+    html = (
+        "<h1>bet365 bonus code test</h1>"
+        + long_body
+        + "<h2>bet365 Bonus Code Terms</h2><p>Terms apply. 21+.</p>"
+    )
+    bc_core_context = {
+        "expertise": {
+            "matched": True,
+            "editorial_points": [
+                "Boston enter at 44-43 overall this season.",
+                "Washington went 6-4 against the spread over the last 10 games.",
+                "Payton Tolle projects for 6.25 pitching hits allowed.",
+            ],
+        },
+        "event": {"matched": False},
+    }
+
+    expanded = await _ensure_matchup_analysis_section(
+        html,
+        keyword="bet365 bonus code",
+        offer={"brand": "bet365", "qualifying_amount": "$10", "bonus_amount": "$365", "offer_text": "Bet $10, Get $365"},
+        event_context="Featured game: Nationals vs Red Sox.",
+        bc_core_context=bc_core_context,
+        bet_example_data={"bet_amount": 10, "selection": "Boston Red Sox ML", "odds": -140},
+    )
+
+    assert "What the Numbers Say About Nationals vs Red Sox" in expanded
+    assert expanded.index("What the Numbers Say") < expanded.index("bet365 Bonus Code Terms")
+
+    # Prediction-market mode never gets the sportsbook analysis section.
+    pm_result = await _ensure_matchup_analysis_section(
+        html,
+        keyword="kalshi promo code",
+        offer={"brand": "Kalshi"},
+        event_context="Featured game: Nationals vs Red Sox.",
+        bc_core_context=bc_core_context,
+        content_mode="prediction_market",
+    )
+    assert "What the Numbers Say" not in pm_result
 
 
 @pytest.mark.asyncio

@@ -2909,6 +2909,55 @@ OFFER TIE-IN (reference once, briefly, in the second-to-last paragraph, sentence
     return None
 
 
+def _insert_section_before_terms(html: str, section: str) -> str:
+    """Insert an article section ahead of the terms block (or disclaimer, or append)."""
+    insert_before = re.search(
+        r"<h[1-6]\b[^>]*>[^<]*(?:Terms|Conditions|Fine Print|Rules)[^<]*</h[1-6]>",
+        html,
+        flags=re.IGNORECASE,
+    )
+    if insert_before:
+        return html[: insert_before.start()] + section + "\n" + html[insert_before.start():]
+    disclaimer = re.search(
+        r"<p><em>.*?(?:Gambling problem|Please play responsibly|Terms apply).*?</em></p>",
+        html,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if disclaimer:
+        return html[: disclaimer.start()] + section + "\n" + html[disclaimer.start():]
+    return f"{html}\n{section}"
+
+
+_ANALYSIS_SECTION_HEADING_RE = r"<h[1-6]\b[^>]*>\s*(?:What to Watch Before Using|What the Numbers Say About)\b"
+
+
+async def _ensure_matchup_analysis_section(
+    html: str,
+    *,
+    keyword: str,
+    offer: dict[str, Any],
+    event_context: str = "",
+    bc_core_context: dict[str, Any] | None = None,
+    content_mode: str = CONTENT_MODE_SPORTSBOOK,
+    bet_example_data: dict[str, Any] | None = None,
+) -> str:
+    """Give every sportsbook article with matchup data an expert-analysis section."""
+    if not html or content_mode != CONTENT_MODE_SPORTSBOOK:
+        return html
+    if re.search(_ANALYSIS_SECTION_HEADING_RE, html, flags=re.IGNORECASE):
+        return html
+    section = await _compose_numbers_narrative_section(
+        keyword=keyword,
+        offer=offer,
+        event_context=event_context,
+        bc_core_context=bc_core_context,
+        bet_example_data=bet_example_data,
+    )
+    if not section:
+        return html
+    return _insert_section_before_terms(html, section)
+
+
 async def _ensure_editorial_body_length(
     html: str,
     *,
@@ -2925,11 +2974,7 @@ async def _ensure_editorial_body_length(
         return html
     if _body_word_count_for_editorial_target(html) >= target_words:
         return html
-    if re.search(
-        r"<h[1-6]\b[^>]*>\s*(?:What to Watch Before Using|What the Numbers Say About)\b",
-        html,
-        flags=re.IGNORECASE,
-    ):
+    if re.search(_ANALYSIS_SECTION_HEADING_RE, html, flags=re.IGNORECASE):
         return html
 
     section = None
@@ -2950,13 +2995,7 @@ async def _ensure_editorial_body_length(
             content_mode=content_mode,
             bet_example_data=bet_example_data,
         )
-    insert_before = re.search(r"<h[1-6]\b[^>]*>[^<]*(?:Terms|Conditions|Fine Print|Rules)[^<]*</h[1-6]>", html, flags=re.IGNORECASE)
-    if insert_before:
-        return html[:insert_before.start()] + section + "\n" + html[insert_before.start():]
-    disclaimer = re.search(r"<p><em>.*?(?:Gambling problem|Please play responsibly|Terms apply).*?</em></p>", html, flags=re.IGNORECASE | re.DOTALL)
-    if disclaimer:
-        return html[:disclaimer.start()] + section + "\n" + html[disclaimer.start():]
-    return f"{html}\n{section}"
+    return _insert_section_before_terms(html, section)
 
 
 def _secondary_keyword_count(html: str, phrase: str) -> int:
@@ -4548,6 +4587,15 @@ async def generate_draft_from_outline(
     html_output = _strip_unprovided_article_date(html_output, article_date)
     html_output = _strip_market_mismatch_phrasing(html_output, prefs.get("market", "US"))
     html_output = _strip_formatting_from_headings(html_output)
+    html_output = await _ensure_matchup_analysis_section(
+        html_output,
+        keyword=keyword,
+        offer=offer,
+        event_context=event_context,
+        bc_core_context=bc_core_context,
+        content_mode=content_mode,
+        bet_example_data=bet_example_data,
+    )
     html_output = await _ensure_editorial_body_length(
         html_output,
         keyword=keyword,
@@ -5683,6 +5731,15 @@ async def generate_draft_from_outline_streaming(
     html_output = _strip_unprovided_article_date(html_output, article_date)
     html_output = _strip_market_mismatch_phrasing(html_output, prefs.get("market", "US"))
     html_output = _strip_formatting_from_headings(html_output)
+    html_output = await _ensure_matchup_analysis_section(
+        html_output,
+        keyword=keyword,
+        offer=offer,
+        event_context=event_context,
+        bc_core_context=bc_core_context,
+        content_mode=content_mode,
+        bet_example_data=bet_example_data,
+    )
     html_output = await _ensure_editorial_body_length(
         html_output,
         keyword=keyword,
