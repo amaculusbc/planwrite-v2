@@ -2787,7 +2787,10 @@ def _narrative_section_is_valid(
     play_required: bool,
 ) -> bool:
     """Accept a composed narrative only when it stays inside the provided facts."""
-    if not html or "<p" not in html.lower():
+    if not html:
+        return False
+    paragraph_count = len(re.findall(r"<p\b", html, flags=re.IGNORECASE))
+    if paragraph_count < 2 or paragraph_count > 5:
         return False
     if re.search(r"<(?:h[1-6]|ol|ul|table|script)\b", html, flags=re.IGNORECASE):
         return False
@@ -2796,6 +2799,9 @@ def _narrative_section_is_valid(
     if word_count < 60 or word_count > 300:
         return False
     if "!" in plain:
+        return False
+    # Prompt-label echoes read broken in copy ("a qualifying wager $5 and reward $200").
+    if re.search(r"\b(?:qualifying wager|reward)\s+\$\d", plain):
         return False
     banned = ("bc core", "source data", "internal note", "data feed", "our model", "our projections")
     lowered = plain.lower()
@@ -2828,7 +2834,12 @@ async def _compose_numbers_narrative_section(
     fall back to the deterministic section.
     """
     event_label = _extract_featured_label_from_event_context(event_context)
-    bc_points = [p for p in _select_bc_core_editorial_points(bc_core_context, section_kind="overview", max_points=6) if p]
+    schedule_meta = re.compile(r"^(?:This spot falls in|The matchup is set for)\b")
+    bc_points = [
+        point
+        for point in _select_bc_core_editorial_points(bc_core_context, section_kind="overview", max_points=8)
+        if point and not schedule_meta.match(point.strip())
+    ][:6]
     if not event_label or len(bc_points) < 2:
         return None
 
@@ -2848,15 +2859,20 @@ async def _compose_numbers_narrative_section(
             pass
 
     facts_md = "\n".join(f"- {point}" for point in bc_points)
-    offer_bits = [f"brand {brand}"]
+    short_reward = re.sub(r"\s+instantly\s*$", "", reward_phrase, flags=re.IGNORECASE)
+    offer_sentence_bits = []
     if qualifying_amount:
-        offer_bits.append(f"qualifying wager {qualifying_amount}")
-    if reward_phrase:
-        offer_bits.append(f"reward {reward_phrase}")
-    if min_odds:
-        offer_bits.append(f"minimum odds {min_odds}")
+        offer_sentence_bits.append(f"a {qualifying_amount} first bet")
+    if short_reward:
+        offer_sentence_bits.append(f"{short_reward}")
+    offer_example = (
+        f"{brand}'s current offer turns {' into '.join(offer_sentence_bits)}, and this is the kind of spot to use it."
+        if len(offer_sentence_bits) == 2
+        else f"{brand}'s current offer is live for new users, and this is the kind of spot to use it."
+    )
+    min_odds_note = f" The qualifying bet must meet {min_odds} minimum odds." if min_odds else ""
     play_block = (
-        f"THE PLAY (final paragraph, must start exactly with \"The play:\"):\n- Back {selection}{odds_text} with the qualifying bet, then keep {reward_phrase} for later eligible markets.\n\n"
+        f"THE PLAY (final paragraph on its own, must start exactly with \"The play:\"):\n- Back {selection}{odds_text} with the qualifying bet, then keep {short_reward} for later eligible markets.\n\n"
         if selection
         else ""
     )
@@ -2864,21 +2880,22 @@ async def _compose_numbers_narrative_section(
     system_prompt = (
         "You are a senior sports betting editor for Action Network's Top Stories. "
         "You write tight, confident, data-driven matchup analysis: stakes first, then the numbers built into an argument for one side, then a clear play. "
-        "Output clean HTML only: 3 or 4 <p> paragraphs. No headings, no lists, no markdown, no exclamation points."
+        "Output clean HTML only: exactly 3 or 4 separate <p> paragraphs. No headings, no lists, no markdown, no exclamation points."
     )
     prompt = f"""Write the body paragraphs for a section headed "What the Numbers Say About {event_label}".
 
 MATCHUP FACTS - the ONLY numbers you may use; quote each figure exactly as written and never invent or derive new ones:
 {facts_md}
 
-OFFER TIE-IN (reference once, briefly, in the second-to-last paragraph, sentence casing): {"; ".join(offer_bits)}.
+OFFER TIE-IN: one short sentence at the end of the second-to-last paragraph, modeled on this (adapt the wording, keep the numbers exact): "{offer_example}"{min_odds_note}
 
 {play_block}REQUIREMENTS:
-- Open with what is at stake in {event_label}, framed only from the facts above (records, form, projections, market lean). Do not invent injuries, crowd, venue, weather, or history that is not listed.
+- Output 3 or 4 separate <p>...</p> paragraphs. Never one long paragraph.
+- Open with the sharpest fact - form, a projection, or the market lean - and what it means for {event_label}. Never open with season, schedule, or broadcast labels.
 - Build the facts into an argument for one side instead of listing them. Connect them with editorial reasoning, e.g. "that is the profile of a team that...", "which is exactly the matchup where...".
-- Never mention data sources, feeds, models, or anything internal.
+- Do not invent injuries, crowd, venue, weather, or history that is not listed. Never mention data sources, feeds, models, or anything internal.
 - 120 to 220 words total. No exclamation points.
-- Use the primary keyword "{keyword}" zero or one time, naturally."""
+- Use the primary keyword "{keyword}" at most once, as a natural phrase such as "the {keyword} offer" - or not at all."""
 
     allowed_numbers = _extract_fact_numbers(
         bc_points
