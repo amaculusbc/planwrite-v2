@@ -2865,10 +2865,11 @@ async def _compose_numbers_narrative_section(
         offer_sentence_bits.append(f"a {qualifying_amount} first bet")
     if short_reward:
         offer_sentence_bits.append(f"{short_reward}")
+    brand_possessive = f"{brand}'" if brand.endswith("s") else f"{brand}'s"
     offer_example = (
-        f"{brand}'s current offer turns {' into '.join(offer_sentence_bits)}, and this is the kind of spot to use it."
+        f"{brand_possessive} current offer turns {' into '.join(offer_sentence_bits)}, and this is the kind of spot to use it."
         if len(offer_sentence_bits) == 2
-        else f"{brand}'s current offer is live for new users, and this is the kind of spot to use it."
+        else f"{brand_possessive} current offer is live for new users, and this is the kind of spot to use it."
     )
     min_odds_note = f" The qualifying bet must meet {min_odds} minimum odds." if min_odds else ""
     play_block = (
