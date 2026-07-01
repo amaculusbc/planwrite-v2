@@ -3762,6 +3762,11 @@ def _render_dfs_intro_deterministic(
     states_text = _offer_states_text(offer, state, dfs_mode=True)
     excluded_states_text = _offer_excluded_states_text(offer, current_state=state, dfs_mode=True)
     age_summary = _operator_age_summary(offer, dfs_mode=True)
+    availability_clause = (
+        f"It's available in {states_text}."
+        + (f" It isn't offered in {excluded_states_text}." if excluded_states_text else "")
+        + (f" {age_summary}." if age_summary else "")
+    )
     hook = _dfs_intro_hook_text(event_context, article_date=article_date)
 
     code_fragment = f" {bonus_code}" if bonus_code else ""
@@ -3774,15 +3779,15 @@ def _render_dfs_intro_deterministic(
     second_para_templates = []
     if bonus_code:
         second_para_templates.extend([
-            f"<p>Enter {bonus_code} at signup, make your first {qualifying_amount} play, and the {brand} fantasy app adds the reward as contest credit for more entries. It's available in {states_text}.{f" It isn't offered in {excluded_states_text}." if excluded_states_text else ''}{f' {age_summary}.' if age_summary else ''}</p>",
-            f"<p>Use {bonus_code} during registration, then let the first {qualifying_amount} play qualify the offer. After that, the {brand} fantasy app posts the reward as entry credit for more contests. It's available in {states_text}.{f" It isn't offered in {excluded_states_text}." if excluded_states_text else ''}{f' {age_summary}.' if age_summary else ''}</p>",
-            f"<p>Once {bonus_code} is attached to the account, the first {qualifying_amount} play does the rest and the {brand} fantasy app adds the reward as contest credit. It's available in {states_text}.{f" It isn't offered in {excluded_states_text}." if excluded_states_text else ''}{f' {age_summary}.' if age_summary else ''}</p>",
+            f"<p>Enter {bonus_code} at signup, make your first {qualifying_amount} play, and the {brand} fantasy app adds the reward as contest credit for more entries. {availability_clause}</p>",
+            f"<p>Use {bonus_code} during registration, then let the first {qualifying_amount} play qualify the offer. After that, the {brand} fantasy app posts the reward as entry credit for more contests. {availability_clause}</p>",
+            f"<p>Once {bonus_code} is attached to the account, the first {qualifying_amount} play does the rest and the {brand} fantasy app adds the reward as contest credit. {availability_clause}</p>",
         ])
     else:
         second_para_templates.extend([
-            f"<p>Make your first {qualifying_amount} play and the {brand} fantasy app adds the reward as contest credit for more entries. It's available in {states_text}.{f" It isn't offered in {excluded_states_text}." if excluded_states_text else ''}{f' {age_summary}.' if age_summary else ''}</p>",
-            f"<p>After the first {qualifying_amount} play qualifies, the {brand} fantasy app posts the reward as entry credit for more contests. It's available in {states_text}.{f" It isn't offered in {excluded_states_text}." if excluded_states_text else ''}{f' {age_summary}.' if age_summary else ''}</p>",
-            f"<p>The first {qualifying_amount} play unlocks the reward inside the {brand} fantasy app as contest credit for more entries. It's available in {states_text}.{f" It isn't offered in {excluded_states_text}." if excluded_states_text else ''}{f' {age_summary}.' if age_summary else ''}</p>",
+            f"<p>Make your first {qualifying_amount} play and the {brand} fantasy app adds the reward as contest credit for more entries. {availability_clause}</p>",
+            f"<p>After the first {qualifying_amount} play qualifies, the {brand} fantasy app posts the reward as entry credit for more contests. {availability_clause}</p>",
+            f"<p>The first {qualifying_amount} play unlocks the reward inside the {brand} fantasy app as contest credit for more entries. {availability_clause}</p>",
         ])
 
     first_para = _choose_variant(variation_key, "dfs_intro_p1", first_para_templates, keyword, brand, hook)
@@ -3856,6 +3861,11 @@ def _render_prediction_market_intro_deterministic(
     states_text = _offer_states_text(offer, state, prediction_market=True)
     excluded_states_text = _offer_excluded_states_text(offer, current_state=state, prediction_market=True)
     age_summary = _operator_age_summary(offer, prediction_market=True)
+    availability_clause = (
+        f"It's available in {states_text}."
+        + (f" It isn't offered in {excluded_states_text}." if excluded_states_text else "")
+        + (f" {age_summary}." if age_summary else "")
+    )
     hook = _prediction_market_intro_hook_text(event_context, article_date=article_date)
 
     code_fragment = f" {bonus_code}" if bonus_code else ""
@@ -3867,15 +3877,15 @@ def _render_prediction_market_intro_deterministic(
     second_para_templates = []
     if bonus_code:
         second_para_templates.extend([
-            f"<p>Enter {bonus_code} at signup, complete the first {qualifying_amount} qualifying action, and the {brand} app adds the reward as promotional credit for more market positions. It's available in {states_text}.{f" It isn't offered in {excluded_states_text}." if excluded_states_text else ''}{f' {age_summary}.' if age_summary else ''}</p>",
-            f"<p>Use {bonus_code} during registration, then let the first {qualifying_amount} qualifying action unlock the offer. After that, the {brand} app posts the reward as promotional credit for more positions. It's available in {states_text}.{f" It isn't offered in {excluded_states_text}." if excluded_states_text else ''}{f' {age_summary}.' if age_summary else ''}</p>",
-            f"<p>Once {bonus_code} is attached to the account, the first {qualifying_amount} qualifying action does the rest and the {brand} app adds the reward as promotional credit. It's available in {states_text}.{f" It isn't offered in {excluded_states_text}." if excluded_states_text else ''}{f' {age_summary}.' if age_summary else ''}</p>",
+            f"<p>Enter {bonus_code} at signup, complete the first {qualifying_amount} qualifying action, and the {brand} app adds the reward as promotional credit for more market positions. {availability_clause}</p>",
+            f"<p>Use {bonus_code} during registration, then let the first {qualifying_amount} qualifying action unlock the offer. After that, the {brand} app posts the reward as promotional credit for more positions. {availability_clause}</p>",
+            f"<p>Once {bonus_code} is attached to the account, the first {qualifying_amount} qualifying action does the rest and the {brand} app adds the reward as promotional credit. {availability_clause}</p>",
         ])
     else:
         second_para_templates.extend([
-            f"<p>Complete the first {qualifying_amount} qualifying action and the {brand} app adds the reward as promotional credit for more market positions. It's available in {states_text}.{f" It isn't offered in {excluded_states_text}." if excluded_states_text else ''}{f' {age_summary}.' if age_summary else ''}</p>",
-            f"<p>After the first {qualifying_amount} qualifying action, the {brand} app posts the reward as promotional credit for more market positions. It's available in {states_text}.{f" It isn't offered in {excluded_states_text}." if excluded_states_text else ''}{f' {age_summary}.' if age_summary else ''}</p>",
-            f"<p>The first {qualifying_amount} qualifying action unlocks the reward inside the {brand} app as promotional credit for later positions. It's available in {states_text}.{f" It isn't offered in {excluded_states_text}." if excluded_states_text else ''}{f' {age_summary}.' if age_summary else ''}</p>",
+            f"<p>Complete the first {qualifying_amount} qualifying action and the {brand} app adds the reward as promotional credit for more market positions. {availability_clause}</p>",
+            f"<p>After the first {qualifying_amount} qualifying action, the {brand} app posts the reward as promotional credit for more market positions. {availability_clause}</p>",
+            f"<p>The first {qualifying_amount} qualifying action unlocks the reward inside the {brand} app as promotional credit for later positions. {availability_clause}</p>",
         ])
     first_para = _choose_variant(variation_key, "pm_intro_p1", first_para_templates, keyword, brand, hook)
     second_para = _choose_variant(variation_key, "pm_intro_p2", second_para_templates, keyword, brand, states_text)
