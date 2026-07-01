@@ -28,6 +28,7 @@ from app.services.draft import (
     _is_signup_heading,
     _is_daily_promos_heading,
     _convert_availability_labels_to_prose,
+    _decapitalize_inline_reward_mentions,
     _naturalize_bc_core_editorial_point,
     _normalize_brand_casing,
     _normalize_matchup_vs_notation,
@@ -1387,6 +1388,19 @@ def test_title_case_headings_preserves_brands_acronyms_and_small_words():
     assert "<h2>What the Numbers Say About Nationals vs Red Sox</h2>" in fixed
     assert "<h2>bet365 Bonus Code Terms</h2>" in fixed
     assert "body text stays lowercase" in fixed
+
+
+def test_decapitalize_inline_reward_mentions_spares_terms_and_headings():
+    html = (
+        "<h2>DraftKings Promo Code Bonus Bets</h2>"
+        "<p>DraftKings drops the Bet $5, Get $200 in Bonus Bets Instantly reward.</p>"
+        "<h2>DraftKings Promo Code Terms</h2>"
+        "<p>Max. $200 issued as non-withdrawable Bonus Bets that expire in 7 days.</p>"
+    )
+    fixed = _decapitalize_inline_reward_mentions(html)
+    assert "in bonus bets instantly reward" in fixed
+    assert "<h2>DraftKings Promo Code Bonus Bets</h2>" in fixed
+    assert "non-withdrawable Bonus Bets" in fixed
 
 
 def test_offer_reward_phrase_visible_decapitalizes_marketing_but_keeps_branded_labels():

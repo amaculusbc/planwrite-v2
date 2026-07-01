@@ -2156,6 +2156,43 @@ def _convert_availability_labels_to_prose(html: str) -> str:
     return _rewrite_html_text_nodes(html, _transform)
 
 
+def _decapitalize_inline_reward_mentions(html: str) -> str:
+    """Lowercase shouty offer-headline casing ('in Bonus Bets Instantly') in editorial copy."""
+    if not html:
+        return html
+    # Operator terms are quoted verbatim - leave the terms block and below alone.
+    split = re.search(
+        r"<h[1-6]\b[^>]*>[^<]*(?:Terms|Conditions|Fine Print|Rules)[^<]*</h[1-6]>",
+        html,
+        flags=re.IGNORECASE,
+    )
+    head, tail = (html[: split.start()], html[split.start():]) if split else (html, "")
+
+    tokens = re.findall(r"<[^>]+>|[^<]+", head, flags=re.DOTALL)
+    inside_heading = 0
+    out: list[str] = []
+    for token in tokens:
+        if token.startswith("<"):
+            tag = token.strip().lower()
+            if re.match(r"<h[1-6]\b", tag):
+                inside_heading += 1
+            elif re.match(r"</h[1-6]\b", tag):
+                inside_heading = max(0, inside_heading - 1)
+            out.append(token)
+            continue
+        if inside_heading:
+            out.append(token)
+            continue
+        out.append(
+            re.sub(
+                r"(?<=[a-z0-9,$%] )Bonus (Bets?|Entries)(\s+Instantly)?\b",
+                lambda m: m.group(0).lower(),
+                token,
+            )
+        )
+    return "".join(out) + tail
+
+
 def _remove_generic_state_fallbacks(html: str) -> str:
     """Drop vague operator-state filler when exact state lists already appear in the same section."""
     if not html:
@@ -3074,6 +3111,7 @@ def _apply_generation_quality_postprocess(html: str, keyword: str, market: str =
     html = _remove_inline_compliance_fragments(html)
     html = _strip_source_and_prompt_leaks(html)
     html = _convert_availability_labels_to_prose(html)
+    html = _decapitalize_inline_reward_mentions(html)
     html = _strip_market_mismatch_phrasing(html, market)
     html = _trim_dangling_paragraph_endings(html)
     html = _normalize_visible_punctuation(html)
@@ -4519,6 +4557,7 @@ Output clean HTML only - use <p>, <a>, <strong> tags. No markdown. No exclamatio
         f"Use explicit eligible {availability_label}s from source data. Do not say nationwide.",
         "When mentioning availability, write it as natural prose, e.g. 'The offer is available in AB, BC, ...'. Never use a 'Provinces Available:' or 'States Available:' label format." if is_canada_market else "When mentioning state eligibility, write it as natural prose, e.g. 'The offer is available in AZ, CO, ...'. Never use a 'States Available:' label format.",
         "Do not paste the full raw offer string more than once. Prefer a natural summary.",
+        "When referencing the offer mid-sentence, use sentence casing ('$200 in bonus bets'), never the promo headline casing ('Bonus Bets Instantly').",
         "Quote each provided stat exactly and keep each stat in its own clause; never merge two different numbers into one figure.",
         "Do not mention 21+, minimum odds, or long legal disclaimers in the intro.",
         "If expiration is mentioned, it must describe the bonus/credit expiration, not the offer itself.",
