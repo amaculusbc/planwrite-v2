@@ -2446,7 +2446,8 @@ def _build_length_expansion_section(
     content_mode: str = CONTENT_MODE_SPORTSBOOK,
 ) -> str:
     """Create a useful extra editorial section when body copy is under target length."""
-    brand = str(offer.get("brand") or "the operator").strip()
+    fallback_brand = keyword.split()[0].title() if keyword.split() else "the operator"
+    brand = str(offer.get("brand") or fallback_brand).strip()
     event_label = _extract_featured_label_from_event_context(event_context)
     reward_phrase = _offer_reward_phrase_visible(offer)
     qualifying_amount = _offer_qualifying_amount_text(offer)
@@ -2506,10 +2507,16 @@ def _build_length_expansion_section(
         heading = f"What to Watch Before Using {brand}"
         qualifier = f" The qualifying wager is {qualifying_amount}" if qualifying_amount else ""
         odds_note = f" and must meet {min_odds} minimum odds" if min_odds else ""
-        first = (
-            f"Before using {keyword}, pick the market for {event_label or 'the featured event'} first and then confirm it fits the offer rules."
-            f"{qualifier}{odds_note}, so the best example is the bet you were already comfortable making."
-        )
+        if qualifier or odds_note:
+            first = (
+                f"Before using {keyword}, pick the market for {event_label or 'the featured event'} first and then confirm it fits the offer rules."
+                f"{qualifier}{odds_note}, so the best example is the bet you were already comfortable making."
+            )
+        else:
+            first = (
+                f"Before using {keyword}, pick the market for {event_label or 'the featured event'} first and then confirm it fits the offer rules. "
+                "The best example is the bet you were already comfortable making."
+            )
         second = (
             f"The bonus value comes after the qualifying action, not from changing the payout on the first wager. "
             f"That makes {reward_phrase} more useful for follow-up markets than for chasing a bigger first bet."

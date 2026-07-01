@@ -1241,6 +1241,30 @@ def test_ensure_editorial_body_length_adds_useful_section_before_terms():
     assert _body_word_count_for_editorial_target(expanded) > _body_word_count_for_editorial_target(html)
 
 
+def test_ensure_editorial_body_length_uses_keyword_brand_when_offer_missing():
+    html = (
+        "<h1>draftkings promo code test</h1>"
+        "<p>Short intro for the selected offer.</p>"
+        "<h2>DraftKings Promo Code Details</h2>"
+        "<p>The selected offer still needs a useful event explanation.</p>"
+        "<h2>DraftKings Promo Code Terms</h2>"
+        "<p>Terms apply. 21+.</p>"
+    )
+
+    expanded = _ensure_editorial_body_length(
+        html,
+        keyword="draftkings promo code",
+        offer={},
+        event_context="Featured game: Nationals vs Red Sox.",
+        target_words=120,
+    )
+
+    assert "What to Watch Before Using Draftkings" in expanded
+    assert "What to Watch Before Using the operator" not in expanded
+    assert "rules., so" not in expanded
+    assert "The best example is the bet you were already comfortable making." in expanded
+
+
 def test_cap_primary_keyword_density_reduces_late_plain_mentions():
     html = "".join(f"<p>bet365 bonus code mention {idx}.</p>" for idx in range(11))
     capped = _cap_primary_keyword_density(html, "bet365 bonus code", max_count=9)
