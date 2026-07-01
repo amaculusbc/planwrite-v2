@@ -2776,6 +2776,9 @@ def _extract_fact_numbers(texts: list[str]) -> set[str]:
                 numbers.update(part for part in token.split("-") if part)
             if "." in token:
                 numbers.add(token.split(".")[0])
+                # $0.62 contract prices are legitimately restated as "62 cents".
+                if token.startswith("0."):
+                    numbers.add(token.split(".", 1)[1])
     return numbers
 
 
@@ -2785,6 +2788,7 @@ def _narrative_section_is_valid(
     allowed_numbers: set[str],
     fact_numbers: set[str],
     play_required: bool,
+    prediction_market: bool = False,
 ) -> bool:
     """Accept a composed narrative only when it stays inside the provided facts."""
     if not html:
@@ -2807,6 +2811,8 @@ def _narrative_section_is_valid(
     lowered = plain.lower()
     if any(token in lowered for token in banned):
         return False
+    if prediction_market and re.search(r"\b(?:bet|bets|betting|wager|wagers|sportsbook|bonus bets)\b", lowered):
+        return False
     used_numbers = _extract_fact_numbers([plain])
     if not used_numbers.issubset(allowed_numbers):
         return False
@@ -2826,6 +2832,7 @@ async def _compose_numbers_narrative_section(
     event_context: str = "",
     bc_core_context: dict[str, Any] | None = None,
     bet_example_data: dict[str, Any] | None = None,
+    prediction_market: bool = False,
 ) -> str | None:
     """Compose the matchup-analysis section in the expert-pick house register.
 
@@ -2837,7 +2844,12 @@ async def _compose_numbers_narrative_section(
     schedule_meta = re.compile(r"^(?:This spot falls in|The matchup is set for)\b")
     bc_points = [
         point
-        for point in _select_bc_core_editorial_points(bc_core_context, section_kind="overview", max_points=8)
+        for point in _select_bc_core_editorial_points(
+            bc_core_context,
+            section_kind="overview",
+            max_points=8,
+            prediction_market=prediction_market,
+        )
         if point and not schedule_meta.match(point.strip())
     ][:6]
     if not event_label or len(bc_points) < 2:
@@ -2852,7 +2864,13 @@ async def _compose_numbers_narrative_section(
     data = dict(bet_example_data or {})
     selection = str(data.get("selection") or "").strip()
     odds_text = ""
-    if selection:
+    market_title = str(data.get("market_title") or "").strip()
+    if selection and prediction_market:
+        try:
+            odds_text = f" at about ${float(data.get('entry_price')):.2f} per contract"
+        except (TypeError, ValueError):
+            pass
+    elif selection:
         try:
             odds_text = f" at {int(float(data.get('odds'))):+d}"
         except (TypeError, ValueError):
@@ -2866,22 +2884,43 @@ async def _compose_numbers_narrative_section(
     if short_reward:
         offer_sentence_bits.append(f"{short_reward}")
     brand_possessive = f"{brand}'" if brand.endswith("s") else f"{brand}'s"
+    first_action = "first deposit" if prediction_market else "first bet"
+    offer_sentence_bits = [
+        bit.replace("first bet", first_action) for bit in offer_sentence_bits
+    ]
     offer_example = (
         f"{brand_possessive} current offer turns {' into '.join(offer_sentence_bits)}, and this is the kind of spot to use it."
         if len(offer_sentence_bits) == 2
         else f"{brand_possessive} current offer is live for new users, and this is the kind of spot to use it."
     )
-    min_odds_note = f" The qualifying bet must meet {min_odds} minimum odds." if min_odds else ""
-    play_block = (
-        f"THE PLAY (final paragraph on its own, must start exactly with \"The play:\"):\n- Back {selection}{odds_text} with the qualifying bet, then keep {short_reward} for later eligible markets.\n\n"
-        if selection
-        else ""
-    )
+    min_odds_note = f" The qualifying bet must meet {min_odds} minimum odds." if min_odds and not prediction_market else ""
+    if prediction_market:
+        play_target = f"the {selection} side of {market_title}" if market_title else selection
+        play_block = (
+            f"THE PLAY (final paragraph on its own, must start exactly with \"The play:\"):\n- Take {play_target}{odds_text}, then keep {short_reward} for later eligible markets.\n\n"
+            if selection
+            else ""
+        )
+    else:
+        play_block = (
+            f"THE PLAY (final paragraph on its own, must start exactly with \"The play:\"):\n- Back {selection}{odds_text} with the qualifying bet, then keep {short_reward} for later eligible markets.\n\n"
+            if selection
+            else ""
+        )
 
     system_prompt = (
-        "You are a senior sports betting editor for Action Network's Top Stories. "
-        "You write tight, confident, data-driven matchup analysis: stakes first, then the numbers built into an argument for one side, then a clear play. "
-        "Output clean HTML only: exactly 3 or 4 separate <p> paragraphs. No headings, no lists, no markdown, no exclamation points."
+        (
+            "You are a senior prediction-market editor for Action Network's Top Stories. "
+            "You write tight, confident, data-driven matchup analysis: stakes first, then the numbers built into an argument for one side, then a clear play. "
+            "Use prediction-market language only: market, position, contract, trade, settle. Never use bet, betting, wager, sportsbook, or bonus bets. "
+            "Output clean HTML only: exactly 3 or 4 separate <p> paragraphs. No headings, no lists, no markdown, no exclamation points."
+        )
+        if prediction_market
+        else (
+            "You are a senior sports betting editor for Action Network's Top Stories. "
+            "You write tight, confident, data-driven matchup analysis: stakes first, then the numbers built into an argument for one side, then a clear play. "
+            "Output clean HTML only: exactly 3 or 4 separate <p> paragraphs. No headings, no lists, no markdown, no exclamation points."
+        )
     )
     prompt = f"""Write the body paragraphs for a section headed "What the Numbers Say About {event_label}".
 
@@ -2900,7 +2939,8 @@ OFFER TIE-IN: one short sentence at the end of the second-to-last paragraph, mod
 
     allowed_numbers = _extract_fact_numbers(
         bc_points
-        + [reward_phrase, qualifying_amount, min_odds, selection, odds_text, str(data.get("bet_amount") or ""), str(data.get("potential_profit") or ""), event_label, event_context]
+        + [reward_phrase, qualifying_amount, min_odds, selection, odds_text, market_title, event_label, event_context]
+        + [str(data.get(key) or "") for key in ("bet_amount", "potential_profit", "position_amount", "entry_price", "potential_payout", "contracts", "settlement_price")]
     )
     fact_numbers = _extract_fact_numbers(bc_points)
 
@@ -2922,6 +2962,7 @@ OFFER TIE-IN: one short sentence at the end of the second-to-last paragraph, mod
             allowed_numbers=allowed_numbers,
             fact_numbers=fact_numbers,
             play_required=bool(selection),
+            prediction_market=prediction_market,
         ):
             return f"<h2>What the Numbers Say About {event_label}</h2>\n{cleaned}"
     return None
@@ -2959,8 +3000,8 @@ async def _ensure_matchup_analysis_section(
     content_mode: str = CONTENT_MODE_SPORTSBOOK,
     bet_example_data: dict[str, Any] | None = None,
 ) -> str:
-    """Give every sportsbook article with matchup data an expert-analysis section."""
-    if not html or content_mode != CONTENT_MODE_SPORTSBOOK:
+    """Give sportsbook and prediction-market articles with matchup data an expert-analysis section."""
+    if not html or content_mode not in (CONTENT_MODE_SPORTSBOOK, CONTENT_MODE_PREDICTION_MARKET):
         return html
     if re.search(_ANALYSIS_SECTION_HEADING_RE, html, flags=re.IGNORECASE):
         return html
@@ -2970,6 +3011,7 @@ async def _ensure_matchup_analysis_section(
         event_context=event_context,
         bc_core_context=bc_core_context,
         bet_example_data=bet_example_data,
+        prediction_market=content_mode == CONTENT_MODE_PREDICTION_MARKET,
     )
     if not section:
         return html
@@ -2996,13 +3038,14 @@ async def _ensure_editorial_body_length(
         return html
 
     section = None
-    if content_mode == CONTENT_MODE_SPORTSBOOK:
+    if content_mode in (CONTENT_MODE_SPORTSBOOK, CONTENT_MODE_PREDICTION_MARKET):
         section = await _compose_numbers_narrative_section(
             keyword=keyword,
             offer=offer,
             event_context=event_context,
             bc_core_context=bc_core_context,
             bet_example_data=bet_example_data,
+            prediction_market=content_mode == CONTENT_MODE_PREDICTION_MARKET,
         )
     if not section:
         section = _build_length_expansion_section(

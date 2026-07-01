@@ -1440,7 +1440,8 @@ async def test_ensure_matchup_analysis_section_renders_even_when_body_is_long(mo
     assert "What the Numbers Say About Nationals vs Red Sox" in expanded
     assert expanded.index("What the Numbers Say") < expanded.index("bet365 Bonus Code Terms")
 
-    # Prediction-market mode never gets the sportsbook analysis section.
+    # PM mode composes with market language; sportsbook wording ("bet", "bonus bets")
+    # fails PM validation, so this narrative is rejected and no section renders.
     pm_result = await _ensure_matchup_analysis_section(
         html,
         keyword="kalshi promo code",
