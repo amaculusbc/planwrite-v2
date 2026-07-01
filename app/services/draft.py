@@ -2765,7 +2765,151 @@ def _build_sportsbook_expansion_section(
     return f"<h2>{heading}</h2>\n{body}"
 
 
-def _ensure_editorial_body_length(
+def _extract_fact_numbers(texts: list[str]) -> set[str]:
+    """Collect every numeric token present in the provided fact strings."""
+    numbers: set[str] = set()
+    for text in texts:
+        for match in re.findall(r"\d+(?:[.,]\d+)?(?:-\d+)?", str(text or "")):
+            token = match.replace(",", "")
+            numbers.add(token)
+            if "-" in token:
+                numbers.update(part for part in token.split("-") if part)
+            if "." in token:
+                numbers.add(token.split(".")[0])
+    return numbers
+
+
+def _narrative_section_is_valid(
+    html: str,
+    *,
+    allowed_numbers: set[str],
+    fact_numbers: set[str],
+    play_required: bool,
+) -> bool:
+    """Accept a composed narrative only when it stays inside the provided facts."""
+    if not html or "<p" not in html.lower():
+        return False
+    if re.search(r"<(?:h[1-6]|ol|ul|table|script)\b", html, flags=re.IGNORECASE):
+        return False
+    plain = _html_to_plain_text(html)
+    word_count = len(plain.split())
+    if word_count < 60 or word_count > 300:
+        return False
+    if "!" in plain:
+        return False
+    banned = ("bc core", "source data", "internal note", "data feed", "our model", "our projections")
+    lowered = plain.lower()
+    if any(token in lowered for token in banned):
+        return False
+    used_numbers = _extract_fact_numbers([plain])
+    if not used_numbers.issubset(allowed_numbers):
+        return False
+    if len(used_numbers & fact_numbers) < 2:
+        return False
+    if play_required and "The play:" not in plain:
+        return False
+    if not play_required and "The play:" in plain:
+        return False
+    return True
+
+
+async def _compose_numbers_narrative_section(
+    *,
+    keyword: str,
+    offer: dict[str, Any],
+    event_context: str = "",
+    bc_core_context: dict[str, Any] | None = None,
+    bet_example_data: dict[str, Any] | None = None,
+) -> str | None:
+    """Compose the matchup-analysis section in the expert-pick house register.
+
+    Facts are hard-validated: every number in the output must come from the
+    provided inputs. Returns None when composition fails so the caller can
+    fall back to the deterministic section.
+    """
+    event_label = _extract_featured_label_from_event_context(event_context)
+    bc_points = [p for p in _select_bc_core_editorial_points(bc_core_context, section_kind="overview", max_points=6) if p]
+    if not event_label or len(bc_points) < 2:
+        return None
+
+    fallback_brand = _sportsbook_display_name(keyword.split()[0]) if keyword.split() else "the operator"
+    brand = str(offer.get("brand") or fallback_brand).strip()
+    reward_phrase = _offer_reward_phrase_visible(offer)
+    qualifying_amount = _offer_qualifying_amount_text(offer)
+    min_odds = str(offer.get("minimum_odds") or extract_minimum_odds(str(offer.get("terms") or "")) or "").strip()
+
+    data = dict(bet_example_data or {})
+    selection = str(data.get("selection") or "").strip()
+    odds_text = ""
+    if selection:
+        try:
+            odds_text = f" at {int(float(data.get('odds'))):+d}"
+        except (TypeError, ValueError):
+            pass
+
+    facts_md = "\n".join(f"- {point}" for point in bc_points)
+    offer_bits = [f"brand {brand}"]
+    if qualifying_amount:
+        offer_bits.append(f"qualifying wager {qualifying_amount}")
+    if reward_phrase:
+        offer_bits.append(f"reward {reward_phrase}")
+    if min_odds:
+        offer_bits.append(f"minimum odds {min_odds}")
+    play_block = (
+        f"THE PLAY (final paragraph, must start exactly with \"The play:\"):\n- Back {selection}{odds_text} with the qualifying bet, then keep {reward_phrase} for later eligible markets.\n\n"
+        if selection
+        else ""
+    )
+
+    system_prompt = (
+        "You are a senior sports betting editor for Action Network's Top Stories. "
+        "You write tight, confident, data-driven matchup analysis: stakes first, then the numbers built into an argument for one side, then a clear play. "
+        "Output clean HTML only: 3 or 4 <p> paragraphs. No headings, no lists, no markdown, no exclamation points."
+    )
+    prompt = f"""Write the body paragraphs for a section headed "What the Numbers Say About {event_label}".
+
+MATCHUP FACTS - the ONLY numbers you may use; quote each figure exactly as written and never invent or derive new ones:
+{facts_md}
+
+OFFER TIE-IN (reference once, briefly, in the second-to-last paragraph, sentence casing): {"; ".join(offer_bits)}.
+
+{play_block}REQUIREMENTS:
+- Open with what is at stake in {event_label}, framed only from the facts above (records, form, projections, market lean). Do not invent injuries, crowd, venue, weather, or history that is not listed.
+- Build the facts into an argument for one side instead of listing them. Connect them with editorial reasoning, e.g. "that is the profile of a team that...", "which is exactly the matchup where...".
+- Never mention data sources, feeds, models, or anything internal.
+- 120 to 220 words total. No exclamation points.
+- Use the primary keyword "{keyword}" zero or one time, naturally."""
+
+    allowed_numbers = _extract_fact_numbers(
+        bc_points
+        + [reward_phrase, qualifying_amount, min_odds, selection, odds_text, str(data.get("bet_amount") or ""), str(data.get("potential_profit") or ""), event_label, event_context]
+    )
+    fact_numbers = _extract_fact_numbers(bc_points)
+
+    for _ in range(2):
+        try:
+            result = await generate_completion(
+                prompt=prompt,
+                system_prompt=system_prompt,
+                temperature=0.7,
+                max_tokens=800,
+            )
+        except Exception:
+            return None
+        cleaned = _strip_source_and_prompt_leaks(str(result or "").strip())
+        cleaned = _convert_availability_labels_to_prose(cleaned)
+        cleaned = _decapitalize_inline_reward_mentions(cleaned)
+        if _narrative_section_is_valid(
+            cleaned,
+            allowed_numbers=allowed_numbers,
+            fact_numbers=fact_numbers,
+            play_required=bool(selection),
+        ):
+            return f"<h2>What the Numbers Say About {event_label}</h2>\n{cleaned}"
+    return None
+
+
+async def _ensure_editorial_body_length(
     html: str,
     *,
     keyword: str,
@@ -2788,14 +2932,24 @@ def _ensure_editorial_body_length(
     ):
         return html
 
-    section = _build_length_expansion_section(
-        keyword=keyword,
-        offer=offer,
-        event_context=event_context,
-        bc_core_context=bc_core_context,
-        content_mode=content_mode,
-        bet_example_data=bet_example_data,
-    )
+    section = None
+    if content_mode == CONTENT_MODE_SPORTSBOOK:
+        section = await _compose_numbers_narrative_section(
+            keyword=keyword,
+            offer=offer,
+            event_context=event_context,
+            bc_core_context=bc_core_context,
+            bet_example_data=bet_example_data,
+        )
+    if not section:
+        section = _build_length_expansion_section(
+            keyword=keyword,
+            offer=offer,
+            event_context=event_context,
+            bc_core_context=bc_core_context,
+            content_mode=content_mode,
+            bet_example_data=bet_example_data,
+        )
     insert_before = re.search(r"<h[1-6]\b[^>]*>[^<]*(?:Terms|Conditions|Fine Print|Rules)[^<]*</h[1-6]>", html, flags=re.IGNORECASE)
     if insert_before:
         return html[:insert_before.start()] + section + "\n" + html[insert_before.start():]
@@ -4394,7 +4548,7 @@ async def generate_draft_from_outline(
     html_output = _strip_unprovided_article_date(html_output, article_date)
     html_output = _strip_market_mismatch_phrasing(html_output, prefs.get("market", "US"))
     html_output = _strip_formatting_from_headings(html_output)
-    html_output = _ensure_editorial_body_length(
+    html_output = await _ensure_editorial_body_length(
         html_output,
         keyword=keyword,
         offer=offer,
@@ -5529,7 +5683,7 @@ async def generate_draft_from_outline_streaming(
     html_output = _strip_unprovided_article_date(html_output, article_date)
     html_output = _strip_market_mismatch_phrasing(html_output, prefs.get("market", "US"))
     html_output = _strip_formatting_from_headings(html_output)
-    html_output = _ensure_editorial_body_length(
+    html_output = await _ensure_editorial_body_length(
         html_output,
         keyword=keyword,
         offer=offer,

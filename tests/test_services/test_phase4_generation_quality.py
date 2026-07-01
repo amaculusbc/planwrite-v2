@@ -1220,7 +1220,8 @@ def test_body_word_count_excludes_signup_terms_shortcodes_and_disclaimers():
     assert _body_word_count_for_editorial_target(html) == 9
 
 
-def test_ensure_editorial_body_length_adds_useful_section_before_terms():
+@pytest.mark.asyncio
+async def test_ensure_editorial_body_length_adds_useful_section_before_terms():
     html = (
         "<h1>bet365 bonus code test</h1>"
         "<p>Short intro for the selected offer.</p>"
@@ -1230,7 +1231,7 @@ def test_ensure_editorial_body_length_adds_useful_section_before_terms():
         "<p>Terms apply. 21+.</p>"
     )
 
-    expanded = _ensure_editorial_body_length(
+    expanded = await _ensure_editorial_body_length(
         html,
         keyword="bet365 bonus code",
         offer={
@@ -1251,7 +1252,8 @@ def test_ensure_editorial_body_length_adds_useful_section_before_terms():
     assert _body_word_count_for_editorial_target(expanded) > _body_word_count_for_editorial_target(html)
 
 
-def test_ensure_editorial_body_length_uses_keyword_brand_when_offer_missing():
+@pytest.mark.asyncio
+async def test_ensure_editorial_body_length_uses_keyword_brand_when_offer_missing():
     html = (
         "<h1>draftkings promo code test</h1>"
         "<p>Short intro for the selected offer.</p>"
@@ -1261,7 +1263,7 @@ def test_ensure_editorial_body_length_uses_keyword_brand_when_offer_missing():
         "<p>Terms apply. 21+.</p>"
     )
 
-    expanded = _ensure_editorial_body_length(
+    expanded = await _ensure_editorial_body_length(
         html,
         keyword="draftkings promo code",
         offer={},
@@ -1275,7 +1277,13 @@ def test_ensure_editorial_body_length_uses_keyword_brand_when_offer_missing():
     assert "The best example is the bet you were already comfortable making." in expanded
 
 
-def test_ensure_editorial_body_length_builds_numbers_section_with_play_close():
+@pytest.mark.asyncio
+async def test_ensure_editorial_body_length_builds_numbers_section_with_play_close(monkeypatch):
+    async def _refuse_narrative(**kwargs):
+        return "not valid html"
+
+    monkeypatch.setattr("app.services.draft.generate_completion", _refuse_narrative)
+
     html = (
         "<h1>bet365 bonus code test</h1>"
         "<p>Short intro for the selected offer.</p>"
@@ -1296,7 +1304,7 @@ def test_ensure_editorial_body_length_builds_numbers_section_with_play_close():
         "event": {"matched": False},
     }
 
-    expanded = _ensure_editorial_body_length(
+    expanded = await _ensure_editorial_body_length(
         html,
         keyword="bet365 bonus code",
         offer={
@@ -1318,6 +1326,115 @@ def test_ensure_editorial_body_length_builds_numbers_section_with_play_close():
     assert "gives editors" not in expanded
     assert "keeps the example useful for readers" not in expanded
     assert "give the article" not in expanded
+
+
+@pytest.mark.asyncio
+async def test_ensure_editorial_body_length_uses_narrative_composition_when_valid(monkeypatch):
+    narrative = (
+        "<p>Boston walk in at 44-43 and everything about this spot says the margin for error is gone. "
+        "A team sitting one game over even in July is not coasting; it is fighting for its season every night, "
+        "and that urgency is exactly what this matchup demands.</p>"
+        "<p>The problem is the opposition's form. Washington have covered in six of their last ten, a 6-4 run "
+        "against the spread that reads like a team playing better than its record. Payton Tolle projects for "
+        "6.25 pitching hits allowed, and that is the profile of a starter who keeps traffic off the bases and "
+        "keeps his side in front. For a first bet with bet365, the $10 qualifying wager fits a straightforward "
+        "market here, with $365 in bonus bets to follow.</p>"
+        "<p>The play: back Boston Red Sox ML at -140 with the qualifying bet, then keep the bonus bets for later "
+        "eligible markets once they post.</p>"
+    )
+
+    async def _compose(**kwargs):
+        return narrative
+
+    monkeypatch.setattr("app.services.draft.generate_completion", _compose)
+
+    html = (
+        "<h1>bet365 bonus code test</h1>"
+        "<p>Short intro for the selected offer.</p>"
+        "<h2>bet365 Bonus Code Details</h2>"
+        "<p>The selected offer requires a $10 qualifying wager.</p>"
+        "<h2>bet365 Bonus Code Terms</h2>"
+        "<p>Terms apply. 21+.</p>"
+    )
+    bc_core_context = {
+        "expertise": {
+            "matched": True,
+            "editorial_points": [
+                "Boston enter at 44-43 overall this season.",
+                "Washington went 6-4 against the spread over the last 10 games.",
+                "Payton Tolle projects for 6.25 pitching hits allowed.",
+            ],
+        },
+        "event": {"matched": False},
+    }
+
+    expanded = await _ensure_editorial_body_length(
+        html,
+        keyword="bet365 bonus code",
+        offer={
+            "brand": "bet365",
+            "offer_text": "Bet $10, Get $365 in Bonus Bets",
+            "qualifying_amount": "$10",
+            "bonus_amount": "$365",
+        },
+        event_context="Featured game: Nationals vs Red Sox.",
+        bc_core_context=bc_core_context,
+        bet_example_data={"bet_amount": 10, "selection": "Boston Red Sox ML", "odds": -140},
+        target_words=120,
+    )
+
+    assert "What the Numbers Say About Nationals vs Red Sox" in expanded
+    assert "everything about this spot says the margin for error is gone" in expanded
+    assert "The play: back Boston Red Sox ML at -140" in expanded
+    # The deterministic fallback's stock sentence must not appear when the narrative is used.
+    assert "That is the backdrop for the first bet" not in expanded
+
+
+@pytest.mark.asyncio
+async def test_ensure_editorial_body_length_rejects_narrative_with_invented_numbers(monkeypatch):
+    async def _hallucinate(**kwargs):
+        return (
+            "<p>Boston are 44-43 and have won 12 of 15 at home, a stretch that includes a 9-2 rout. "
+            "Washington went 6-4 against the spread over the last 10 games, but the deeper numbers all "
+            "point one way in this matchup, and the value follows the form line here as well tonight.</p>"
+            "<p>Payton Tolle projects for 6.25 pitching hits allowed, which keeps the game script stable "
+            "and the favorite in control for most of the evening in this spot.</p>"
+            "<p>The play: back Boston Red Sox ML at -140 with the qualifying bet.</p>"
+        )
+
+    monkeypatch.setattr("app.services.draft.generate_completion", _hallucinate)
+
+    html = (
+        "<h1>bet365 bonus code test</h1>"
+        "<p>Short intro for the selected offer.</p>"
+        "<h2>bet365 Bonus Code Terms</h2>"
+        "<p>Terms apply. 21+.</p>"
+    )
+    bc_core_context = {
+        "expertise": {
+            "matched": True,
+            "editorial_points": [
+                "Boston enter at 44-43 overall this season.",
+                "Washington went 6-4 against the spread over the last 10 games.",
+                "Payton Tolle projects for 6.25 pitching hits allowed.",
+            ],
+        },
+        "event": {"matched": False},
+    }
+
+    expanded = await _ensure_editorial_body_length(
+        html,
+        keyword="bet365 bonus code",
+        offer={"brand": "bet365", "qualifying_amount": "$10", "bonus_amount": "$365", "offer_text": "Bet $10, Get $365"},
+        event_context="Featured game: Nationals vs Red Sox.",
+        bc_core_context=bc_core_context,
+        bet_example_data={"bet_amount": 10, "selection": "Boston Red Sox ML", "odds": -140},
+        target_words=120,
+    )
+
+    # Invented "12 of 15" / "9-2" figures must force the deterministic fallback.
+    assert "12 of 15" not in expanded
+    assert "That is the backdrop for the first bet" in expanded
 
 
 def test_render_terms_section_fallback_is_reader_facing():
