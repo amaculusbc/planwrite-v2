@@ -1143,6 +1143,29 @@ async def test_generate_draft_does_not_duplicate_single_selected_bam_unit(monkey
     assert html.count('affiliate="bet365"') == 1
 
 
+@pytest.mark.asyncio
+async def test_generate_draft_tolerates_missing_primary_offer(monkeypatch):
+    async def _identity_humanizer(html, **kwargs):
+        return html
+
+    monkeypatch.setattr("app.services.draft._humanize_article_html", _identity_humanizer)
+
+    html = await generate_draft_from_outline(
+        outline=[
+            {"level": "shortcode", "title": "", "talking_points": [], "avoid": []},
+        ],
+        keyword="bet365 bonus code",
+        title="bet365 bonus code test",
+        offer=None,
+        alt_offers=[],
+        state="NJ",
+        offer_property="goal_com",
+    )
+
+    assert "<h1>bet365 bonus code test</h1>" in html
+    assert "view_top_story" in html
+
+
 def test_enforce_primary_keyword_density_adds_plain_text_mentions_without_ctas():
     html = (
         '<p><a href="https://example.com">bet365 bonus code</a> starts the article.</p>'

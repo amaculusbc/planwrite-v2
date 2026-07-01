@@ -3944,6 +3944,7 @@ async def generate_draft_from_outline(
     Returns:
         Complete article in specified format
     """
+    offer = offer or {}
     brand = offer.get("brand", "")
     offer_text = offer.get("offer_text", "")
     bonus_code = offer.get("bonus_code", "")
@@ -5064,6 +5065,7 @@ async def generate_draft_from_outline_streaming(
 
     Yields dicts: {type: 'status'|'content'|'done', ...}
     """
+    offer = offer or {}
     brand = offer.get("brand", "")
     keyword = _normalize_brand_keyword_text(keyword, brand)
     switchboard_url = _offer_switchboard_url(offer, state=state, property_key=offer_property)
