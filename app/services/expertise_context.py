@@ -52,6 +52,31 @@ INJURY_PATHS = {
     "nhl": "/hockey/{league_id}/injuries",
 }
 
+PROJECTION_PATHS = {
+    "nba": "/nba/events/{event_id}/projections",
+    "wnba": "/wnba/events/{event_id}/projections",
+    "ncaab": "/ncaamb/events/{event_id}/projections",
+    "ncaaf": "/ncaafb/events/{event_id}/projections",
+    "nfl": "/nfl/events/{event_id}/projections",
+    "mlb": "/mlb/events/{event_id}/projections",
+    "nhl": "/nhl/events/{event_id}/projections",
+    "soccer": "/soccer/events/{event_id}/projections",
+}
+
+DFS_MARKET_PATHS = {
+    "nba": "/nba/events/{event_id}/markets/dfs",
+    "wnba": "/wnba/events/{event_id}/markets/dfs",
+    "nfl": "/nfl/events/{event_id}/markets/dfs",
+    "mlb": "/mlb/events/{event_id}/markets/dfs",
+    "nhl": "/nhl/events/{event_id}/markets/dfs",
+}
+
+OUTCOME_FACT_PATHS = {
+    "nba": "/nba/events/{event_id}/market-outcome-facts",
+    "nfl": "/nfl/events/{event_id}/market-outcome-facts",
+    "mlb": "/mlb/events/{event_id}/market-outcome-facts",
+}
+
 
 def _format_record(record: dict | None) -> str:
     if not record:
@@ -619,9 +644,16 @@ async def _build_soccer_expertise_context(bc_event: dict) -> tuple[dict, str]:
         *absence_points[:2],
         weather_point,
     ]
+    market_context: dict = {"matched": False, "reason": "No market intelligence fetched"}
+    market_urls: list[str] = []
+    market_points: list[str] = []
+    try:
+        market_context, market_urls, market_points = await _fetch_market_intelligence_context("soccer", bc_event)
+    except Exception as exc:
+        market_context = {"matched": False, "reason": str(exc)}
 
     return {
-        "matched": bool(matchups.get("matched") or lineups.get("matched") or absences.get("matched") or weather_summary),
+        "matched": bool(matchups.get("matched") or lineups.get("matched") or absences.get("matched") or weather_summary or market_context.get("matched")),
         "provider": "bc_core",
         "sport": "soccer",
         "event_id": event_id,
@@ -635,8 +667,9 @@ async def _build_soccer_expertise_context(bc_event: dict) -> tuple[dict, str]:
         "lineups": lineups,
         "absences": absences,
         "weather": {"matched": bool(weather_summary), "forecast": weather_summary},
-        "editorial_points": [point for point in editorial_points if point][:8],
-        "source_urls": list(dict.fromkeys(source_urls)),
+        "market_intelligence": market_context,
+        "editorial_points": [point for point in [*market_points[:3], *editorial_points] if point][:8],
+        "source_urls": list(dict.fromkeys([*source_urls, *market_urls])),
         "checked_at": datetime.now(UTC).isoformat(),
     }, ""
 
@@ -660,6 +693,202 @@ def _safe_number(value: int | float | None) -> float | int | None:
         return value
     rounded = round(float(value), 2)
     return int(rounded) if rounded.is_integer() else rounded
+
+
+def _display_percent(value: int | float | None) -> int | None:
+    if value is None:
+        return None
+    numeric = float(value)
+    if numeric <= 1:
+        numeric *= 100
+    return int(round(numeric))
+
+
+def _participant_lookup(bc_event: dict) -> dict[int, str]:
+    lookup: dict[int, str] = {}
+    for item in bc_event.get("participants", []) or []:
+        player_id = item.get("id")
+        name = str(item.get("name") or "").strip()
+        if player_id and name:
+            lookup[int(player_id)] = name
+    for key in ("away_team_id", "home_team_id"):
+        team_id = bc_event.get(key)
+        name_key = "away_team" if key == "away_team_id" else "home_team"
+        name = str(bc_event.get(name_key) or "").strip()
+        if team_id and name:
+            lookup[int(team_id)] = name
+    return lookup
+
+
+def _market_stat_name(item: dict) -> str:
+    for key in ("statType", "lineType", "betType", "linePeriodType", "percentType"):
+        value = item.get(key)
+        if isinstance(value, dict):
+            name = _nested_name(value)
+            if name:
+                return name
+        elif value:
+            return str(value).strip()
+    return ""
+
+
+def _summarize_projection_context(results: list[dict], bc_event: dict) -> tuple[dict, list[str]]:
+    names = _participant_lookup(bc_event)
+    projections: list[dict] = []
+    for item in results:
+        projection = _safe_number(item.get("projection"))
+        player_id = item.get("playerId")
+        stat_name = _market_stat_name(item)
+        if projection is None or not stat_name:
+            continue
+        player_name = names.get(int(player_id), f"Player {player_id}") if player_id else "A listed player"
+        projections.append(
+            {
+                "player_id": player_id,
+                "player_name": player_name,
+                "projection": projection,
+                "stat": stat_name,
+                "is_live": bool(item.get("isLive")),
+            }
+        )
+    projections.sort(key=lambda row: float(row.get("projection") or 0), reverse=True)
+    points = [
+        f"{row['player_name']} projects for {row['projection']} {str(row['stat']).lower()} in the selected event."
+        for row in projections[:3]
+    ]
+    return {"matched": bool(projections), "projections": projections[:8]}, points
+
+
+def _summarize_dfs_market_context(results: list[dict], bc_event: dict) -> tuple[dict, list[str]]:
+    names = _participant_lookup(bc_event)
+    lines: list[dict] = []
+    for market in results:
+        stat_name = _market_stat_name(market)
+        for line in market.get("lines", []) or []:
+            line_value = _safe_number(line.get("line"))
+            if line_value is None:
+                continue
+            player_id = line.get("playerId")
+            player_name = names.get(int(player_id), f"Player {player_id}") if player_id else "A listed player"
+            lines.append(
+                {
+                    "market_id": market.get("id"),
+                    "player_id": player_id,
+                    "player_name": player_name,
+                    "stat": stat_name,
+                    "line": line_value,
+                    "option": line.get("optionType") or "",
+                    "sportsbook_id": line.get("sportsbookId"),
+                }
+            )
+    lines.sort(key=lambda row: (str(row.get("player_name") or ""), str(row.get("stat") or "")))
+    points = [
+        f"DFS lines list {row['player_name']} at {row['line']} {str(row.get('stat') or 'projected stat').lower()}, giving fantasy users a concrete prop angle for the slate."
+        for row in lines[:3]
+    ]
+    return {"matched": bool(lines), "lines": lines[:8]}, points
+
+
+def _summarize_market_percent_context(results: list[dict], bc_event: dict) -> tuple[dict, list[str]]:
+    names = _participant_lookup(bc_event)
+    percents: list[dict] = []
+    for item in results:
+        percent = _display_percent(item.get("percent"))
+        if percent is None:
+            continue
+        subject_id = item.get("teamId") or item.get("playerId")
+        subject = names.get(int(subject_id), f"ID {subject_id}") if subject_id else _nested_name(item.get("sideOptionType") if isinstance(item.get("sideOptionType"), dict) else {})
+        percent_type = _nested_name(item.get("percentType") if isinstance(item.get("percentType"), dict) else {}) or "market activity"
+        line_type = _nested_name(item.get("lineType") if isinstance(item.get("lineType"), dict) else {})
+        percents.append(
+            {
+                "market_id": item.get("marketId"),
+                "subject": subject or "one side",
+                "percent": percent,
+                "percent_type": percent_type,
+                "line_type": line_type,
+                "total_value": _safe_number(item.get("totalValue")),
+            }
+        )
+    percents.sort(key=lambda row: int(row.get("percent") or 0), reverse=True)
+    points = []
+    for row in percents[:2]:
+        line_label = f" on {row['line_type']}" if row.get("line_type") else ""
+        points.append(f"Market percents show {row['percent']}% of {str(row['percent_type']).lower()}{line_label} tied to {row['subject']}.")
+    return {"matched": bool(percents), "percents": percents[:8]}, points
+
+
+def _summarize_outcome_fact_context(results: list[dict]) -> tuple[dict, list[str]]:
+    facts = [
+        {
+            "outcome_id": item.get("outcomeId"),
+            "fact": str(item.get("fact") or "").strip(),
+            "confidence_score": _safe_number(item.get("confidenceScore")),
+        }
+        for item in results
+        if str(item.get("fact") or "").strip()
+    ]
+    facts.sort(key=lambda row: float(row.get("confidence_score") or 0), reverse=True)
+    points = [row["fact"].rstrip(".") + "." for row in facts[:3]]
+    return {"matched": bool(facts), "facts": facts[:8]}, points
+
+
+async def _fetch_market_intelligence_context(sport: str, bc_event: dict) -> tuple[dict, list[str], list[str]]:
+    event_id = bc_event.get("event_id")
+    if not event_id:
+        return {"matched": False, "reason": "Missing event_id for market intelligence"}, [], []
+
+    base_url = get_bc_core_base_url()
+    fetch_specs: list[tuple[str, str, dict | None]] = []
+    projection_path = PROJECTION_PATHS.get(sport)
+    dfs_path = DFS_MARKET_PATHS.get(sport)
+    outcome_path = OUTCOME_FACT_PATHS.get(sport)
+    percent_path = f"/events/{event_id}/markets/main/percents"
+    if projection_path:
+        fetch_specs.append(("projections", projection_path.format(event_id=event_id), None))
+    if dfs_path:
+        fetch_specs.append(("dfs_lines", dfs_path.format(event_id=event_id), None))
+    if outcome_path:
+        fetch_specs.append(("outcome_facts", outcome_path.format(event_id=event_id), None))
+    fetch_specs.append(("market_percents", percent_path, None))
+    if not fetch_specs:
+        return {"matched": False, "reason": f"No market intelligence endpoint mapping for sport '{sport}'"}, [], []
+
+    payloads = await asyncio.gather(
+        *[fetch_bc_core_json(path, params=params) for _, path, params in fetch_specs],
+        return_exceptions=True,
+    )
+
+    context: dict[str, dict] = {
+        "matched": False,
+        "projections": {"matched": False},
+        "dfs_lines": {"matched": False},
+        "market_percents": {"matched": False},
+        "outcome_facts": {"matched": False},
+    }
+    source_urls: list[str] = []
+    editorial_points: list[str] = []
+    for (kind, path, _), payload in zip(fetch_specs, payloads):
+        source_urls.append(f"{base_url}{path}")
+        if isinstance(payload, Exception) or not isinstance(payload, dict):
+            context[kind] = {"matched": False, "reason": str(payload)}
+            continue
+        results = payload.get("results", []) or []
+        if kind == "projections":
+            summary, points = _summarize_projection_context(results, bc_event)
+        elif kind == "dfs_lines":
+            summary, points = _summarize_dfs_market_context(results, bc_event)
+        elif kind == "market_percents":
+            summary, points = _summarize_market_percent_context(results, bc_event)
+        elif kind == "outcome_facts":
+            summary, points = _summarize_outcome_fact_context(results)
+        else:
+            summary, points = {"matched": False}, []
+        context[kind] = summary
+        context["matched"] = bool(context["matched"] or summary.get("matched"))
+        editorial_points.extend(points)
+
+    return context, source_urls, editorial_points[:8]
 
 
 def _find_record(standing: dict, record_name: str) -> dict | None:
@@ -837,12 +1066,15 @@ async def build_expertise_context(source_facts: dict, sports_context: dict) -> t
     injury_context: dict = {"matched": False, "reason": "No injury enrichment fetched"}
     weather_context: dict = {"matched": False, "reason": "No weather enrichment fetched"}
     trend_context: dict = {"matched": False, "reason": "No trend enrichment fetched"}
+    market_context: dict = {"matched": False, "reason": "No market intelligence fetched"}
     injury_urls: list[str] = []
     weather_urls: list[str] = []
     trend_urls: list[str] = []
+    market_urls: list[str] = []
     injury_points: list[str] = []
     weather_points: list[str] = []
     trend_points: list[str] = []
+    market_points: list[str] = []
     enrichment_results = await asyncio.gather(
         _fetch_injury_context(sport, league_id, bc_event),
         _fetch_weather_context(sport, league_id, bc_event),
@@ -866,6 +1098,7 @@ async def build_expertise_context(source_facts: dict, sports_context: dict) -> t
             season_year,
             season_type,
         ),
+        _fetch_market_intelligence_context(sport, bc_event),
         return_exceptions=True,
     )
     if not isinstance(enrichment_results[0], Exception):
@@ -882,12 +1115,15 @@ async def build_expertise_context(source_facts: dict, sports_context: dict) -> t
         home_trend_context, home_trend_urls, home_trend_points = enrichment_results[3]
         trend_urls.extend(home_trend_urls)
         trend_points.extend(home_trend_points[:2])
+    if not isinstance(enrichment_results[4], Exception):
+        market_context, market_urls, market_points = enrichment_results[4]
     trend_context = {
         "matched": bool(away_trend_context.get("matched") or home_trend_context.get("matched")),
         "teams": {"away": away_trend_context, "home": home_trend_context},
     }
 
     editorial_points = [
+        *market_points[:4],
         *injury_points[:2],
         *weather_points[:1],
         *trend_points[:4],
@@ -917,6 +1153,7 @@ async def build_expertise_context(source_facts: dict, sports_context: dict) -> t
                 *injury_urls,
                 *weather_urls,
                 *trend_urls,
+                *market_urls,
             ]
         )
     )
@@ -932,6 +1169,7 @@ async def build_expertise_context(source_facts: dict, sports_context: dict) -> t
         "injuries": injury_context,
         "weather": weather_context,
         "trends": trend_context,
+        "market_intelligence": market_context,
         "editorial_points": [point for point in editorial_points if point][:8],
         "source_urls": source_urls,
         "checked_at": datetime.now(UTC).isoformat(),

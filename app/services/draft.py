@@ -147,8 +147,14 @@ def _bc_core_point_category(point: str) -> str:
         return "lineup"
     if any(token in text for token in ["injury", "absence", "out", "questionable"]):
         return "injury"
-    if any(token in text for token in ["against the spread", "straight up", "ats", "last 10", "recent sample", "matchup sample"]):
+    if any(token in text for token in ["against the spread", "straight up", "ats", "covered", "last 10", "recent sample", "matchup sample"]):
         return "trend"
+    if any(token in text for token in ["projects for", "projection", "projected stat"]):
+        return "projection"
+    if any(token in text for token in ["dfs lines", "fantasy users", "prop angle"]):
+        return "dfs_line"
+    if any(token in text for token in ["market percents", "tickets", "handle", "market activity"]):
+        return "market_percent"
     if any(token in text for token in ["points per game", "scoring margin", "rebounds", "assists", "true shooting", "efg"]):
         return "stat"
     if any(token in text for token in ["playoffs", "season", "window", "network", "nbc", "espn", "peacock"]):
@@ -161,12 +167,15 @@ def _prioritize_bc_core_points(points: list[str], max_points: int) -> list[str]:
     category_priority = {
         "matchup": 0,
         "lineup": 1,
-        "trend": 2,
-        "stat": 3,
-        "injury": 4,
-        "weather": 5,
-        "schedule": 6,
-        "general": 7,
+        "projection": 2,
+        "dfs_line": 3,
+        "market_percent": 4,
+        "trend": 5,
+        "stat": 6,
+        "injury": 7,
+        "weather": 8,
+        "schedule": 9,
+        "general": 10,
     }
     ordered_points = sorted(points, key=lambda point: category_priority.get(_bc_core_point_category(point), 99))
     chosen: list[str] = []
@@ -187,11 +196,32 @@ def _prioritize_bc_core_points(points: list[str], max_points: int) -> list[str]:
     return chosen
 
 
+def _filter_bc_core_points_for_mode(
+    points: list[str],
+    *,
+    prediction_market: bool = False,
+    dfs_mode: bool = False,
+) -> list[str]:
+    """Keep internal data notes aligned with the article's content mode."""
+    if not points:
+        return []
+    blocked_categories: set[str] = set()
+    if prediction_market:
+        blocked_categories.update({"dfs_line", "trend"})
+    elif dfs_mode:
+        blocked_categories.update({"market_percent", "trend"})
+    if not blocked_categories:
+        return points
+    return [point for point in points if _bc_core_point_category(point) not in blocked_categories]
+
+
 def _select_bc_core_editorial_points(
     bc_core_context: dict[str, Any] | None,
     *,
     section_kind: str,
     max_points: int = 3,
+    prediction_market: bool = False,
+    dfs_mode: bool = False,
 ) -> list[str]:
     """Pick a few BC-backed editorial notes to surface in copy."""
     bc_core_context = bc_core_context or {}
@@ -219,6 +249,11 @@ def _select_bc_core_editorial_points(
         if normalized and normalized not in seen:
             seen.add(normalized)
             deduped.append(point)
+    deduped = _filter_bc_core_points_for_mode(
+        deduped,
+        prediction_market=prediction_market,
+        dfs_mode=dfs_mode,
+    )
 
     if section_kind == "claim":
         return _prioritize_bc_core_points(deduped, 1)
@@ -238,7 +273,7 @@ def _bc_core_marker_coverage(text: str, points: list[str]) -> int:
         for marker in re.findall(r"\b\d+(?:\.\d+)?(?:-\d+)?%?\b", point):
             if marker.lower() in haystack:
                 matched = True
-        for marker in re.findall(r"\b(?:playoffs?|nbc|espn|peacock|record|straight up|against the spread|injury|absence|lineup|formation|starter|starters|score|weather)\b", point, flags=re.IGNORECASE):
+        for marker in re.findall(r"\b(?:playoffs?|nbc|espn|peacock|record|straight up|against the spread|injury|absence|lineup|formation|starter|starters|score|weather|projects?|projection|dfs|fantasy|market percents?|tickets?|handle|market activity)\b", point, flags=re.IGNORECASE):
             if marker.lower() in haystack:
                 matched = True
         if matched:
@@ -4190,8 +4225,14 @@ async def _generate_intro_section(
         dfs_mode=dfs_mode,
     )
     bc_core_points = (
-        _select_bc_core_editorial_points(bc_core_context, section_kind="intro", max_points=2)
-        if not prediction_market and not dfs_mode
+        _select_bc_core_editorial_points(
+            bc_core_context,
+            section_kind="intro",
+            max_points=2,
+            prediction_market=prediction_market,
+            dfs_mode=dfs_mode,
+        )
+        if bc_core_context
         else []
     )
     bc_core_required_count = 2 if len(bc_core_points) >= 2 else 1 if bc_core_points else 0
@@ -4612,8 +4653,14 @@ async def _generate_body_section(
         dfs_mode=dfs_mode,
     )
     bc_core_points = (
-        _select_bc_core_editorial_points(bc_core_context, section_kind=section_kind, max_points=3)
-        if not prediction_market and not dfs_mode and not is_terms and not is_numbered_list and not is_daily_promos
+        _select_bc_core_editorial_points(
+            bc_core_context,
+            section_kind=section_kind,
+            max_points=3,
+            prediction_market=prediction_market,
+            dfs_mode=dfs_mode,
+        )
+        if bc_core_context and not is_terms and not is_numbered_list and not is_daily_promos
         else []
     )
     bc_core_required_count = 2 if section_kind != "claim" and len(bc_core_points) >= 2 else 1 if bc_core_points else 0

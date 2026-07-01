@@ -127,6 +127,35 @@ async def test_build_expertise_context_adds_injuries_weather_and_trends(monkeypa
                     {"eventDate": "2026-05-05T00:00:00Z", "homeTeam": 606, "awayTeam": 202, "homeScore": 119, "awayScore": 108},
                 ]
             }
+        if path == "/nba/events/77/projections":
+            return {
+                "results": [
+                    {"playerId": 501, "projection": 29.5, "statType": {"name": "Points"}},
+                ]
+            }
+        if path == "/nba/events/77/markets/dfs":
+            return {
+                "results": [
+                    {
+                        "id": 9001,
+                        "lineType": {"name": "Points"},
+                        "lines": [{"playerId": 501, "line": 28.5, "sportsbookId": 1}],
+                    }
+                ]
+            }
+        if path == "/nba/events/77/market-outcome-facts":
+            return {"results": [{"fact": "Boston has covered three of its last four games.", "confidenceScore": 0.82}]}
+        if path == "/events/77/markets/main/percents":
+            return {
+                "results": [
+                    {
+                        "teamId": 101,
+                        "percent": 0.64,
+                        "percentType": {"name": "Tickets"},
+                        "lineType": {"name": "Spread"},
+                    }
+                ]
+            }
         raise AssertionError(f"Unexpected BC Core path: {path}")
 
     monkeypatch.setattr(expertise_context, "fetch_bc_core_json", fake_fetch)
@@ -148,6 +177,10 @@ async def test_build_expertise_context_adds_injuries_weather_and_trends(monkeypa
                 "venue_id": 999,
                 "season_year": 2026,
                 "season_type": "Reg",
+                "participants": [
+                    {"id": 501, "name": "Jayson Tatum"},
+                    {"id": 502, "name": "Bam Adebayo"},
+                ],
                 "source_urls": ["https://core.example/nba/events"],
             },
             "source_urls": ["https://core.example/nba/events"],
@@ -161,12 +194,22 @@ async def test_build_expertise_context_adds_injuries_weather_and_trends(monkeypa
     assert payload["weather"]["matched"] is True
     assert payload["weather"]["forecast"]["temperature"] == 68
     assert payload["trends"]["matched"] is True
+    assert payload["market_intelligence"]["matched"] is True
+    assert payload["market_intelligence"]["projections"]["matched"] is True
+    assert payload["market_intelligence"]["dfs_lines"]["matched"] is True
+    assert payload["market_intelligence"]["market_percents"]["matched"] is True
+    assert payload["market_intelligence"]["outcome_facts"]["matched"] is True
     assert payload["trends"]["teams"]["away"]["last10_overall"]["ats"] == "7-3"
     assert payload["trends"]["teams"]["away"]["season_review"]["recent_record"] == "3-0"
+    assert any("Jayson Tatum projects for 29.5 points" in point for point in payload["editorial_points"])
+    assert any("DFS lines list Jayson Tatum at 28.5 points" in point for point in payload["editorial_points"])
+    assert any("Market percents show 64% of tickets on Spread tied to Boston Celtics" in point for point in payload["editorial_points"])
+    assert any("Boston has covered three of its last four games" in point for point in payload["editorial_points"])
     assert any("injury listings" in point for point in payload["editorial_points"])
     assert any("7-3 ATS" in point for point in payload["editorial_points"])
     assert any("/basketball/2/injuries" in url for url in payload["source_urls"])
     assert any("/basketball/2/team/101/season/review" in url for url in payload["source_urls"])
+    assert any("/nba/events/77/projections" in url for url in payload["source_urls"])
 
 
 @pytest.mark.asyncio

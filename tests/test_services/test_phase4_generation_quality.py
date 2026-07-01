@@ -991,6 +991,65 @@ def test_select_bc_core_editorial_points_prioritizes_soccer_specific_context():
     assert "listed player absence" in joined
 
 
+def test_select_bc_core_editorial_points_prioritizes_market_intelligence():
+    points = _select_bc_core_editorial_points(
+        {
+            "event": {"matched": True},
+            "expertise": {
+                "matched": True,
+                "editorial_points": [
+                    "Boston has 2 active BC Core injury listings.",
+                    "Jayson Tatum projects for 29.5 points in the selected event.",
+                    "DFS lines list Jayson Tatum at 28.5 points, giving fantasy users a concrete prop angle for the slate.",
+                    "Market percents show 64% of tickets on Spread tied to Boston Celtics.",
+                ],
+            },
+        },
+        section_kind="overview",
+        max_points=3,
+    )
+
+    joined = " ".join(points)
+    assert "projects for 29.5 points" in joined
+    assert "DFS lines list" in joined
+    assert "Market percents show 64%" in joined
+
+
+def test_select_bc_core_editorial_points_filters_by_content_mode():
+    context = {
+        "event": {"matched": True},
+        "expertise": {
+            "matched": True,
+            "editorial_points": [
+                "Jayson Tatum projects for 29.5 points in the selected event.",
+                "DFS lines list Jayson Tatum at 28.5 points, giving fantasy users a concrete prop angle for the slate.",
+                "Market percents show 64% of tickets on Spread tied to Boston Celtics.",
+                "Boston has covered three of its last four games.",
+            ],
+        },
+    }
+
+    prediction_points = _select_bc_core_editorial_points(
+        context,
+        section_kind="overview",
+        max_points=4,
+        prediction_market=True,
+    )
+    dfs_points = _select_bc_core_editorial_points(
+        context,
+        section_kind="overview",
+        max_points=4,
+        dfs_mode=True,
+    )
+
+    assert any("projects for 29.5 points" in point for point in prediction_points)
+    assert not any("DFS lines list" in point for point in prediction_points)
+    assert not any("covered three" in point for point in prediction_points)
+    assert any("DFS lines list" in point for point in dfs_points)
+    assert not any("Market percents show" in point for point in dfs_points)
+    assert not any("covered three" in point for point in dfs_points)
+
+
 def test_build_signup_list_varies_by_mode_and_generation_key():
     pm_html = _build_signup_list(
         brand="Kalshi",
