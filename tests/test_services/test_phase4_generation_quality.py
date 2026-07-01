@@ -28,6 +28,7 @@ from app.services.draft import (
     _is_signup_heading,
     _is_daily_promos_heading,
     _naturalize_bc_core_editorial_point,
+    _normalize_brand_casing,
     _normalize_matchup_vs_notation,
     _offer_excluded_states_text,
     _offer_states_text,
@@ -522,7 +523,8 @@ def test_render_bet_example_section_deterministic_uses_reward_phrase_not_raw_off
     assert "Bet $10 Get $50 in Bonus Bets" not in html
     assert "$50 in bonus bets" in html.lower()
     assert "If I place" not in html
-    assert "A winning bet pays normally" in html
+    assert "clean version" not in html.lower()
+    assert "in profit" in html
     assert "separate from the result of the wager" in html
 
 
@@ -1259,10 +1261,91 @@ def test_ensure_editorial_body_length_uses_keyword_brand_when_offer_missing():
         target_words=120,
     )
 
-    assert "What to Watch Before Using Draftkings" in expanded
+    assert "What to Watch Before Using DraftKings" in expanded
     assert "What to Watch Before Using the operator" not in expanded
     assert "rules., so" not in expanded
     assert "The best example is the bet you were already comfortable making." in expanded
+
+
+def test_ensure_editorial_body_length_builds_numbers_section_with_play_close():
+    html = (
+        "<h1>bet365 bonus code test</h1>"
+        "<p>Short intro for the selected offer.</p>"
+        "<h2>bet365 Bonus Code Details</h2>"
+        "<p>The selected offer requires a $10 qualifying wager.</p>"
+        "<h2>bet365 Bonus Code Terms</h2>"
+        "<p>Terms apply. 21+.</p>"
+    )
+    bc_core_context = {
+        "expertise": {
+            "matched": True,
+            "editorial_points": [
+                "Boston enter at 44-43 overall this season.",
+                "Washington went 6-4 against the spread over the last 10 games.",
+                "Payton Tolle projects for 6.25 pitching hits allowed.",
+            ],
+        },
+        "event": {"matched": False},
+    }
+
+    expanded = _ensure_editorial_body_length(
+        html,
+        keyword="bet365 bonus code",
+        offer={
+            "brand": "bet365",
+            "offer_text": "Bet $10, Get $365 in Bonus Bets",
+            "qualifying_amount": "$10",
+            "bonus_amount": "$365",
+        },
+        event_context="Featured game: Nationals vs Red Sox.",
+        bc_core_context=bc_core_context,
+        bet_example_data={"bet_amount": 10, "selection": "Boston Red Sox ML", "odds": -140},
+        target_words=120,
+    )
+
+    assert "What the Numbers Say About Nationals vs Red Sox" in expanded
+    assert "Payton Tolle projects for 6.25 pitching hits allowed." in expanded
+    assert "The play: use the qualifying bet on Boston Red Sox ML at -140" in expanded
+    # Editor/writer-facing meta guidance must never ship in published copy.
+    assert "gives editors" not in expanded
+    assert "keeps the example useful for readers" not in expanded
+    assert "give the article" not in expanded
+
+
+def test_render_terms_section_fallback_is_reader_facing():
+    html = _render_terms_section_html(
+        offers=[{"brand": "DraftKings"}],
+        terms="",
+        expiration_days=None,
+        min_odds="",
+        wagering="",
+    )
+    assert "not provided in source data" not in html
+    assert "See the operator's app or site" in html
+
+
+def test_normalize_brand_casing_fixes_visible_copy_and_headings():
+    html = (
+        "<h1>draftkings promo code: Nationals vs. Red Sox</h1>"
+        "<h2>What to Watch Before Using Draftkings</h2>"
+        '<p>Use <strong>draftkings promo code</strong> at signup. '
+        '<a href="https://sportsbook.draftkings.com/x">Claim at draftkings</a></p>'
+    )
+    fixed = _normalize_brand_casing(html, "DraftKings")
+    assert "<h1>DraftKings promo code: Nationals vs. Red Sox</h1>" in fixed
+    assert "What to Watch Before Using DraftKings" in fixed
+    assert "<strong>DraftKings promo code</strong>" in fixed
+    assert 'href="https://sportsbook.draftkings.com/x"' in fixed
+    assert "Claim at DraftKings" in fixed
+
+
+def test_normalize_brand_casing_keeps_bet365_lowercase_and_skips_unknown_lowercase():
+    html = "<p>Bet365 bonus code works for Celtics vs. Spurs tonight.</p>"
+    fixed = _normalize_brand_casing(html, "bet365")
+    assert "bet365 bonus code works" in fixed
+
+    unknown = "<p>Use Novig promo code today.</p>"
+    assert _normalize_brand_casing(unknown, "novig") == unknown
 
 
 def test_cap_primary_keyword_density_reduces_late_plain_mentions():

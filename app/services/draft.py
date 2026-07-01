@@ -1663,11 +1663,11 @@ def _render_terms_section_html(
         if wagering:
             points.append(f"Wagering requirement: {wagering}.")
     points.append(
-        "Official operator terms and restrictions were not provided in source data."
+        "See the operator's app or site for full offer terms, eligibility rules, and restrictions before betting."
         if not prediction_market and not dfs_mode
-        else "Official contest rules and app terms were not provided in source data."
+        else "See the app's official contest rules for full terms and eligibility requirements before entering."
         if dfs_mode
-        else "Official market rules and operator terms were not provided in source data."
+        else "See the platform's official rules for full market terms and eligibility requirements before trading."
     )
     return f"<p>{' '.join(points)}</p>"
 
@@ -2437,6 +2437,30 @@ def _cap_primary_keyword_density(html: str, keyword: str, max_count: int = 9) ->
     return "".join(out)
 
 
+def _normalize_brand_casing(html: str, brand: str) -> str:
+    """Fix brand casing in visible copy (e.g. 'draftkings'/'Draftkings' -> 'DraftKings')."""
+    raw = str(brand or "").strip()
+    if not html or not raw:
+        return html
+    key = re.sub(r"[^a-z0-9]+", "", raw.lower())
+    # Known books get house casing; otherwise the offer-provided casing is canonical.
+    display = _SPORTSBOOK_DISPLAY_NAMES.get(key)
+    if display is None:
+        display = raw
+        # An all-lowercase brand outside the house map is likely keyword-derived,
+        # not canonical casing - don't force it onto correctly cased copy.
+        if display == display.lower():
+            return html
+    pattern = re.compile(rf"\b{re.escape(display)}\b", flags=re.IGNORECASE)
+    out: list[str] = []
+    for token in re.findall(r"<[^>]+>|[^<]+", html, flags=re.DOTALL):
+        if token.startswith("<"):
+            out.append(token)
+            continue
+        out.append(pattern.sub(display, token))
+    return "".join(out)
+
+
 def _build_length_expansion_section(
     *,
     keyword: str,
@@ -2444,15 +2468,18 @@ def _build_length_expansion_section(
     event_context: str = "",
     bc_core_context: dict[str, Any] | None = None,
     content_mode: str = CONTENT_MODE_SPORTSBOOK,
+    bet_example_data: dict[str, Any] | None = None,
 ) -> str:
     """Create a useful extra editorial section when body copy is under target length."""
-    fallback_brand = keyword.split()[0].title() if keyword.split() else "the operator"
+    fallback_brand = (
+        _sportsbook_display_name(keyword.split()[0]) if keyword.split() else "the operator"
+    )
     brand = str(offer.get("brand") or fallback_brand).strip()
     event_label = _extract_featured_label_from_event_context(event_context)
     reward_phrase = _offer_reward_phrase_visible(offer)
     qualifying_amount = _offer_qualifying_amount_text(offer)
     min_odds = str(offer.get("minimum_odds") or extract_minimum_odds(str(offer.get("terms") or "")) or "").strip()
-    bc_points = _select_bc_core_editorial_points(bc_core_context, section_kind="overview", max_points=3)
+    bc_points = _select_bc_core_editorial_points(bc_core_context, section_kind="overview", max_points=6)
     extra_paragraphs: list[str] = []
 
     if content_mode == CONTENT_MODE_PREDICTION_MARKET:
@@ -2467,16 +2494,12 @@ def _build_length_expansion_section(
         )
         extra_paragraphs.extend([
             (
-                "Keep the example tied to one clear market side instead of jumping across several contracts. "
-                "Readers need to understand the position, the entry price, and what has to happen for the contract to settle in their favor."
+                "Stick to one clear market side instead of jumping across several contracts. "
+                "Know the entry price and exactly what has to happen for the contract to settle in your favor before committing."
             ),
             (
                 f"Use {reward_phrase} as extra flexibility after the qualifying action, not as a reason to force a larger position. "
-                "That framing keeps the promo explanation useful without turning the article into a trading calculator."
-            ),
-            (
-                "Close the section by separating the market opinion from the promo mechanics. "
-                "That gives the article a useful read on the event while keeping the offer rules easy to scan."
+                "Several smaller positions across different markets usually get more out of the credit than one oversized trade."
             ),
         ])
     elif content_mode == CONTENT_MODE_DFS:
@@ -2495,53 +2518,21 @@ def _build_length_expansion_section(
                 "A focused single-game slate rewards cleaner correlations, while a larger slate gives you more room to separate player combinations."
             ),
             (
-                "The best user experience explains what the bonus can and cannot do after it posts. "
-                "Readers should know whether the reward works as contest entry credit, when it expires, and why it is not withdrawable cash."
-            ),
-            (
-                "Keep the section focused on fantasy decisions instead of sportsbook language. "
-                "Mention entries, lineups, projections, and contest rules so the copy matches how DFS users actually claim the offer."
+                "Know what the bonus can and cannot do after it posts: whether it works as contest entry credit, "
+                "when it expires, and why it is not withdrawable cash."
             ),
         ])
     else:
-        heading = f"What to Watch Before Using {brand}"
-        qualifier = f" The qualifying wager is {qualifying_amount}" if qualifying_amount else ""
-        odds_note = f" and must meet {min_odds} minimum odds" if min_odds else ""
-        if qualifier or odds_note:
-            first = (
-                f"Before using {keyword}, pick the market for {event_label or 'the featured event'} first and then confirm it fits the offer rules."
-                f"{qualifier}{odds_note}, so the best example is the bet you were already comfortable making."
-            )
-        else:
-            first = (
-                f"Before using {keyword}, pick the market for {event_label or 'the featured event'} first and then confirm it fits the offer rules. "
-                "The best example is the bet you were already comfortable making."
-            )
-        second = (
-            f"The bonus value comes after the qualifying action, not from changing the payout on the first wager. "
-            f"That makes {reward_phrase} more useful for follow-up markets than for chasing a bigger first bet."
+        return _build_sportsbook_expansion_section(
+            keyword=keyword,
+            brand=brand,
+            event_label=event_label,
+            reward_phrase=reward_phrase,
+            qualifying_amount=qualifying_amount,
+            min_odds=min_odds,
+            bc_points=bc_points,
+            bet_example_data=bet_example_data,
         )
-        fourth = (
-            f"For {event_label or 'the featured event'}, keep the first wager tied to a market you can explain clearly: moneyline, spread, total, or another standard option that fits the offer rules. "
-            "That keeps the example useful for readers and avoids turning the promo section into a generic betting slip."
-        )
-        fifth = (
-            "After the qualifying bet, the better user experience is to explain what happens next: where the bonus appears, how it can be used, and why bonus-bet stakes usually do not return with winnings. "
-            "Those details give the article more practical value than extra payout breakdowns."
-        )
-        sixth = (
-            "Keep the stake aligned with the offer requirement instead of inflating the example. "
-            f"When the promo asks for {qualifying_amount or 'a qualifying wager'}, the clearest walkthrough starts there and then explains the bonus sequence after settlement or placement."
-        )
-        seventh = (
-            f"Use the match angle to make the section feel current: mention the selected side, the kickoff window, and why a standard market works for {event_label or 'the featured event'}. "
-            "That gives editors practical matchup context while keeping the compliance language separate in the terms section."
-        )
-        eighth = (
-            "Save eligibility, time limits, and bonus restrictions for the terms block unless they change the example itself. "
-            "That keeps the main copy focused on why the offer fits the event and what the reader should do next."
-        )
-        extra_paragraphs.extend([fourth, fifth, sixth, seventh, eighth])
 
     third = ""
     if bc_points:
@@ -2557,6 +2548,82 @@ def _build_length_expansion_section(
     return f"<h2>{heading}</h2>\n<p>{first}</p>\n<p>{second}</p>{third}{extra}"
 
 
+def _build_sportsbook_expansion_section(
+    *,
+    keyword: str,
+    brand: str,
+    event_label: str,
+    reward_phrase: str,
+    qualifying_amount: str,
+    min_odds: str,
+    bc_points: list[str],
+    bet_example_data: dict[str, Any] | None = None,
+) -> str:
+    """Render a data-led matchup analysis section in the expert-pick house style."""
+    points = [point for point in bc_points if point]
+    heading = (
+        f"What the Numbers Say About {event_label}"
+        if event_label and points
+        else f"What to Watch Before Using {brand}"
+    )
+
+    paragraphs: list[str] = []
+
+    # Lead with the matchup data, two sentences per paragraph.
+    for start in range(0, min(len(points), 6), 2):
+        paragraphs.append(" ".join(points[start:start + 2]))
+
+    if not points:
+        paragraphs.append(
+            f"Before using {keyword}, pick the market for {event_label or 'the featured event'} first and then confirm it fits the offer rules. "
+            "The best example is the bet you were already comfortable making."
+        )
+
+    # Tie the analysis back to the offer mechanics.
+    lead_in = f"That is the backdrop for the first bet with {brand}" if points else f"For the first bet with {brand}"
+    requirement_bits: list[str] = []
+    if qualifying_amount:
+        requirement_bits.append(f"the qualifying wager is {qualifying_amount}")
+    if min_odds:
+        requirement_bits.append(f"it must meet {min_odds} minimum odds")
+    if requirement_bits:
+        paragraphs.append(
+            f"{lead_in} — {' and '.join(requirement_bits)}, "
+            "so the cleanest approach is a standard market that fits those rules: moneyline, spread, or total."
+        )
+    elif points:
+        paragraphs.append(
+            f"{lead_in}. The cleanest approach is a standard market you can explain in one sentence: moneyline, spread, or total."
+        )
+    else:
+        paragraphs.append(
+            f"{lead_in}, the cleanest approach is a standard market you can explain in one sentence: moneyline, spread, or total."
+        )
+
+    paragraphs.append(
+        "The bonus value comes after the qualifying action, not from changing the payout on the first wager. "
+        f"That makes {reward_phrase} more useful for follow-up markets than for chasing a bigger first bet, "
+        "and bonus-bet stakes usually do not return with winnings."
+    )
+
+    # Close with the pick when a concrete selection is available.
+    data = dict(bet_example_data or {})
+    selection = str(data.get("selection") or "").strip()
+    if selection:
+        odds_text = ""
+        try:
+            odds_text = f" at {int(float(data.get('odds'))):+d}"
+        except (TypeError, ValueError):
+            pass
+        paragraphs.append(
+            f"The play: use the qualifying bet on {selection}{odds_text}, "
+            f"then keep {reward_phrase} in reserve for later eligible markets once it posts."
+        )
+
+    body = "\n".join(f"<p>{paragraph}</p>" for paragraph in paragraphs)
+    return f"<h2>{heading}</h2>\n{body}"
+
+
 def _ensure_editorial_body_length(
     html: str,
     *,
@@ -2566,13 +2633,18 @@ def _ensure_editorial_body_length(
     bc_core_context: dict[str, Any] | None = None,
     content_mode: str = CONTENT_MODE_SPORTSBOOK,
     target_words: int = 500,
+    bet_example_data: dict[str, Any] | None = None,
 ) -> str:
     """Aim for ~500 editorial body words, excluding signup steps and compliance sections."""
     if not html or target_words <= 0:
         return html
     if _body_word_count_for_editorial_target(html) >= target_words:
         return html
-    if re.search(r"<h[1-6]\b[^>]*>\s*What to Watch Before Using\b", html, flags=re.IGNORECASE):
+    if re.search(
+        r"<h[1-6]\b[^>]*>\s*(?:What to Watch Before Using|What the Numbers Say About)\b",
+        html,
+        flags=re.IGNORECASE,
+    ):
         return html
 
     section = _build_length_expansion_section(
@@ -2581,6 +2653,7 @@ def _ensure_editorial_body_length(
         event_context=event_context,
         bc_core_context=bc_core_context,
         content_mode=content_mode,
+        bet_example_data=bet_example_data,
     )
     insert_before = re.search(r"<h[1-6]\b[^>]*>[^<]*(?:Terms|Conditions|Fine Print|Rules)[^<]*</h[1-6]>", html, flags=re.IGNORECASE)
     if insert_before:
@@ -3818,6 +3891,7 @@ def _render_bet_example_section_deterministic(
     offer: dict[str, Any],
     bet_example_data: dict[str, Any] | None,
     event_context: str = "",
+    variation_key: str = "",
 ) -> str | None:
     """Render a sportsbook worked-example section from structured UI selections."""
     data = dict(bet_example_data or {})
@@ -3868,10 +3942,18 @@ def _render_bet_example_section_deterministic(
     )
     code_clause = f" after entering <strong>{bonus_code}</strong>" if bonus_code else ""
 
+    first_para_options = [
+        f"<p>Here's how it works with {book_label}: place the qualifying ${bet_amount:.0f} bet on {selection} at {odds_display}{event_clause}{code_clause}. "
+        f"If it wins, the ticket pays about ${profit:.2f} in profit on top of the returned stake. If it loses, the ${bet_amount:.0f} stake is gone.</p>",
+        f"<p>The play is simple at {book_label}: put the qualifying ${bet_amount:.0f} on {selection} at {odds_display}{event_clause}{code_clause}. "
+        f"A winner adds about ${profit:.2f} in profit; a loser costs the ${bet_amount:.0f} stake.</p>",
+        f"<p>Start with the qualifying ${bet_amount:.0f} bet on {selection} at {odds_display} with {book_label}{event_clause}{code_clause}. "
+        f"Win, and it pays like any normal bet — about ${profit:.2f} in profit. Lose, and you are out the ${bet_amount:.0f} stake.</p>",
+    ]
+    first_para = _choose_variant(variation_key, "sb_claim_p1", first_para_options, selection, book_label)
     return (
-        f"<p>Here is the clean version using {book_label}: place the qualifying ${bet_amount:.0f} bet on {selection} at {odds_display}{event_clause}{code_clause}. "
-        f"A winning bet pays normally at the selected odds; a losing bet costs the ${bet_amount:.0f} stake.</p>"
-        f"<p>{timing_sentence} Use any bonus bets on later eligible markets, and remember that bonus-bet stakes usually do not return with winnings.</p>"
+        first_para
+        + f"<p>{timing_sentence} Use any bonus bets on later eligible markets, and remember that bonus-bet stakes usually do not return with winnings.</p>"
     )
 
 
@@ -4145,8 +4227,13 @@ async def generate_draft_from_outline(
         event_context=event_context,
         bc_core_context=bc_core_context,
         content_mode=content_mode,
+        bet_example_data=bet_example_data,
     )
     html_output = _cap_primary_keyword_density(html_output, keyword)
+    html_output = _normalize_brand_casing(
+        html_output,
+        brand or (keyword.split()[0] if keyword.split() else ""),
+    )
 
     if output_format == "markdown":
         # Convert back to markdown (basic)
@@ -4392,7 +4479,7 @@ Output clean HTML only - use <p>, <a>, <strong> tags. No markdown. No exclamatio
 {f"INTERNAL MATCHUP NOTES (use at least {bc_core_required_count} naturally if available, but never cite the source):{chr(10)}" + chr(10).join(f"- {point}" for point in bc_core_points) + chr(10) if bc_core_points else ""}
 
 KEYWORD: {keyword}
-{f"SECONDARY KEYWORDS (use these naturally across the article and aim for repeated coverage, not stuffing):{chr(10)}{secondary_keywords_md}" if secondary_keywords_md else ""}
+{f"SECONDARY KEYWORDS (use these naturally across the article and aim for repeated coverage, not stuffing). Never place a secondary keyword in the same sentence as the primary keyword - especially when one contains the other:{chr(10)}{secondary_keywords_md}" if secondary_keywords_md else ""}
 
 {points_md if points_md else ""}
 {f"WRITER NOTES:{chr(10)}{structure_notes_md}{chr(10)}" if structure_notes_md else ""}
@@ -4706,6 +4793,7 @@ async def _generate_body_section(
                 offer=primary_offer,
                 bet_example_data=bet_example_data,
                 event_context=event_context,
+                variation_key=variation_key,
             )
         if deterministic_claim:
             if not prediction_market and not dfs_mode:
@@ -4899,7 +4987,7 @@ OFFER CONTEXT:
 
 {"TALKING POINTS:" + chr(10) + points_md + chr(10) if points_md else ""}
 {"DO NOT COVER (handled elsewhere):" + chr(10) + avoid_md + chr(10) if avoid_md else ""}
-{f"SECONDARY KEYWORDS (use these naturally across the article and aim for repeated coverage, not stuffing):{chr(10)}{secondary_keywords_md}{chr(10)}" if secondary_keywords_md else ""}
+{f"SECONDARY KEYWORDS (use these naturally across the article and aim for repeated coverage, not stuffing). Never place a secondary keyword in the same sentence as the primary keyword - especially when one contains the other:{chr(10)}{secondary_keywords_md}{chr(10)}" if secondary_keywords_md else ""}
 {f"WRITER NOTES:{chr(10)}{structure_notes_md}{chr(10)}" if structure_notes_md else ""}
 
 OPTIONAL INTERNAL LINK SUPPORT:
@@ -4993,6 +5081,7 @@ Write the section now (HTML only, no heading, no markdown):"""
                 offer=primary_offer,
                 bet_example_data=bet_example_data,
                 event_context=event_context,
+                variation_key=variation_key,
             )
             if fallback_claim:
                 return fallback_claim
@@ -5271,8 +5360,13 @@ async def generate_draft_from_outline_streaming(
         event_context=event_context,
         bc_core_context=bc_core_context,
         content_mode=content_mode,
+        bet_example_data=bet_example_data,
     )
     html_output = _cap_primary_keyword_density(html_output, keyword)
+    html_output = _normalize_brand_casing(
+        html_output,
+        brand or (keyword.split()[0] if keyword.split() else ""),
+    )
 
     if output_format == "markdown":
         html_output = _html_to_markdown(html_output)
