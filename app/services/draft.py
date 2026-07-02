@@ -1851,6 +1851,39 @@ def _ensure_two_paragraphs(
     return f"<p>{first}</p>\n<p>{second}</p>"
 
 
+_STATE_FULL_NAMES = {
+    "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas", "CA": "California",
+    "CO": "Colorado", "CT": "Connecticut", "DE": "Delaware", "DC": "District of Columbia",
+    "FL": "Florida", "GA": "Georgia", "HI": "Hawaii", "ID": "Idaho", "IL": "Illinois",
+    "IN": "Indiana", "IA": "Iowa", "KS": "Kansas", "KY": "Kentucky", "LA": "Louisiana",
+    "ME": "Maine", "MD": "Maryland", "MA": "Massachusetts", "MI": "Michigan", "MN": "Minnesota",
+    "MS": "Mississippi", "MO": "Missouri", "MT": "Montana", "NE": "Nebraska", "NV": "Nevada",
+    "NH": "New Hampshire", "NJ": "New Jersey", "NM": "New Mexico", "NY": "New York",
+    "NC": "North Carolina", "ND": "North Dakota", "OH": "Ohio", "OK": "Oklahoma", "OR": "Oregon",
+    "PA": "Pennsylvania", "RI": "Rhode Island", "SC": "South Carolina", "SD": "South Dakota",
+    "TN": "Tennessee", "TX": "Texas", "UT": "Utah", "VT": "Vermont", "VA": "Virginia",
+    "WA": "Washington", "WV": "West Virginia", "WI": "Wisconsin", "WY": "Wyoming",
+    "AB": "Alberta", "BC": "British Columbia", "MB": "Manitoba", "NB": "New Brunswick",
+    "NL": "Newfoundland and Labrador", "NS": "Nova Scotia", "ON": "Ontario",
+    "PE": "Prince Edward Island", "QC": "Quebec", "SK": "Saskatchewan",
+}
+
+
+def _strip_quoted_stat_phrases(html: str) -> str:
+    """Unwrap stats the model quoted verbatim from internal notes."""
+    if not html:
+        return html
+
+    def _transform(text: str) -> str:
+        return re.sub(
+            r"[\"“]([^\"“”]*(?:projects for|% of (?:volume|tickets|handle)|against the spread)[^\"“”]*)[\"”]",
+            r"\1",
+            text,
+        )
+
+    return _rewrite_html_text_nodes(html, _transform)
+
+
 def _ensure_intro_state_specificity(html: str, states_text: str) -> str:
     """Ensure intro copy names explicit states, phrased as prose rather than a label."""
     if not html or not states_text:
@@ -1882,7 +1915,14 @@ def _ensure_intro_state_specificity(html: str, states_text: str) -> str:
         re.search(r"\bavailable (?:in|to)\b|\bavailability varies\b", plain, flags=re.IGNORECASE)
     )
     plain_upper = plain.upper()
-    has_explicit_state = any(re.search(rf"\b{re.escape(token)}\b", plain_upper) for token in state_tokens)
+    has_explicit_state = any(
+        re.search(rf"\b{re.escape(token)}\b", plain_upper)
+        or (
+            token in _STATE_FULL_NAMES
+            and re.search(rf"\b{re.escape(_STATE_FULL_NAMES[token].upper())}\b", plain_upper)
+        )
+        for token in state_tokens
+    )
     if has_availability_phrase and (has_explicit_state or len(state_tokens) > 3):
         return html
 
@@ -3231,6 +3271,7 @@ def _apply_generation_quality_postprocess(html: str, keyword: str, market: str =
     html = _strip_source_and_prompt_leaks(html)
     html = _convert_availability_labels_to_prose(html)
     html = _decapitalize_inline_reward_mentions(html)
+    html = _strip_quoted_stat_phrases(html)
     html = _strip_market_mismatch_phrasing(html, market)
     html = _trim_dangling_paragraph_endings(html)
     html = _normalize_visible_punctuation(html)
@@ -4687,7 +4728,9 @@ Output clean HTML only - use <p>, <a>, <strong> tags. No markdown. No exclamatio
         "Never use a 'Provinces Available:' or 'States Available:' label format." if is_canada_market else "Never use a 'States Available:' label format.",
         "Do not paste the full raw offer string more than once. Prefer a natural summary.",
         "When referencing the offer mid-sentence, use sentence casing ('$200 in bonus bets'), never the promo headline casing ('Bonus Bets Instantly').",
-        "Quote each provided stat exactly and keep each stat in its own clause; never merge two different numbers into one figure.",
+        "Restate the internal matchup notes in your own words. Never quote them verbatim and never wrap any stat in quotation marks.",
+        "Every stat keeps its exact number AND its unit ('13.4 pitching outs', never 'projects for 13'); never merge two different numbers into one figure.",
+        "Never enumerate excluded states in the lede; exclusions belong in the eligibility or terms section.",
         "Do not mention 21+, minimum odds, or long legal disclaimers in the intro.",
         "If expiration is mentioned, it must describe the bonus/credit expiration, not the offer itself.",
         "Do NOT include responsible gaming disclaimers here (handled at the end of the article).",

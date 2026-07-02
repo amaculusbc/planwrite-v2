@@ -57,6 +57,7 @@ from app.services.draft import (
     _soften_repetitive_intro_opener,
     _strip_formatting_from_headings,
     _strip_market_mismatch_phrasing,
+    _strip_quoted_stat_phrases,
     _strip_invalid_non_switchboard_links,
     _strip_unprovided_article_date,
     _strip_source_and_prompt_leaks,
@@ -1516,6 +1517,26 @@ def test_normalize_brand_casing_keeps_bet365_lowercase_and_skips_unknown_lowerca
 
     unknown = "<p>Use Novig promo code today.</p>"
     assert _normalize_brand_casing(unknown, "novig") == unknown
+
+
+def test_strip_quoted_stat_phrases_unwraps_verbatim_notes():
+    html = (
+        "<p>Philadelphia is drawing attention, with “98% of volume on Spread tied to Phillies,” "
+        "while “Alan Rangel projects for 5.28 pitching hits allowed” adds a note. "
+        'He said "this is a normal quote" though.</p>'
+    )
+    fixed = _strip_quoted_stat_phrases(html)
+    assert "“98% of volume" not in fixed
+    assert "98% of volume on Spread tied to Phillies" in fixed
+    assert "Alan Rangel projects for 5.28 pitching hits allowed" in fixed
+    assert '"this is a normal quote"' in fixed
+
+
+def test_ensure_intro_state_specificity_recognizes_full_state_names():
+    html = "<p>The offer is available to eligible users in New Jersey before first pitch.</p>"
+    result = _ensure_intro_state_specificity(html, "NJ")
+    # "New Jersey" already covers NJ - nothing should be appended.
+    assert result == html
 
 
 def test_convert_availability_labels_to_prose_handles_lists_and_generic():
