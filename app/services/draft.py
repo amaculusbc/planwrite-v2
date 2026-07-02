@@ -1878,13 +1878,20 @@ def _ensure_intro_state_specificity(html: str, states_text: str) -> str:
 
     state_tokens = [s.strip().upper() for s in normalized_states.split(",") if s.strip()]
     plain = re.sub(r"<[^>]+>", " ", html)
-    has_availability_phrase = bool(re.search(r"\bavailable in\b", plain, flags=re.IGNORECASE))
+    has_availability_phrase = bool(
+        re.search(r"\bavailable (?:in|to)\b|\bavailability varies\b", plain, flags=re.IGNORECASE)
+    )
     plain_upper = plain.upper()
     has_explicit_state = any(re.search(rf"\b{re.escape(token)}\b", plain_upper) for token in state_tokens)
-    if has_explicit_state and has_availability_phrase:
+    if has_availability_phrase and (has_explicit_state or len(state_tokens) > 3):
         return html
 
-    addition = f" {_availability_prose(normalized_states)}"
+    # A long state list mid-lede reads like a data dump; keep the lede to one
+    # short clause and leave the full list to the eligibility/terms sections.
+    if len(state_tokens) > 3:
+        addition = " Availability varies by state, so confirm eligibility during signup."
+    else:
+        addition = f" {_availability_prose(normalized_states)}"
     paragraphs = re.findall(r"<p>.*?</p>", html, flags=re.DOTALL)
     if paragraphs:
         last_para = paragraphs[-1]
@@ -2441,55 +2448,6 @@ def _target_keyword_mentions(html: str, keyword: str) -> str:
     return "".join(out)
 
 
-def _enforce_primary_keyword_density(html: str, keyword: str, min_count: int = 5, max_count: int = 9) -> str:
-    """Add plain-text exact keyword mentions when generated copy falls below target."""
-    if not html or not keyword:
-        return html
-    current = _count_keyword(html, keyword)
-    if current >= min_count:
-        return html
-
-    additions_needed = min(max_count - current, min_count - current)
-    if additions_needed <= 0:
-        return html
-
-    variants = [
-        f" That is what the {keyword} unlocks right now.",
-        f" The {keyword} applies to this exact offer, so match the first bet to its rules.",
-        f" New users get the most from the {keyword} by starting here.",
-        f" The {keyword} is tied to this offer, not older versions of the promo.",
-    ]
-    para_pattern = re.compile(r"<p\b([^>]*)>(.*?)</p>", flags=re.IGNORECASE | re.DOTALL)
-    pieces: list[str] = []
-    last = 0
-    added = 0
-
-    for match in para_pattern.finditer(html):
-        pieces.append(html[last:match.start()])
-        full = match.group(0)
-        attrs = match.group(1) or ""
-        inner = match.group(2) or ""
-        plain = _html_to_plain_text(inner).lower()
-        skip = (
-            added >= additions_needed
-            or "[bam-inline-promotion" in inner.lower()
-            or "switchboard_tracking" in inner.lower()
-            or "gambling problem" in plain
-            or "terms apply" in plain
-            or "minimum odds" in plain
-            or ("states available" in plain and len(plain.split()) < 25)
-        )
-        if skip:
-            pieces.append(full)
-        else:
-            pieces.append(f"<p{attrs}>{inner.rstrip()}{variants[added % len(variants)]}</p>")
-            added += 1
-        last = match.end()
-
-    pieces.append(html[last:])
-    return "".join(pieces)
-
-
 def _cap_primary_keyword_density(html: str, keyword: str, max_count: int = 9) -> str:
     """Reduce exact keyword overage by converting later plain mentions to brand-only text."""
     if not html or not keyword or _count_keyword(html, keyword) <= max_count:
@@ -2612,82 +2570,39 @@ def _build_length_expansion_section(
     content_mode: str = CONTENT_MODE_SPORTSBOOK,
     bet_example_data: dict[str, Any] | None = None,
 ) -> str:
-    """Create a useful extra editorial section when body copy is under target length."""
+    """Build a data-led extra section for short drafts - never generic filler.
+
+    Only sportsbook articles with real matchup facts get a section; every other
+    combination returns "" so short drafts simply stay short.
+    """
+    if content_mode != CONTENT_MODE_SPORTSBOOK:
+        return ""
+    bc_points = [
+        point
+        for point in _select_bc_core_editorial_points(bc_core_context, section_kind="overview", max_points=6)
+        if point
+    ]
+    event_label = _extract_featured_label_from_event_context(event_context)
+    if not event_label or len(bc_points) < 2:
+        return ""
+
     fallback_brand = (
         _sportsbook_display_name(keyword.split()[0]) if keyword.split() else "the operator"
     )
     brand = str(offer.get("brand") or fallback_brand).strip()
-    event_label = _extract_featured_label_from_event_context(event_context)
     reward_phrase = _offer_reward_phrase_visible(offer)
     qualifying_amount = _offer_qualifying_amount_text(offer)
     min_odds = str(offer.get("minimum_odds") or extract_minimum_odds(str(offer.get("terms") or "")) or "").strip()
-    bc_points = _select_bc_core_editorial_points(bc_core_context, section_kind="overview", max_points=6)
-    extra_paragraphs: list[str] = []
-
-    if content_mode == CONTENT_MODE_PREDICTION_MARKET:
-        heading = f"What to Watch Before Using {brand}"
-        first = (
-            f"Before using {keyword}, start with the market you actually want to trade for {event_label or 'the featured event'}. "
-            f"The offer works best when the first qualifying action lines up with a real view, not a rushed position just to trigger {reward_phrase}."
-        )
-        second = (
-            "Price movement matters because small contract changes can alter the risk/reward profile quickly. "
-            "Check the displayed price, settlement rules, and available liquidity before opening the position."
-        )
-        extra_paragraphs.extend([
-            (
-                "Stick to one clear market side instead of jumping across several contracts. "
-                "Know the entry price and exactly what has to happen for the contract to settle in your favor before committing."
-            ),
-            (
-                f"Use {reward_phrase} as extra flexibility after the qualifying action, not as a reason to force a larger position. "
-                "Several smaller positions across different markets usually get more out of the credit than one oversized trade."
-            ),
-        ])
-    elif content_mode == CONTENT_MODE_DFS:
-        heading = f"What to Watch Before Using {brand}"
-        first = (
-            f"Before using {keyword}, look at the contest format and player pool for {event_label or 'the featured slate'}. "
-            f"The offer works best when the qualifying entry fits the lineup or pick'em card you already wanted to build."
-        )
-        second = (
-            f"Treat {reward_phrase} as extra entry flexibility rather than a reason to force one oversized contest. "
-            "Smaller entries across a few different builds usually give the bonus more practical value."
-        )
-        extra_paragraphs.extend([
-            (
-                "Use the matchup context to decide how aggressive the first entry should be. "
-                "A focused single-game slate rewards cleaner correlations, while a larger slate gives you more room to separate player combinations."
-            ),
-            (
-                "Know what the bonus can and cannot do after it posts: whether it works as contest entry credit, "
-                "when it expires, and why it is not withdrawable cash."
-            ),
-        ])
-    else:
-        return _build_sportsbook_expansion_section(
-            keyword=keyword,
-            brand=brand,
-            event_label=event_label,
-            reward_phrase=reward_phrase,
-            qualifying_amount=qualifying_amount,
-            min_odds=min_odds,
-            bc_points=bc_points,
-            bet_example_data=bet_example_data,
-        )
-
-    third = ""
-    if bc_points:
-        clean_points = [point for point in bc_points if point]
-        if len(clean_points) >= 2:
-            third = f"<p>{clean_points[0]} {clean_points[1]}</p>"
-        elif clean_points:
-            third = f"<p>{clean_points[0]}</p>"
-
-    extra = ""
-    if extra_paragraphs:
-        extra = "\n" + "\n".join(f"<p>{paragraph}</p>" for paragraph in extra_paragraphs)
-    return f"<h2>{heading}</h2>\n<p>{first}</p>\n<p>{second}</p>{third}{extra}"
+    return _build_sportsbook_expansion_section(
+        keyword=keyword,
+        brand=brand,
+        event_label=event_label,
+        reward_phrase=reward_phrase,
+        qualifying_amount=qualifying_amount,
+        min_odds=min_odds,
+        bc_points=bc_points,
+        bet_example_data=bet_example_data,
+    )
 
 
 def _build_sportsbook_expansion_section(
@@ -2703,23 +2618,13 @@ def _build_sportsbook_expansion_section(
 ) -> str:
     """Render a data-led matchup analysis section in the expert-pick house style."""
     points = [point for point in bc_points if point]
-    heading = (
-        f"What the Numbers Say About {event_label}"
-        if event_label and points
-        else f"What to Watch Before Using {brand}"
-    )
+    heading = f"What the Numbers Say About {event_label}"
 
     paragraphs: list[str] = []
 
     # Lead with the matchup data, two sentences per paragraph.
     for start in range(0, min(len(points), 6), 2):
         paragraphs.append(" ".join(points[start:start + 2]))
-
-    if not points:
-        paragraphs.append(
-            f"Before using {keyword}, pick the market for {event_label or 'the featured event'} first and then confirm it fits the offer rules. "
-            "The best example is the bet you were already comfortable making."
-        )
 
     # Tie the analysis back to the offer mechanics.
     lead_in = f"That is the backdrop for the first bet with {brand}" if points else f"For the first bet with {brand}"
@@ -3060,6 +2965,8 @@ async def _ensure_editorial_body_length(
             content_mode=content_mode,
             bet_example_data=bet_example_data,
         )
+    if not section:
+        return html
     return _insert_section_before_terms(html, section)
 
 
@@ -3100,54 +3007,8 @@ def _enforce_secondary_keyword_mentions(html: str, secondary_keywords: list[str]
                 lambda text, pattern=pattern: re.sub(pattern, "", text, flags=re.IGNORECASE),
             )
 
-    def _safe_paragraph_spans(source: str) -> list[re.Match[str]]:
-        blocked_heading = ""
-        spans: list[re.Match[str]] = []
-        for match in re.finditer(
-            r"<h[1-6]\b[^>]*>(.*?)</h[1-6]>|<p\b[^>]*>(.*?)</p>",
-            source,
-            flags=re.IGNORECASE | re.DOTALL,
-        ):
-            heading = match.group(1)
-            paragraph = match.group(2)
-            if heading is not None:
-                blocked_heading = _html_to_plain_text(heading).lower()
-                continue
-            if paragraph is None:
-                continue
-            if any(token in blocked_heading for token in ("terms", "conditions", "fine print", "rules", "settlement")):
-                continue
-            if any(token in blocked_heading for token in ("sign up", "sign-up", "signup", "claim")):
-                continue
-            plain = _html_to_plain_text(paragraph).strip()
-            if len(plain.split()) < 12:
-                continue
-            if "data-id=\"switchboard_tracking\"" in paragraph.lower() or "[bam-inline-promotion" in paragraph.lower():
-                continue
-            spans.append(match)
-        return spans
-
-    sentence_templates = [
-        "The same checks matter for {phrase}: offer amount, code status, and available states.",
-        "Use {phrase} searches to confirm the selected offer instead of relying on stale terms.",
-    ]
-
-    for phrase in phrases:
-        # Only hard-fill when the model missed repeated coverage. Avoid overdoing it.
-        while _secondary_keyword_count(result, phrase) < 2:
-            spans = _safe_paragraph_spans(result)
-            if not spans:
-                break
-            count = _secondary_keyword_count(result, phrase)
-            target = spans[min(count, len(spans) - 1)]
-            paragraph = target.group(0)
-            inner = target.group(2) or ""
-            addition = sentence_templates[count % len(sentence_templates)].format(phrase=escape(phrase))
-            if re.search(re.escape(phrase), _html_to_plain_text(inner), flags=re.IGNORECASE):
-                break
-            updated = f"<p>{inner.strip()} {addition}</p>"
-            result = result[: target.start()] + updated + result[target.end():]
-
+    # Coverage comes from the prompts alone: deterministic keyword filler is
+    # never injected. This function only strips forced-filler artifacts.
     return _normalize_visible_punctuation(result)
 
 
@@ -4644,7 +4505,6 @@ async def generate_draft_from_outline(
     html_output = _apply_content_mode_language_guardrails(html_output, content_mode)
     html_output = _normalize_brand_keyword_text(html_output, brand)
     html_output = _target_keyword_mentions(html_output, keyword)
-    html_output = _enforce_primary_keyword_density(html_output, keyword)
     html_output = _enforce_secondary_keyword_mentions(html_output, prefs["secondary_keywords"])
     html_output = _clean_orphaned_keyword_page_references(html_output, keyword)
     html_output = _unwrap_generic_offer_strong(html_output, brand)
@@ -4819,10 +4679,12 @@ Output clean HTML only - use <p>, <a>, <strong> tags. No markdown. No exclamatio
         game_hook = f"GAME HOOK (use this naturally, not as labels):\n{_naturalize_event_context(event_context)}\n\n"
 
     requirements = [
-        "If there is a game hook, open sentence one with the matchup/time/network context and the offer value (do not reuse the same stock opener).",
+        "If there is a game hook, open with why this game matters right now - the stakes, the form line, or the moment - in plain, confident language, and land the offer value by the end of the first paragraph. Never stack matchup, time, network, and offer into one comma chain.",
+        "Never open by describing people searching for the keyword. Banned openers: 'For readers tracking...', 'Readers looking up...', 'If you're searching for...', 'Bettors looking for...' and anything similar. Write to a fan, not to a search query.",
+        "Scale the stakes honestly to the actual event: a midweek regular-season game is a live spot or a clean angle, never 'the biggest game of the year'.",
         "If no game hook, start with a direct offer statement; avoid generic openers like \"If you are looking for a valuable offer...\"",
-        f"Use explicit eligible {availability_label}s from source data. Do not say nationwide.",
-        "When mentioning availability, write it as natural prose, e.g. 'The offer is available in AB, BC, ...'. Never use a 'Provinces Available:' or 'States Available:' label format." if is_canada_market else "When mentioning state eligibility, write it as natural prose, e.g. 'The offer is available in AZ, CO, ...'. Never use a 'States Available:' label format.",
+        f"Mention availability in one short natural clause (e.g. 'available to new users in NJ' or 'availability varies by {availability_label}'). The full {availability_label} list belongs in the eligibility or terms section, never the lede. Do not say nationwide.",
+        "Never use a 'Provinces Available:' or 'States Available:' label format." if is_canada_market else "Never use a 'States Available:' label format.",
         "Do not paste the full raw offer string more than once. Prefer a natural summary.",
         "When referencing the offer mid-sentence, use sentence casing ('$200 in bonus bets'), never the promo headline casing ('Bonus Bets Instantly').",
         "Quote each provided stat exactly and keep each stat in its own clause; never merge two different numbers into one figure.",
@@ -4880,27 +4742,27 @@ Output clean HTML only - use <p>, <a>, <strong> tags. No markdown. No exclamatio
     secondary_keywords_md = "\n".join(f"- {phrase}" for phrase in prefs["secondary_keywords"]) if prefs["secondary_keywords"] else ""
     structure_notes_md = prefs["structure_notes"]
 
-    if has_code:
+    code_mention = f" enter {code_strong} at signup," if has_code else ""
+    if prediction_market:
         example_output = (
-            f"<p>The {preferred_code_term if brand else 'offer'} is live for [Game] tonight at [time] on [network], and {brand} is highlighting {offer_summary}{date_clause}.</p>"
-            + (
-                f"<p>Sign up, enter {code_strong}, complete the qualifying action, and unlock the listed promotional credit.</p>"
-                if prediction_market
-                else f"<p>Sign up, enter {code_strong}, make your first qualifying DFS entry, and unlock the listed bonus entries or promo credits from the app.</p>"
-                if dfs_mode
-                else f"<p>Sign up, enter {code_strong}, complete the qualifying wager, and unlock the listed reward tied to the offer.</p>"
-            )
+            "<p>[Event] anchors the slate tonight - and the [Brand] offer is the cleanest way for a new trader to get a position in it. "
+            "Deposit [qualifying amount], collect [reward], and be in the market before the first pitch.</p>"
+            f"<p>The offer is about as simple as sign-up promotions get. No convoluted opt-in, no fine print that drains the value: sign up,{code_mention} "
+            "make the qualifying deposit, and the credit is ready to deploy on your first position.</p>"
+        )
+    elif dfs_mode:
+        example_output = (
+            "<p>[Event] headlines tonight's slate - and the [Brand] offer is the cleanest way for a new player to get entries in on it. "
+            "Play [qualifying amount], collect [reward], and have your first card built before lock.</p>"
+            f"<p>The offer is about as simple as sign-up promotions get. No convoluted opt-in, no fine print that drains the value: sign up,{code_mention} "
+            "make the qualifying entry, and the bonus entries land ready for the rest of the slate.</p>"
         )
     else:
         example_output = (
-            f"<p>The {brand} offer is live for [Game] tonight at [time] on [network], and {brand} is highlighting {offer_summary}{date_clause}.</p>"
-            + (
-                "<p>No promo code is required; complete the qualifying action described in the offer to unlock the listed promotional credit.</p>"
-                if prediction_market
-                else "<p>No promo code is required; complete the qualifying DFS entry described in the offer to unlock the listed bonus entries or promo credits.</p>"
-                if dfs_mode
-                else "<p>No promo code is required to claim it; just sign up and place your first bet.</p>"
-            )
+            "<p>[Event] is the spot on tonight's board - and the [Brand] offer is the cleanest way for a new bettor to get a stake in it. "
+            "Bet [qualifying amount], collect [reward], and be set before first pitch.</p>"
+            f"<p>The offer is about as simple as sign-up bonuses get. No convoluted opt-in, no rollover buried in the fine print: sign up,{code_mention} "
+            "place the qualifying bet, and the bonus lands with the rest of the slate still ahead of you.</p>"
         )
 
     user_prompt = f"""Write the intro paragraph for this promo article:
@@ -4936,7 +4798,7 @@ CRITICAL REQUIREMENTS:
 VARIATION BRIEF:
 {variation_md}
 
-EXAMPLE OUTPUT (match this structure):
+VOICE EXEMPLAR (match the confidence, rhythm, and stakes-first attitude of this lede - NEVER copy its phrases, placeholders, or structure word-for-word; your facts come only from the blocks above):
 {example_output}
 
 Write TWO <p> tags now (HTML only, no markdown):"""
@@ -5788,7 +5650,6 @@ async def generate_draft_from_outline_streaming(
     html_output = _apply_content_mode_language_guardrails(html_output, content_mode)
     html_output = _normalize_brand_keyword_text(html_output, brand)
     html_output = _target_keyword_mentions(html_output, keyword)
-    html_output = _enforce_primary_keyword_density(html_output, keyword)
     html_output = _enforce_secondary_keyword_mentions(html_output, prefs["secondary_keywords"])
     html_output = _clean_orphaned_keyword_page_references(html_output, keyword)
     html_output = _unwrap_generic_offer_strong(html_output, brand)

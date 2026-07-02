@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     # OpenAI
     openai_api_key: str = ""
     embed_model: str = "text-embedding-3-small"
-    llm_model: str = "gpt-5.2-2025-12-11"
+    llm_model: str = "gpt-5.5-2026-04-23"
 
     # Offers (BAM)
     offers_property: str = "action_network"

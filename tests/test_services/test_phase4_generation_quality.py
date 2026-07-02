@@ -17,7 +17,6 @@ from app.services.draft import (
     _ensure_top_story_tracking_tag,
     _ensure_intro_state_specificity,
     _ensure_keyword_in_first_paragraph,
-    _enforce_primary_keyword_density,
     _ensure_editorial_body_length,
     _ensure_matchup_analysis_section,
     _extract_featured_label_from_event_context,
@@ -384,17 +383,17 @@ def test_enforce_secondary_keyword_mentions_removes_forced_backfill_without_inse
     assert "<p>Second intro paragraph about the offer.</p>" in cleaned
 
 
-def test_enforce_secondary_keyword_mentions_adds_clean_missing_coverage_outside_terms():
+def test_enforce_secondary_keyword_mentions_never_injects_deterministic_filler():
     html = (
         "<p>The intro explains the promo code, offer amount, featured event, and state availability for readers.</p>"
         "<p>The next paragraph gives practical account setup details before moving into the matchup angle.</p>"
         "<h2>Terms & Conditions</h2><p>Terms language should not receive secondary keyword wording.</p>"
     )
     cleaned = _enforce_secondary_keyword_mentions(html, ["best dfs apps"])
-    assert cleaned.lower().count("best dfs apps") == 2
-    assert "it also ties into" not in cleaned.lower()
-    terms_html = cleaned.split("<h2>Terms & Conditions</h2>", 1)[1].lower()
-    assert "best dfs apps" not in terms_html
+    # Coverage is the prompt's job now - no canned sentences are ever inserted.
+    assert "best dfs apps" not in cleaned.lower()
+    assert "The same checks matter" not in cleaned
+    assert "<p>The intro explains the promo code, offer amount, featured event, and state availability for readers.</p>" in cleaned
 
 
 def test_unwrap_generic_offer_strong_removes_bold_brand_offer_without_touching_code():
@@ -1191,21 +1190,6 @@ async def test_generate_draft_tolerates_missing_primary_offer(monkeypatch):
     assert "view_top_story" in html
 
 
-def test_enforce_primary_keyword_density_adds_plain_text_mentions_without_ctas():
-    html = (
-        '<p><a href="https://example.com">bet365 bonus code</a> starts the article.</p>'
-        "<p>The offer details are clear for the matchup.</p>"
-        "<p>The signup flow uses the selected operator.</p>"
-        "<p>The example keeps the stake aligned with the offer.</p>"
-        "<p>Terms apply. 21+.</p>"
-    )
-
-    cleaned = _enforce_primary_keyword_density(html, "bet365 bonus code")
-
-    assert _count_keyword(cleaned, "bet365 bonus code") >= 5
-    assert cleaned.count("href=") == 1
-
-
 def test_body_word_count_excludes_signup_terms_shortcodes_and_disclaimers():
     html = (
         "<h1>Title</h1>"
@@ -1222,7 +1206,7 @@ def test_body_word_count_excludes_signup_terms_shortcodes_and_disclaimers():
 
 
 @pytest.mark.asyncio
-async def test_ensure_editorial_body_length_adds_useful_section_before_terms():
+async def test_ensure_editorial_body_length_skips_filler_without_matchup_facts():
     html = (
         "<h1>bet365 bonus code test</h1>"
         "<p>Short intro for the selected offer.</p>"
@@ -1246,15 +1230,13 @@ async def test_ensure_editorial_body_length_adds_useful_section_before_terms():
         target_words=120,
     )
 
-    assert "What to Watch Before Using bet365" in expanded
-    assert expanded.index("What to Watch Before Using bet365") < expanded.index("bet365 Bonus Code Terms")
-    assert "filler" not in expanded.lower()
-    assert "payout math" not in expanded.lower()
-    assert _body_word_count_for_editorial_target(expanded) > _body_word_count_for_editorial_target(html)
+    # No matchup facts available -> a short draft stays short; generic filler is never added.
+    assert expanded == html
+    assert "What to Watch Before Using" not in expanded
 
 
 @pytest.mark.asyncio
-async def test_ensure_editorial_body_length_uses_keyword_brand_when_offer_missing():
+async def test_ensure_editorial_body_length_skips_filler_when_offer_missing():
     html = (
         "<h1>draftkings promo code test</h1>"
         "<p>Short intro for the selected offer.</p>"
@@ -1272,10 +1254,10 @@ async def test_ensure_editorial_body_length_uses_keyword_brand_when_offer_missin
         target_words=120,
     )
 
-    assert "What to Watch Before Using DraftKings" in expanded
-    assert "What to Watch Before Using the operator" not in expanded
-    assert "rules., so" not in expanded
-    assert "The best example is the bet you were already comfortable making." in expanded
+    # Missing offer + no matchup facts -> nothing to say, so nothing is added.
+    assert expanded == html
+    assert "What to Watch Before Using" not in expanded
+    assert "The best example is the bet you were already comfortable making." not in expanded
 
 
 @pytest.mark.asyncio
