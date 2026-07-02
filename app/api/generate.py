@@ -673,10 +673,11 @@ async def list_link_options(
         k=safe_limit,
         property_key=property,
         brand=brand,
+        market=market,
     )
-    operator_link = get_operator_evergreen_link(property_key=property, brand=brand)
-    required = get_required_links_for_property(property_key=property)
-    picker_candidates = get_picker_candidates(property_key=property)
+    operator_link = get_operator_evergreen_link(property_key=property, brand=brand, market=market)
+    required = get_required_links_for_property(property_key=property, market=market)
+    picker_candidates = get_picker_candidates(property_key=property, market=market)
 
     def _url_key(value: str | None) -> str:
         clean = str(value or "").strip().lower()

@@ -234,13 +234,23 @@ class InternalLinkSpec:
 
 
 class InternalLinksStore:
-    """Store for internal link suggestions scoped to a property."""
+    """Store for internal link suggestions scoped to a property and market."""
 
-    def __init__(self, property_key: str | None = None):
+    def __init__(self, property_key: str | None = None, market: str = "US"):
         self.property_key = _normalize_property_key(property_key)
+        self.market = "CA" if str(market or "US").strip().upper() == "CA" else "US"
         self._items: list[dict] = []
         self._vectors: Optional[np.ndarray] = None
         self._loaded = False
+
+    def _market_allows(self, url: str) -> bool:
+        """Keep locale-specific links (goal.com/en-us vs /en-ca) in their market."""
+        lowered = str(url or "").lower()
+        if "/en-ca/" in lowered:
+            return self.market == "CA"
+        if "/en-us/" in lowered:
+            return self.market != "CA"
+        return True
 
     def _read_index_items(self) -> list[dict]:
         """Read persisted index items without loading vectors."""
@@ -255,7 +265,7 @@ class InternalLinksStore:
                 with open(path, "r", encoding="utf-8") as f:
                     parsed = json.load(f)
                 if isinstance(parsed, list):
-                    return parsed
+                    return [item for item in parsed if self._market_allows(str(item.get("url") or ""))]
             except Exception:
                 continue
         return []
@@ -277,6 +287,8 @@ class InternalLinksStore:
                     title = str(rec.get("title") or "").strip()
                     url = str(rec.get("url") or "").strip()
                     if not title or not url:
+                        continue
+                    if not self._market_allows(url):
                         continue
                     records.append({
                         "title": title,
@@ -440,7 +452,7 @@ class InternalLinksStore:
                 continue
             title = str(item.get("title") or "").strip()
             url = str(item.get("url") or "").strip()
-            if not title or not url:
+            if not title or not url or not self._market_allows(url):
                 continue
             anchors = item.get("recommended_anchors") or item.get("anchors") or [title]
             anchors = [str(a).strip() for a in anchors if str(a).strip()] or [title]
@@ -633,7 +645,7 @@ class InternalLinksStore:
                 continue
             title = str(item.get("title") or "").strip()
             url = str(item.get("url") or "").strip()
-            if not title or not url:
+            if not title or not url or not self._market_allows(url):
                 continue
             anchors = item.get("recommended_anchors") or item.get("anchors") or [title]
             anchors = [str(a).strip() for a in anchors if str(a).strip()] or [title]
@@ -717,7 +729,7 @@ class InternalLinksStore:
                 continue
             item = self._items[idx]
             url = str(item.get("url", "")).strip()
-            if not url or url in seen_urls:
+            if not url or url in seen_urls or not self._market_allows(url):
                 continue
 
             item_operator = _link_operator(item)
@@ -754,13 +766,15 @@ class InternalLinksStore:
 _link_stores: dict[str, InternalLinksStore] = {}
 
 
-def get_links_store(property_key: str | None = None) -> InternalLinksStore:
-    """Get or create a property-scoped internal links store."""
+def get_links_store(property_key: str | None = None, market: str = "US") -> InternalLinksStore:
+    """Get or create a property+market scoped internal links store."""
     key = _normalize_property_key(property_key)
-    store = _link_stores.get(key)
+    market_key = "CA" if str(market or "US").strip().upper() == "CA" else "US"
+    cache_key = f"{key}::{market_key}"
+    store = _link_stores.get(cache_key)
     if store is None:
-        store = InternalLinksStore(property_key=key)
-        _link_stores[key] = store
+        store = InternalLinksStore(property_key=key, market=market_key)
+        _link_stores[cache_key] = store
     return store
 
 
@@ -770,33 +784,34 @@ async def suggest_links_for_section(
     k: int = 3,
     property_key: str | None = None,
     brand: str = "",
+    market: str = "US",
 ) -> list[InternalLinkSpec]:
     """Convenience function for suggesting links."""
-    store = get_links_store(property_key=property_key)
+    store = get_links_store(property_key=property_key, market=market)
     return await store.suggest_links(title, context=must_include, k=k, brand=brand)
 
 
-def get_required_links_for_property(property_key: str | None = None) -> list[InternalLinkSpec]:
+def get_required_links_for_property(property_key: str | None = None, market: str = "US") -> list[InternalLinkSpec]:
     """Return deterministic required links for a property."""
-    store = get_links_store(property_key=property_key)
+    store = get_links_store(property_key=property_key, market=market)
     return store.get_required_links()
 
 
-def get_operator_evergreen_link(property_key: str | None = None, brand: str = "") -> InternalLinkSpec | None:
+def get_operator_evergreen_link(property_key: str | None = None, brand: str = "", market: str = "US") -> InternalLinkSpec | None:
     """Return deterministic operator-specific evergreen link for the current property."""
-    store = get_links_store(property_key=property_key)
+    store = get_links_store(property_key=property_key, market=market)
     return store.get_operator_evergreen_link(brand)
 
 
-def get_links_by_urls(urls: list[str] | None, property_key: str | None = None) -> list[InternalLinkSpec]:
+def get_links_by_urls(urls: list[str] | None, property_key: str | None = None, market: str = "US") -> list[InternalLinkSpec]:
     """Resolve a writer-selected list of internal links for a property."""
-    store = get_links_store(property_key=property_key)
+    store = get_links_store(property_key=property_key, market=market)
     return store.get_links_by_urls(urls)
 
 
-def get_picker_candidates(property_key: str | None = None) -> list[InternalLinkSpec]:
+def get_picker_candidates(property_key: str | None = None, market: str = "US") -> list[InternalLinkSpec]:
     """Return broad picker candidates for the writer-facing interlinks tab."""
-    store = get_links_store(property_key=property_key)
+    store = get_links_store(property_key=property_key, market=market)
     return store.list_picker_candidates()
 
 

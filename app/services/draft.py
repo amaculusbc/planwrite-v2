@@ -22,7 +22,7 @@ from app.services.internal_links import (
     suggest_links_for_section,
 )
 from app.services.compliance import get_disclaimer_for_state
-from app.services.bam_offers import PROPERTIES, normalize_bam_affiliate_type, render_bam_offer_block
+from app.services.bam_offers import PROPERTIES, build_bam_shortcode, normalize_bam_affiliate_type, render_bam_offer_block
 from app.services.content_guidelines import get_style_instructions, get_temperature_by_section
 from app.services.style import get_rag_usage_guidance
 from app.services.switchboard_links import inject_switchboard_links, build_switchboard_url
@@ -422,7 +422,7 @@ def _body_word_count_for_editorial_target(html: str) -> int:
             continue
         if any(token in blocked_heading for token in ("sign up", "sign-up", "signup", "claim", "terms", "conditions", "fine print", "rules")):
             continue
-        if "[bam-inline-promotion" in paragraph_lc or "switchboard_tracking" in paragraph_lc:
+        if "bam-inline-promotion" in paragraph_lc or "switchboard_tracking" in paragraph_lc:
             continue
         if "gambling problem" in plain_lc or "terms apply" in plain_lc or "21+" in plain_lc:
             continue
@@ -684,7 +684,7 @@ def _apply_content_mode_language_guardrails(html: str, content_mode: str) -> str
         return key
 
     protected_html = re.sub(
-        r"\[bam-inline-promotion[^\]]+\]",
+        r"\[bam-inline-promotion[^\]]+\]|<bam-inline-promotion\b[^>]*>\s*</bam-inline-promotion>",
         _protect_shortcode,
         html,
         flags=re.IGNORECASE,
@@ -801,21 +801,28 @@ def _build_property_correct_bam_shortcode(offer: dict[str, Any], property_key: s
         or "sportsbook"
     )
     context = str(prop.get("default_context") or "web-article-top-stories").strip()
-    return (
-        f'[bam-inline-promotion placement-id="{prop.get("placement_id", "2037")}" '
-        f'property-id="{prop.get("property_id", "1")}" '
-        f'context="{context}" internal-id="{escape(internal_id, quote=True)}" '
-        f'affiliate-type="{escape(affiliate_type, quote=True)}" '
-        f'affiliate="{escape(brand, quote=True)}"]'
+    return build_bam_shortcode(
+        property_config=prop,
+        context=context,
+        internal_id=escape(internal_id, quote=True),
+        affiliate_type=escape(affiliate_type, quote=True),
+        affiliate=escape(brand, quote=True),
     )
 
 
 def _is_property_correct_bam_shortcode(shortcode: str, property_key: str) -> bool:
-    """Return True if a shortcode's property, placement and affiliate type are safe."""
-    if not shortcode or "[bam-inline-promotion" not in shortcode.lower():
+    """Return True if a shortcode's syntax, property, placement and affiliate type are safe."""
+    if not shortcode:
         return False
     prop = PROPERTIES.get(str(property_key or "action_network").strip().lower())
     if not prop:
+        return False
+    lowered = shortcode.lower()
+    expected_element = prop.get("shortcode_style") == "element"
+    has_expected_syntax = (
+        "<bam-inline-promotion" in lowered if expected_element else "[bam-inline-promotion" in lowered
+    )
+    if not has_expected_syntax:
         return False
     return (
         _shortcode_attr(shortcode, "property-id") == str(prop.get("property_id"))
@@ -4498,7 +4505,7 @@ async def generate_draft_from_outline(
     keyword = _normalize_brand_keyword_text(keyword, brand)
     variation_key = variation_key or uuid4().hex
     prefs = _normalize_article_preferences(article_preferences)
-    preferred_links = _dedupe_link_specs_by_url(get_links_by_urls(prefs["preferred_internal_urls"], property_key=offer_property))
+    preferred_links = _dedupe_link_specs_by_url(get_links_by_urls(prefs["preferred_internal_urls"], property_key=offer_property, market=prefs.get("market", "US")))
     preferred_urls = [str(link.url) for link in preferred_links if getattr(link, "url", None)]
 
     def select_offer_for_shortcode(level: str) -> dict[str, Any] | None:
@@ -4598,7 +4605,7 @@ async def generate_draft_from_outline(
         dfs_mode=is_dfs_mode,
     )
     html_output = _apply_generation_quality_postprocess(html_output, keyword, prefs.get("market", "US"))
-    primary_evergreen_link = get_operator_evergreen_link(property_key=offer_property, brand=brand)
+    primary_evergreen_link = get_operator_evergreen_link(property_key=offer_property, brand=brand, market=prefs.get("market", "US"))
     primary_evergreen_url = str(primary_evergreen_link.url) if primary_evergreen_link and primary_evergreen_link.url else ""
     if prefs.get("market") == "CA" and offer_property == "goal_com" and "goal.com/en-ca/" not in primary_evergreen_url.lower():
         primary_evergreen_url = ""
@@ -5153,6 +5160,7 @@ async def _generate_body_section(
             k=3,
             property_key=offer_property,
             brand=brand,
+            market=prefs.get("market", "US"),
         )
         links = _dedupe_link_specs_by_url([*(preferred_links or []), *suggested_links])
         links_md = format_links_markdown(
@@ -5663,7 +5671,7 @@ async def generate_draft_from_outline_streaming(
     is_dfs_mode = content_mode == CONTENT_MODE_DFS
     variation_key = variation_key or uuid4().hex
     prefs = _normalize_article_preferences(article_preferences)
-    preferred_links = _dedupe_link_specs_by_url(get_links_by_urls(prefs["preferred_internal_urls"], property_key=offer_property))
+    preferred_links = _dedupe_link_specs_by_url(get_links_by_urls(prefs["preferred_internal_urls"], property_key=offer_property, market=prefs.get("market", "US")))
     preferred_urls = [str(link.url) for link in preferred_links if getattr(link, "url", None)]
 
     def select_offer_for_shortcode(level: str) -> dict[str, Any] | None:
@@ -5775,7 +5783,7 @@ async def generate_draft_from_outline_streaming(
         dfs_mode=is_dfs_mode,
     )
     html_output = _apply_generation_quality_postprocess(html_output, keyword, prefs.get("market", "US"))
-    primary_evergreen_link = get_operator_evergreen_link(property_key=offer_property, brand=brand)
+    primary_evergreen_link = get_operator_evergreen_link(property_key=offer_property, brand=brand, market=prefs.get("market", "US"))
     primary_evergreen_url = str(primary_evergreen_link.url) if primary_evergreen_link and primary_evergreen_link.url else ""
     if prefs.get("market") == "CA" and offer_property == "goal_com" and "goal.com/en-ca/" not in primary_evergreen_url.lower():
         primary_evergreen_url = ""

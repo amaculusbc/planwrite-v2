@@ -267,7 +267,7 @@ def check_cta_links(content: str) -> list[ComplianceIssue]:
         re.IGNORECASE,
     )
     switchboard_tracking_pattern = re.compile(r'data-id\s*=\s*(["\'])switchboard_tracking\1', re.IGNORECASE)
-    bam_shortcode_pattern = re.compile(r"\[bam-inline-promotion\b", re.IGNORECASE)
+    bam_shortcode_pattern = re.compile(r"\[bam-inline-promotion\b|<bam-inline-promotion\b", re.IGNORECASE)
 
     has_cta = any([
         bool(cta_pattern.search(content or "")),

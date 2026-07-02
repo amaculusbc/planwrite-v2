@@ -88,10 +88,39 @@ PROPERTIES = {
         "switchboard_domain": "us-betting.goal.com",
         "name": "GOAL",
         "default_context": "web-article-top-stories",
+        # GOAL's CMS accepts the HTML custom element, not the square-bracket
+        # shortcode (source: Ultimate SEO Guide -> Top Stories Hub, Goal.com row).
+        "shortcode_style": "element",
     },
 }
 
 DEFAULT_PROPERTY = "action_network"
+
+
+def build_bam_shortcode(
+    *,
+    property_config: dict,
+    context: str,
+    internal_id: str,
+    affiliate_type: str,
+    affiliate: str,
+) -> str:
+    """Render the BAM promo unit in the CMS syntax the property expects."""
+    placement_id = property_config.get("placement_id", "2037")
+    property_id = property_config.get("property_id", "1")
+    if property_config.get("shortcode_style") == "element":
+        return (
+            f'<p><bam-inline-promotion placement-id="{placement_id}" '
+            f'property-id="{property_id}" context="{context}" '
+            f'internal-id="{internal_id}" affiliate-type="{affiliate_type}" '
+            f'affiliate="{affiliate}"></bam-inline-promotion></p>'
+        )
+    return (
+        f'[bam-inline-promotion placement-id="{placement_id}" '
+        f'property-id="{property_id}" context="{context}" '
+        f'internal-id="{internal_id}" affiliate-type="{affiliate_type}" '
+        f'affiliate="{affiliate}"]'
+    )
 
 # Last fetch timestamp (per property)
 _last_fetch: dict[str, datetime] = {}
@@ -388,11 +417,12 @@ def _parse_promotion(promo: dict, property_config: dict, context: str) -> dict:
         or affiliate.get("type")
         or "sportsbook"
     )
-    shortcode = (
-        f'[bam-inline-promotion placement-id="{property_config.get("placement_id", "2037")}" '
-        f'property-id="{property_config.get("property_id", "1")}" '
-        f'context="{context}" internal-id="{internal_id}" '
-        f'affiliate-type="{affiliate_type}" affiliate="{brand}"]'
+    shortcode = build_bam_shortcode(
+        property_config=property_config,
+        context=context,
+        internal_id=internal_id,
+        affiliate_type=affiliate_type,
+        affiliate=brand,
     )
 
     # Parse states from explicit payload first, then terms text.

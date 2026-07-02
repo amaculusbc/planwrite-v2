@@ -1215,6 +1215,45 @@ async def test_generate_draft_tolerates_missing_primary_offer(monkeypatch):
     assert "view_top_story" in html
 
 
+def test_goal_com_links_are_market_scoped():
+    from app.services.internal_links import InternalLinksStore
+
+    us_store = InternalLinksStore(property_key="goal_com", market="US")
+    us_urls = [item["url"] for item in us_store._read_source_items()]
+    assert us_urls
+    assert all("/en-ca/" not in url for url in us_urls)
+
+    ca_store = InternalLinksStore(property_key="goal_com", market="CA")
+    ca_urls = [item["url"] for item in ca_store._read_source_items()]
+    assert ca_urls
+    assert all("/en-ca/" in url for url in ca_urls)
+    assert any("world-cup" in url for url in ca_urls)
+    assert any("bet365" in url for url in ca_urls)
+
+
+def test_goal_com_offer_block_renders_cms_element_format():
+    from app.services.draft import _render_html_offer_block
+
+    offer = {
+        "brand": "Novig",
+        "affiliate_type": "social-sportsbook",
+        "internal_id": "evergreen",
+        "shortcode": '[bam-inline-promotion placement-id="2066" property-id="326" context="web-article-top-stories" internal-id="evergreen" affiliate-type="social-sportsbook" affiliate="Novig"]',
+    }
+    block = _render_html_offer_block(offer, "https://us-betting.goal.com/offers?x=1", property_key="goal_com")
+    assert block.startswith("<p><bam-inline-promotion ")
+    assert block.endswith("></bam-inline-promotion></p>")
+    assert 'placement-id="2066"' in block
+    assert 'property-id="326"' in block
+    assert 'context="web-article-top-stories"' in block
+    assert "[bam-inline-promotion" not in block
+
+    # Non-GOAL properties keep the square-bracket shortcode.
+    an_block = _render_html_offer_block(offer, "https://switchboard.actionnetwork.com/offers?x=1", property_key="action_network")
+    assert an_block.startswith("[bam-inline-promotion ")
+    assert 'property-id="1"' in an_block
+
+
 def test_body_word_count_excludes_signup_terms_shortcodes_and_disclaimers():
     html = (
         "<h1>Title</h1>"
