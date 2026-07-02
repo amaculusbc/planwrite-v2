@@ -58,6 +58,7 @@ from app.services.draft import (
     _strip_formatting_from_headings,
     _strip_market_mismatch_phrasing,
     _strip_quoted_stat_phrases,
+    _strip_search_query_openers,
     _strip_invalid_non_switchboard_links,
     _strip_unprovided_article_date,
     _strip_source_and_prompt_leaks,
@@ -1517,6 +1518,26 @@ def test_normalize_brand_casing_keeps_bet365_lowercase_and_skips_unknown_lowerca
 
     unknown = "<p>Use Novig promo code today.</p>"
     assert _normalize_brand_casing(unknown, "novig") == unknown
+
+
+def test_strip_search_query_openers_rewrites_meta_ledes():
+    html = (
+        "<p>Readers checking DraftKings promo code can find the key offer terms right away: "
+        "Thursday features a 12:35 p.m. ET first pitch, and DraftKings gives it a clean path.</p>"
+        "<p>Second paragraph stays put.</p>"
+    )
+    fixed = _strip_search_query_openers(html)
+    assert "Readers checking" not in fixed
+    assert "<p>Thursday features a 12:35 p.m. ET first pitch" in fixed
+    assert "<p>Second paragraph stays put.</p>" in fixed
+
+    comma_form = "<p>For readers tracking bet365 bonus code, Celtics vs. Spurs takes center stage tonight.</p>"
+    fixed2 = _strip_search_query_openers(comma_form)
+    assert "For readers tracking" not in fixed2
+    assert "<p>Celtics vs. Spurs takes center stage tonight.</p>" in fixed2
+
+    clean = "<p>Pirates-Phillies opens the early window Thursday, and DraftKings has a clean path in.</p>"
+    assert _strip_search_query_openers(clean) == clean
 
 
 def test_strip_quoted_stat_phrases_unwraps_verbatim_notes():

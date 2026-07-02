@@ -1869,6 +1869,40 @@ _STATE_FULL_NAMES = {
 }
 
 
+def _strip_search_query_openers(html: str) -> str:
+    """Drop lede openers that address people searching for the keyword.
+
+    The prompt bans these, but models paraphrase around ban lists
+    ("Readers checking X can find the key offer terms right away:").
+    """
+    if not html:
+        return html
+    first_para = re.search(r"(<p\b[^>]*>)(.*?)(</p>)", html, flags=re.IGNORECASE | re.DOTALL)
+    if not first_para:
+        return html
+    inner = first_para.group(2)
+    stripped = re.sub(
+        r"^\s*(?:For\s+)?(?:readers|bettors|users|fans|players|traders|those|anyone)\b"
+        r"[^,:<]{0,120}?\b(?:checking|tracking|looking(?:\s+up)?|searching|scanning|hunting|typing)\b"
+        r"[^,:<]{0,120}[,:]\s*",
+        "",
+        inner,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+    if stripped == inner:
+        return html
+    if stripped[:1].islower():
+        stripped = stripped[:1].upper() + stripped[1:]
+    return (
+        html[: first_para.start()]
+        + first_para.group(1)
+        + stripped
+        + first_para.group(3)
+        + html[first_para.end():]
+    )
+
+
 def _strip_quoted_stat_phrases(html: str) -> str:
     """Unwrap stats the model quoted verbatim from internal notes."""
     if not html:
@@ -1923,7 +1957,9 @@ def _ensure_intro_state_specificity(html: str, states_text: str) -> str:
         )
         for token in state_tokens
     )
-    if has_availability_phrase and (has_explicit_state or len(state_tokens) > 3):
+    # Naming the state in any phrasing ("new users in NJ") already gives the
+    # lede its specificity - only add a line when nothing state-shaped exists.
+    if has_explicit_state or (has_availability_phrase and len(state_tokens) > 3):
         return html
 
     # A long state list mid-lede reads like a data dump; keep the lede to one
@@ -3261,6 +3297,7 @@ def _apply_generation_quality_postprocess(html: str, keyword: str, market: str =
     if not html:
         return html
     html = _soften_repetitive_intro_opener(html)
+    html = _strip_search_query_openers(html)
     html = _ensure_keyword_in_first_paragraph(html, keyword)
     html = _polish_intro_fallback_phrases(html)
     html = _polish_worked_example_conditionals(html)
