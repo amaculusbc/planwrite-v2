@@ -25,7 +25,8 @@ from app.services.draft import (
 )
 from app.services.compliance import validate_content as validate_content_svc
 from app.services.competitor_scraper import scrape_competitors
-from app.services.bam_offers import get_offer_by_id_bam
+from app.services.bam_offers import get_offer_by_id_bam, get_offer_catalog_bam
+from app.services.goal_template import build_goal_outline, is_goal_property
 from app.services.internal_links import (
     get_operator_evergreen_link,
     get_picker_candidates,
@@ -41,8 +42,52 @@ from app.services.expertise_context import build_expertise_context
 from app.services.generation_artifacts import (
     build_source_facts,
     create_generation_run,
+    list_same_day_run_titles,
     load_generation_run,
 )
+
+
+def _maybe_goal_outline(request: OutlineRequest, offer: dict | None) -> list[dict] | None:
+    """Deterministic brief-compliant outline for GOAL articles (writer-editable)."""
+    if not is_goal_property(request.offer_property):
+        return None
+    gc = request.game_context
+    offer = offer or {}
+    odds = getattr(gc, "odds", None) if gc else None
+    return build_goal_outline(
+        keyword=request.keyword,
+        brand=str(offer.get("brand") or ""),
+        bonus_code=str(offer.get("bonus_code") or ""),
+        away_team=str(getattr(gc, "away_team", "") or "") if gc else "",
+        home_team=str(getattr(gc, "home_team", "") or "") if gc else "",
+        event_label=str(getattr(gc, "custom_event", "") or "") if gc else "",
+        start_time_display=_normalize_game_time(str(getattr(gc, "start_time", "") or "")) if gc else "",
+        event_date=str(getattr(gc, "event_date", "") or "") if gc else "",
+        odds=odds if isinstance(odds, dict) else None,
+        same_day_titles=list_same_day_run_titles(request.offer_property),
+    )
+
+
+async def _operator_promos_for_draft(request: DraftRequest, offer: dict | None) -> list[dict]:
+    """Other live BAM offers for the article's operator (GOAL 'promos today' block)."""
+    if not is_goal_property(request.offer_property) or not offer:
+        return []
+    brand = str(offer.get("brand") or "").strip().lower()
+    if not brand:
+        return []
+    try:
+        catalog = await get_offer_catalog_bam(
+            property_key=request.offer_property,
+            state=request.state,
+            market=request.market,
+        )
+    except Exception:
+        return []
+    return [
+        promo for promo in catalog or []
+        if str(promo.get("brand") or "").strip().lower() == brand
+        and str(promo.get("id") or "") != str(offer.get("id") or "")
+    ][:4]
 
 router = APIRouter()
 
@@ -272,7 +317,7 @@ async def _stream_outline(request: OutlineRequest, db: AsyncSession) -> AsyncGen
 
     try:
         yield f"data: {json.dumps({'type': 'status', 'message': 'Generating structured outline...'})}\n\n"
-        outline_structured = await generate_structured_outline(
+        outline_structured = _maybe_goal_outline(request, offer) or await generate_structured_outline(
             keyword=request.keyword,
             title=request.title,
             offer=offer or {},
@@ -339,6 +384,7 @@ async def _stream_draft(request: DraftRequest, db: AsyncSession) -> AsyncGenerat
     )
 
     try:
+        operator_promos = await _operator_promos_for_draft(request, offer_dict)
         async for update in generate_draft_from_outline_streaming(
             outline=outline,
             keyword=request.keyword,
@@ -354,6 +400,7 @@ async def _stream_draft(request: DraftRequest, db: AsyncSession) -> AsyncGenerat
             output_format="markdown",
             article_preferences=prefs,
             bc_core_context=source_facts.get("bc_core"),
+            operator_promos=operator_promos,
         ):
             yield f"data: {json.dumps(update)}\n\n"
     except Exception as e:
@@ -445,7 +492,7 @@ async def generate_outline_sync(
     )
     artifact_run.write_stage("source_facts", source_facts, file_name="10_source_facts.json")
 
-    outline_structured = await generate_structured_outline(
+    outline_structured = _maybe_goal_outline(request, offer) or await generate_structured_outline(
         keyword=request.keyword,
         title=request.title,
         offer=offer or {},
@@ -568,6 +615,7 @@ async def generate_draft_sync(
         file_name="20_outline.json",
     )
 
+    operator_promos = await _operator_promos_for_draft(request, offer_dict)
     draft = await generate_draft_from_outline(
         outline=outline,
         keyword=request.keyword,
@@ -583,6 +631,7 @@ async def generate_draft_sync(
         output_format="html",
         article_preferences=prefs,
         bc_core_context=source_facts.get("bc_core"),
+        operator_promos=operator_promos,
     )
     artifact_run.write_stage(
         "draft",

@@ -6,6 +6,7 @@ from app.services.draft import (
     TOP_STORY_TRACKING_TAG,
     _align_selected_link_anchors,
     _apply_generation_quality_postprocess,
+    _build_goal_signup_list,
     _build_signup_list,
     _body_word_count_for_editorial_target,
     _cap_primary_keyword_density,
@@ -1213,6 +1214,98 @@ async def test_generate_draft_tolerates_missing_primary_offer(monkeypatch):
 
     assert "<h1>bet365 Bonus Code Test</h1>" in html
     assert "view_top_story" in html
+
+
+def test_goal_outline_matches_brief_structure():
+    from app.services.goal_template import build_goal_outline
+
+    outline = build_goal_outline(
+        keyword="bet365 bonus code",
+        brand="bet365",
+        bonus_code="GOALBET",
+        away_team="Croatia",
+        home_team="Portugal",
+        start_time_display="7:00 PM ET",
+        event_date="2026-07-02",
+        odds={
+            "moneylines": {"bet365": {"away_odds": 320, "home_odds": -145}},
+            "totals": {"bet365": {"total": 2.5, "over_odds": -110, "under_odds": -120}},
+        },
+        same_day_titles=["bet365 Bonus Code: Austria vs Spain World Cup Offer"],
+    )
+    levels = [(s["level"], s["title"]) for s in outline]
+    assert levels[0] == ("intro", "")
+    assert levels[1] == ("shortcode", "")
+    assert levels[2] == ("h2", "bet365 Promo Code")
+    assert levels[3] == ("h2", "How to Use the bet365 Promo Code")
+    assert levels[4] == ("h2", "Today's Sports Betting with bet365")
+    assert levels[5][0] == "h3" and "Croatia vs Portugal" in levels[5][1]
+    assert levels[6] == ("h2", "Full bet365 Promo Code Terms and Conditions")
+
+    match_points = " ".join(outline[5]["talking_points"])
+    assert "Croatia +320 / Portugal -145" in match_points
+    assert "Total: 2.5 (O -110 / U -120)" in match_points
+    assert any("Austria vs Spain" in a for a in outline[5]["avoid"])
+
+
+def test_goal_terms_table_and_promos_section():
+    from app.services.goal_template import render_goal_terms_table, render_operator_promos_section
+
+    table = render_goal_terms_table({
+        "brand": "bet365",
+        "bonus_code": "GOALBET",
+        "offer_text": "Bet $10, Get $365 in Bonus Bets",
+        "terms": "New customers only. Min deposit $10.",
+    })
+    assert table.startswith("<table>")
+    assert "bet365 promo code</strong></td><td>GOALBET" in table
+    assert "Bet $10, Get $365 in Bonus Bets" in table
+    assert "New customers only. Min deposit $10." in table
+
+    promos = render_operator_promos_section(
+        "bet365",
+        [
+            {"id": "1", "offer_text": "Bet $10, Get $365 in Bonus Bets", "bonus_code": "GOALBET"},
+            {"id": "2", "offer_text": "Early Payout Offer on Soccer", "bonus_code": ""},
+        ],
+        primary_offer_id="1",
+    )
+    assert "More bet365 Promos Today" in promos
+    assert "Early Payout Offer on Soccer" in promos
+    assert "GOALBET" not in promos  # the primary offer is excluded
+
+
+def test_goal_signup_list_carries_mechanics_and_states():
+    html = _build_goal_signup_list(
+        {
+            "brand": "bet365",
+            "bonus_code": "GOALBET",
+            "offer_text": "Bet $10, Get $365 in Bonus Bets",
+            "qualifying_amount": "$10",
+            "bonus_amount": "$365",
+            "minimum_odds": "-500",
+            "bonus_expiration_days": 7,
+            "states": ["NJ", "PA"],
+        },
+        signup_url="https://us-betting.goal.com/offers?x=1",
+        state="ALL",
+    )
+    assert "<ol>" in html
+    assert "GOALBET" in html
+    assert "Deposit $10 or more" in html
+    assert "odds of -500 or longer" in html
+    assert "expire after 7 days" in html
+    assert "available in NJ, PA" in html
+    assert 'data-id="switchboard_tracking"' in html
+
+
+def test_strip_leaks_fixes_generic_typical_odds():
+    html = "<p>Moneyline prices land typically at -110 on this market, while the spread sits typically around -115 for the favorite.</p>"
+    cleaned = _strip_source_and_prompt_leaks(html)
+    assert "typically at -110" not in cleaned
+    assert "typically around -115" not in cleaned
+    assert "at -110" in cleaned
+    assert "at -115" in cleaned
 
 
 def test_goal_com_links_are_market_scoped():

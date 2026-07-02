@@ -177,6 +177,39 @@ class GenerationArtifactRun:
         }
 
 
+def list_same_day_run_titles(
+    offer_property: str | None,
+    exclude_run_id: str = "",
+    limit: int = 8,
+) -> list[str]:
+    """Titles of today's runs for a property, for cross-article cannibalism avoidance."""
+    base = _storage_root()
+    date_dir = base / datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    if not date_dir.exists():
+        return []
+    target = str(offer_property or "action_network").strip().lower()
+    titles: list[str] = []
+    seen: set[str] = set()
+    for manifest_path in sorted(date_dir.glob("*/manifest.json")):
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if str(manifest.get("offer_property") or "").strip().lower() != target:
+            continue
+        if exclude_run_id and str(manifest.get("run_id") or "") == exclude_run_id:
+            continue
+        title = str(manifest.get("title") or "").strip()
+        key = title.lower()
+        if not title or key in seen:
+            continue
+        seen.add(key)
+        titles.append(title)
+        if len(titles) >= limit:
+            break
+    return titles
+
+
 def create_generation_run(
     *,
     keyword: str,

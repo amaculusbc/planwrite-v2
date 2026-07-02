@@ -23,6 +23,11 @@ from app.services.internal_links import (
 )
 from app.services.compliance import get_disclaimer_for_state
 from app.services.bam_offers import PROPERTIES, build_bam_shortcode, normalize_bam_affiliate_type, render_bam_offer_block
+from app.services.goal_template import (
+    is_goal_property,
+    render_goal_terms_table,
+    render_operator_promos_section,
+)
 from app.services.content_guidelines import get_style_instructions, get_temperature_by_section
 from app.services.style import get_rag_usage_guidance
 from app.services.switchboard_links import inject_switchboard_links, build_switchboard_url
@@ -3299,6 +3304,8 @@ def _strip_source_and_prompt_leaks(html: str) -> str:
         (r"\bEPL wager\b", "soccer wager"),
         (r"\bhas to be placed at odds of\b", "must meet odds of"),
         (r"\bmust be placed at odds of\b", "must meet odds of"),
+        # Crawled prices are provided; hedged generic odds are a data-quality tell.
+        (r"\btypically\s+(?:at\s+|around\s+)?(?=[+-]\d{2,4}\b)", "at "),
     ]
     for pattern, replacement in replacements:
         cleaned = _rewrite_html_text_nodes(
@@ -4464,6 +4471,7 @@ async def generate_draft_from_outline(
     variation_key: str = "",
     article_preferences: dict[str, Any] | None = None,
     bc_core_context: dict[str, Any] | None = None,
+    operator_promos: list[dict[str, Any]] | None = None,
 ) -> str:
     """Generate full article draft from structured outline (Execute stage).
 
@@ -4502,6 +4510,7 @@ async def generate_draft_from_outline(
     )
     is_prediction_market = content_mode == CONTENT_MODE_PREDICTION_MARKET
     is_dfs_mode = content_mode == CONTENT_MODE_DFS
+    is_goal = is_goal_property(offer_property)
     keyword = _normalize_brand_keyword_text(keyword, brand)
     variation_key = variation_key or uuid4().hex
     prefs = _normalize_article_preferences(article_preferences)
@@ -4544,6 +4553,7 @@ async def generate_draft_from_outline(
                 variation_key=variation_key,
                 article_preferences=prefs,
                 bc_core_context=bc_core_context,
+                offer_property=offer_property,
             )
             parts.append(content)
             previous_content += content
@@ -4659,24 +4669,35 @@ async def generate_draft_from_outline(
     html_output = _strip_unprovided_article_date(html_output, article_date)
     html_output = _strip_market_mismatch_phrasing(html_output, prefs.get("market", "US"))
     html_output = _strip_formatting_from_headings(html_output)
-    html_output = await _ensure_matchup_analysis_section(
-        html_output,
-        keyword=keyword,
-        offer=offer,
-        event_context=event_context,
-        bc_core_context=bc_core_context,
-        content_mode=content_mode,
-        bet_example_data=bet_example_data,
-    )
-    html_output = await _ensure_editorial_body_length(
-        html_output,
-        keyword=keyword,
-        offer=offer,
-        event_context=event_context,
-        bc_core_context=bc_core_context,
-        content_mode=content_mode,
-        bet_example_data=bet_example_data,
-    )
+    if not is_goal:
+        # GOAL's fixed structure carries its own match-breakdown H3; the
+        # appended analysis/length sections would duplicate it.
+        html_output = await _ensure_matchup_analysis_section(
+            html_output,
+            keyword=keyword,
+            offer=offer,
+            event_context=event_context,
+            bc_core_context=bc_core_context,
+            content_mode=content_mode,
+            bet_example_data=bet_example_data,
+        )
+        html_output = await _ensure_editorial_body_length(
+            html_output,
+            keyword=keyword,
+            offer=offer,
+            event_context=event_context,
+            bc_core_context=bc_core_context,
+            content_mode=content_mode,
+            bet_example_data=bet_example_data,
+        )
+    if is_goal and operator_promos:
+        promos_section = render_operator_promos_section(
+            brand,
+            operator_promos,
+            primary_offer_id=str(offer.get("id") or ""),
+        )
+        if promos_section:
+            html_output = _insert_section_before_terms(html_output, promos_section)
     html_output = _cap_primary_keyword_density(html_output, keyword)
     html_output = _strip_search_query_openers(html_output)
     html_output = _title_case_headings(html_output)
@@ -4690,6 +4711,117 @@ async def generate_draft_from_outline(
         return _ensure_top_story_tracking_tag(_html_to_markdown(html_output))
 
     return _ensure_top_story_tracking_tag(html_output)
+
+
+def _build_goal_signup_list(
+    offer: dict[str, Any],
+    *,
+    signup_url: str = "",
+    state: str = "ALL",
+    market: str = "US",
+) -> str:
+    """GOAL-brief sign-up steps: deposit, wager+odds, payout mechanics, expiry, legal states."""
+    offer = offer or {}
+    brand = str(offer.get("brand") or "the operator").strip()
+    bonus_code = str(offer.get("bonus_code") or "").strip()
+    terms = str(offer.get("terms") or "")
+    qualifying_amount = _offer_qualifying_amount_text(offer) or "$10"
+    minimum_odds = str(offer.get("minimum_odds") or extract_minimum_odds(terms) or "").strip()
+    reward_phrase = _offer_reward_phrase_visible(offer)
+    expiration_days = offer.get("bonus_expiration_days") or extract_bonus_expiration_days(terms)
+    mechanic = _offer_mechanic_type(offer)
+    states_text = _offer_states_text(offer, state)
+    noun = "provinces" if str(market or "US").strip().upper() == "CA" else "states"
+
+    if signup_url:
+        first_step = (
+            f'Head to <a data-id="switchboard_tracking" href="{escape(signup_url, quote=True)}" rel="nofollow">{escape(brand)}</a> via this link'
+        )
+    else:
+        first_step = f"Head to {escape(brand)} via the link above"
+
+    steps: list[str] = [first_step, "Create an account with your email and verify your details"]
+    if bonus_code:
+        steps.append(f"Enter <strong>{escape(bonus_code)}</strong> when signing up so the welcome bonus attaches to your account")
+    steps.append(f"Deposit {qualifying_amount} or more")
+    wager_step = f"Place {qualifying_amount} on any eligible sports betting market"
+    if minimum_odds:
+        wager_step += f" at odds of {minimum_odds} or longer"
+    steps.append(wager_step)
+    if mechanic == "money_back":
+        steps.append(f"If that qualifying wager loses, you get the stake back as {reward_phrase} after it settles")
+    elif mechanic == "bet_and_get":
+        steps.append(f"Once the qualifying wager is placed, {reward_phrase} is credited to your account")
+    else:
+        steps.append(f"After the qualifying wager settles, the offer credits {reward_phrase} under the listed terms")
+    expiry_step = "Bonuses cannot be withdrawn as cash"
+    if expiration_days:
+        expiry_step += f" and expire after {expiration_days} days"
+    steps.append(expiry_step)
+    if states_text and "listed by the operator" not in states_text.lower():
+        steps.append(f"The offer is available in {states_text} - you must be in one of these {noun} to claim it")
+
+    items = "\n".join(f"<li>{step}</li>" for step in steps)
+    return f"<ol>\n{items}\n</ol>"
+
+
+async def _generate_goal_intro(
+    *,
+    keyword: str,
+    offer: dict,
+    event_context: str = "",
+    article_date: str = "",
+) -> str:
+    """GOAL's brief wants a single ~150-character lede, not the two-paragraph house intro."""
+    offer = offer or {}
+    brand = str(offer.get("brand") or "").strip()
+    bonus_code = str(offer.get("bonus_code") or "").strip()
+    offer_summary = _offer_value_summary(offer)
+    hook = _naturalize_event_context(event_context)
+    code_line = f"promo code {bonus_code}" if bonus_code else "no promo code needed"
+    date_note = (
+        f"ARTICLE DATE (for the (M/D) tag): {article_date}"
+        if article_date
+        else "ARTICLE DATE: not provided - do not add a date tag."
+    )
+    system_prompt = (
+        "You are a sports betting writer for GOAL's Top Stories. Write ONE short lede paragraph: "
+        "150 characters is the target, 220 the hard maximum. Output exactly one <p> tag. "
+        "No markdown, no exclamation points."
+    )
+    prompt = f"""Write the one-sentence lede for this GOAL promo article.
+
+{date_note}
+EVENT: {hook or "no event provided"}
+OFFER: {brand} - {offer_summary}; {code_line}
+KEYWORD (use exactly once): {keyword}
+
+GOAL's house shape, for rhythm only: "Pre the Seahawks vs Cardinals NFL matchup at 8pm ET, use DraftKings promo code GOAL, to get $200 in bonuses (11/18)."
+Include: the keyword, the code status, the bonus amount, the matchup with its start time, and the (M/D) date tag when a date is provided.
+Output one <p> paragraph only."""
+
+    async def _attempt(extra: str = "", max_tokens: int = 300) -> str:
+        raw = await generate_completion(
+            prompt=prompt + extra,
+            system_prompt=system_prompt,
+            temperature=get_temperature_by_section("intro"),
+            max_tokens=max_tokens,
+        )
+        text = str(raw or "").strip()
+        if text and not text.startswith("<p>"):
+            text = f"<p>{text}</p>"
+        first = re.search(r"<p\b[^>]*>.*?</p>", text, flags=re.DOTALL)
+        return first.group(0) if first else text
+
+    result = await _attempt()
+    if len(_html_to_plain_text(result)) > 240:
+        retry = await _attempt(
+            "\n\nMANDATORY CORRECTION: your previous attempt was too long. Rewrite in under 150 characters.",
+            max_tokens=200,
+        )
+        if retry and len(_html_to_plain_text(retry)) < len(_html_to_plain_text(result)):
+            result = retry
+    return result
 
 
 async def _generate_intro_section(
@@ -4706,6 +4838,7 @@ async def _generate_intro_section(
     variation_key: str = "",
     article_preferences: dict[str, Any] | None = None,
     bc_core_context: dict[str, Any] | None = None,
+    offer_property: str = "",
 ) -> str:
     """Generate the intro/lede section.
 
@@ -4715,6 +4848,13 @@ async def _generate_intro_section(
     3. Keep code mention light and use only one natural <strong> anchor when helpful
     4. State eligibility without turning into a legal dump
     """
+    if is_goal_property(offer_property):
+        return await _generate_goal_intro(
+            keyword=keyword,
+            offer=offer,
+            event_context=event_context,
+            article_date=article_date,
+        )
     brand = offer.get("brand", "")
     offer_text = offer.get("offer_text", "")
     bonus_code = offer.get("bonus_code", "")
@@ -5204,6 +5344,9 @@ async def _generate_body_section(
         )
 
     if is_terms:
+        if is_goal_property(offer_property):
+            # GOAL's compliance must-have: the three-row T&C table.
+            return render_goal_terms_table(primary_offer)
         return _render_terms_section_html(
             offers=prompt_offers,
             terms=terms,
@@ -5217,6 +5360,13 @@ async def _generate_body_section(
 
     if is_numbered_list:
         signup_url = _offer_switchboard_url(primary_offer, state=state, property_key=offer_property)
+        if is_goal_property(offer_property):
+            return _build_goal_signup_list(
+                primary_offer,
+                signup_url=signup_url,
+                state=state,
+                market=prefs.get("market", "US"),
+            )
         return _build_signup_list(
             brand,
             has_code,
@@ -5650,6 +5800,7 @@ async def generate_draft_from_outline_streaming(
     variation_key: str = "",
     article_preferences: dict[str, Any] | None = None,
     bc_core_context: dict[str, Any] | None = None,
+    operator_promos: list[dict[str, Any]] | None = None,
 ) -> AsyncGenerator[dict, None]:
     """Generate draft with streaming updates.
 
@@ -5669,6 +5820,7 @@ async def generate_draft_from_outline_streaming(
     )
     is_prediction_market = content_mode == CONTENT_MODE_PREDICTION_MARKET
     is_dfs_mode = content_mode == CONTENT_MODE_DFS
+    is_goal = is_goal_property(offer_property)
     variation_key = variation_key or uuid4().hex
     prefs = _normalize_article_preferences(article_preferences)
     preferred_links = _dedupe_link_specs_by_url(get_links_by_urls(prefs["preferred_internal_urls"], property_key=offer_property, market=prefs.get("market", "US")))
@@ -5718,6 +5870,7 @@ async def generate_draft_from_outline_streaming(
                 variation_key=variation_key,
                 article_preferences=prefs,
                 bc_core_context=bc_core_context,
+                offer_property=offer_property,
             )
             parts.append(content)
             previous_content += content
@@ -5836,24 +5989,35 @@ async def generate_draft_from_outline_streaming(
     html_output = _strip_unprovided_article_date(html_output, article_date)
     html_output = _strip_market_mismatch_phrasing(html_output, prefs.get("market", "US"))
     html_output = _strip_formatting_from_headings(html_output)
-    html_output = await _ensure_matchup_analysis_section(
-        html_output,
-        keyword=keyword,
-        offer=offer,
-        event_context=event_context,
-        bc_core_context=bc_core_context,
-        content_mode=content_mode,
-        bet_example_data=bet_example_data,
-    )
-    html_output = await _ensure_editorial_body_length(
-        html_output,
-        keyword=keyword,
-        offer=offer,
-        event_context=event_context,
-        bc_core_context=bc_core_context,
-        content_mode=content_mode,
-        bet_example_data=bet_example_data,
-    )
+    if not is_goal:
+        # GOAL's fixed structure carries its own match-breakdown H3; the
+        # appended analysis/length sections would duplicate it.
+        html_output = await _ensure_matchup_analysis_section(
+            html_output,
+            keyword=keyword,
+            offer=offer,
+            event_context=event_context,
+            bc_core_context=bc_core_context,
+            content_mode=content_mode,
+            bet_example_data=bet_example_data,
+        )
+        html_output = await _ensure_editorial_body_length(
+            html_output,
+            keyword=keyword,
+            offer=offer,
+            event_context=event_context,
+            bc_core_context=bc_core_context,
+            content_mode=content_mode,
+            bet_example_data=bet_example_data,
+        )
+    if is_goal and operator_promos:
+        promos_section = render_operator_promos_section(
+            brand,
+            operator_promos,
+            primary_offer_id=str(offer.get("id") or ""),
+        )
+        if promos_section:
+            html_output = _insert_section_before_terms(html_output, promos_section)
     html_output = _cap_primary_keyword_density(html_output, keyword)
     html_output = _strip_search_query_openers(html_output)
     html_output = _title_case_headings(html_output)
