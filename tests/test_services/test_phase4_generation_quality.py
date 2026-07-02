@@ -1063,6 +1063,29 @@ def test_select_bc_core_editorial_points_filters_by_content_mode():
     assert not any("covered three" in point for point in dfs_points)
 
 
+def test_naturalize_bc_core_point_fixes_mononyms_and_formations():
+    doubled = _naturalize_bc_core_editorial_point("Vitinha Vitinha projects for 68.73 passes.")
+    assert doubled == "Vitinha projects for 68.73 passes."
+
+    formation = _naturalize_bc_core_editorial_point(
+        "Portugal's projected lineup lists 11 starters in a 1-4-2-3-1."
+    )
+    assert "4-2-3-1" in formation
+    assert "1-4-2-3-1" not in formation
+
+
+def test_humanize_market_title_strips_dates_and_will_win_phrasing():
+    from app.services.draft import _humanize_market_title
+
+    assert _humanize_market_title("Will Portugal win on 2026-07-02?") == "Portugal to win"
+    assert _humanize_market_title("Pittsburgh Pirates vs. Philadelphia Phillies: O/U 10.5") == (
+        "Pittsburgh Pirates vs. Philadelphia Phillies: O/U 10.5"
+    )
+    assert _humanize_market_title("Will Portugal vs. Croatia end in a draw?") == (
+        "Will Portugal vs. Croatia end in a draw"
+    )
+
+
 def test_naturalize_bc_core_point_cleans_market_intelligence_labels():
     projection = _naturalize_bc_core_editorial_point(
         "Payton Tolle projects for 6.25 baseball_pitchinghits in the selected event."

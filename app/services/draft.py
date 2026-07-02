@@ -139,6 +139,10 @@ def _naturalize_bc_core_editorial_point(point: str) -> str:
     text = re.sub(r"\bbaseball_pitchingstrikeouts\b", "strikeouts", text, flags=re.IGNORECASE)
     text = text.replace("FromRight", "from right field").replace("FromLeft", "from left field")
     text = text.replace("LeftToRight", "left-to-right").replace("RightToLeft", "right-to-left")
+    # Mononym players arrive doubled ("Vitinha Vitinha") from first/last name joins.
+    text = re.sub(r"\b([A-Z][\w'-]+)\s+\1\b", r"\1", text)
+    # Formations arrive with the goalkeeper prefix ("1-4-2-3-1"); humans write 4-2-3-1.
+    text = re.sub(r"\b1-(\d(?:-\d)+)\b", r"\1", text)
     text = re.sub(r"\btrend sample\b", "recent sample", text, flags=re.IGNORECASE)
     text = re.sub(r"\boverall sample\b", "recent sample", text, flags=re.IGNORECASE)
     text = re.sub(r"\s*\bin the selected event\b", "", text, flags=re.IGNORECASE)
@@ -2879,7 +2883,13 @@ async def _compose_numbers_narrative_section(
     )
     min_odds_note = f" The qualifying bet must meet {min_odds} minimum odds." if min_odds and not prediction_market else ""
     if prediction_market:
-        play_target = f"the {selection} side of {market_title}" if market_title else selection
+        market_label = _humanize_market_title(market_title)
+        if selection.lower() == "yes" and market_label:
+            play_target = f"Yes on {market_label}"
+        elif market_label:
+            play_target = f"the {selection} side of {market_label}"
+        else:
+            play_target = selection
         play_block = (
             f"THE PLAY (final paragraph on its own, must start exactly with \"The play:\"):\n- Take {play_target}{odds_text}, then keep {short_reward} for later eligible markets.\n\n"
             if selection
@@ -2951,6 +2961,15 @@ OFFER TIE-IN: one short sentence at the end of the second-to-last paragraph, mod
         ):
             return f"<h2>What the Numbers Say About {event_label}</h2>\n{cleaned}"
     return None
+
+
+def _humanize_market_title(title: str) -> str:
+    """Turn raw market titles ('Will Portugal win on 2026-07-02?') into prose."""
+    text = re.sub(r"\s+on\s+\d{4}-\d{2}-\d{2}", "", str(title or "")).strip()
+    match = re.match(r"^Will\s+(.+?)\s+win\??$", text, flags=re.IGNORECASE)
+    if match:
+        return f"{match.group(1)} to win"
+    return text.rstrip("?")
 
 
 def _insert_section_before_terms(html: str, section: str) -> str:
@@ -4228,9 +4247,13 @@ def _render_prediction_market_example_section_deterministic(
     if not selection:
         return None
     prediction_market_data = data.get("prediction_market") if isinstance(data.get("prediction_market"), dict) else {}
-    market_title = str(data.get("market_title") or prediction_market_data.get("market_title") or "").strip()
+    market_title = _humanize_market_title(
+        str(data.get("market_title") or prediction_market_data.get("market_title") or "").strip()
+    )
     selection_phrase = selection
-    if market_title and selection.lower() not in market_title.lower():
+    if market_title and selection.lower() == "yes":
+        selection_phrase = market_title
+    elif market_title and selection.lower() not in market_title.lower():
         selection_phrase = f"the {selection} side of {market_title}"
     elif market_title:
         selection_phrase = market_title
