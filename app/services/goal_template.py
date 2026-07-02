@@ -194,12 +194,20 @@ def render_operator_promos_section(
     """Optional 'more promos today' block from the operator's other live BAM offers."""
     display_brand = str(brand or "the operator").strip()
     extra: list[str] = []
+    seen_texts: set[str] = set()
     for promo in promos or []:
         if str(promo.get("id") or "") == str(primary_offer_id or ""):
             continue
         text = str(promo.get("offer_text") or "").strip()
         if not text:
             continue
+        # International/localized campaigns leak through brand-only filtering.
+        if re.search(r"[¡¿ñáéíóúü]|\bapuestas\b|\bgratis\b", text, flags=re.IGNORECASE):
+            continue
+        text_key = re.sub(r"\s+", " ", text.lower())
+        if text_key in seen_texts:
+            continue
+        seen_texts.add(text_key)
         code = str(promo.get("bonus_code") or "").strip()
         code_part = f" (code {escape(code)})" if code else ""
         extra.append(f"<li>{escape(text)}{code_part}</li>")

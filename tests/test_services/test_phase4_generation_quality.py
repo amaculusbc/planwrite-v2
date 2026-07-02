@@ -1267,12 +1267,16 @@ def test_goal_terms_table_and_promos_section():
         [
             {"id": "1", "offer_text": "Bet $10, Get $365 in Bonus Bets", "bonus_code": "GOALBET"},
             {"id": "2", "offer_text": "Early Payout Offer on Soccer", "bonus_code": ""},
+            {"id": "3", "offer_text": "Early Payout Offer on Soccer", "bonus_code": "DUPE"},
+            {"id": "4", "offer_text": "Mexico: Consiga hasta $3,000 en apuestas gratis!", "bonus_code": "365INT"},
         ],
         primary_offer_id="1",
     )
     assert "More bet365 Promos Today" in promos
     assert "Early Payout Offer on Soccer" in promos
     assert "GOALBET" not in promos  # the primary offer is excluded
+    assert "DUPE" not in promos  # duplicate offer text is deduped
+    assert "apuestas" not in promos  # localized international campaigns are excluded
 
 
 def test_goal_signup_list_carries_mechanics_and_states():
