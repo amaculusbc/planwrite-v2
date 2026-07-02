@@ -1579,8 +1579,26 @@ def test_strip_search_query_openers_rewrites_meta_ledes():
     assert "For readers tracking" not in fixed3
     assert "<p>The early window puts Pirates-Phillies in focus before first pitch.</p>" in fixed3
 
+    colon_preamble = (
+        "<p>For this event, the DraftKings promo code path is clear: Thursday's early window "
+        "features Pirates-Phillies, and DraftKings gives new bettors a direct way in.</p>"
+    )
+    fixed4 = _strip_search_query_openers(colon_preamble)
+    assert "For this event" not in fixed4
+    assert "<p>Thursday's early window features Pirates-Phillies" in fixed4
+
     clean = "<p>Pirates-Phillies opens the early window Thursday, and DraftKings has a clean path in.</p>"
     assert _strip_search_query_openers(clean) == clean
+
+
+def test_polish_intro_drops_repeated_weekday_in_full_date():
+    html = (
+        "<p>Thursday's early MLB window features Pirates-Phillies at 12:35 p.m. ET on Thursday, "
+        "July 2, 2026, and DraftKings gives new bettors a direct way in.</p>"
+    )
+    fixed = _polish_intro_section_prose(html)
+    assert "on July 2, 2026" in fixed
+    assert "on Thursday, July 2, 2026" not in fixed
 
 
 def test_strip_quoted_stat_phrases_unwraps_verbatim_notes():

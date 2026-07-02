@@ -1909,6 +1909,15 @@ def _strip_search_query_openers(html: str) -> str:
         count=1,
         flags=re.IGNORECASE,
     )
+    # Colon preambles are the same tell in another coat:
+    # "For this event, the DraftKings promo code path is clear: ..."
+    stripped = re.sub(
+        r"^\s*(?:For|In)\s+this\s+(?:event|game|matchup|spot|window)\b(?:<[^>]+>|[^:<.]){0,110}:\s*",
+        "",
+        stripped,
+        count=1,
+        flags=re.IGNORECASE,
+    )
     if stripped == inner:
         return html
     if stripped[:1].islower():
@@ -2350,6 +2359,15 @@ def _polish_intro_section_prose(html: str) -> str:
                 flags=re.IGNORECASE,
             ),
         )
+    cleaned = _rewrite_html_text_nodes(
+        cleaned,
+        lambda text: re.sub(
+            # "Thursday's window ... on Thursday, July 2, 2026" - drop the repeated weekday.
+            r"\b((?:Mon|Tues|Wednes|Thurs|Fri|Satur|Sun)day)((?:'|’)s[^.]{0,120}?\bon )\1,\s*",
+            r"\1\2",
+            text,
+        ),
+    )
     cleaned = _rewrite_html_text_nodes(
         cleaned,
         lambda text: re.sub(r"\bis a clean spot to use\b", "is a good spot to use", text, flags=re.IGNORECASE),
