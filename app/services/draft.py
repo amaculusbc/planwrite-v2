@@ -1943,6 +1943,17 @@ def _strip_search_query_openers(html: str) -> str:
     )
 
 
+def _strip_projection_sentences(html: str) -> str:
+    """GOAL never publishes model projections; drop any surviving 'projects for' sentence."""
+    if not html:
+        return html
+
+    def _transform(text: str) -> str:
+        return re.sub(r"[^.!?<>]*\bprojects?\s+for\b[^.!?<>]*[.!?]\s*", "", text)
+
+    return _normalize_visible_punctuation(_rewrite_html_text_nodes(html, _transform))
+
+
 def _strip_quoted_stat_phrases(html: str) -> str:
     """Unwrap stats the model quoted verbatim from internal notes."""
     if not html:
@@ -4690,6 +4701,8 @@ async def generate_draft_from_outline(
             content_mode=content_mode,
             bet_example_data=bet_example_data,
         )
+    if is_goal:
+        html_output = _strip_projection_sentences(html_output)
     if is_goal and operator_promos:
         promos_section = render_operator_promos_section(
             brand,
@@ -5405,6 +5418,13 @@ async def _generate_body_section(
         if bc_core_context and not is_terms and not is_numbered_list and not is_daily_promos
         else []
     )
+    if is_goal_property(offer_property):
+        # GOAL only prints posted market lines/prices and real historical stats -
+        # internal model projections ("projects for 68.45 passes") never publish there.
+        bc_core_points = [
+            point for point in bc_core_points
+            if _bc_core_point_category(point) != "projection"
+        ]
     bc_core_required_count = 2 if section_kind != "claim" and len(bc_core_points) >= 2 else 1 if bc_core_points else 0
 
     reference_mechanics = ""
@@ -5602,6 +5622,7 @@ Do NOT repeat information from previous sections."""
 - Phrase picks directly: "Take Mexico to win and keep a clean sheet." Never hedge with wording like "worth checking", "on the shortlist", "puts X in play", or "before you lock in".
 - Short, plain sentences. Never stack clauses (banned shape: "putting Portugal ball-control props on the shortlist before you lock in a pregame wager").
 - Signal confidence through frames like "the natural starting point", "the swing", "nice if you trust the attack" - not adverbs.
+- Every number must be a posted market price/line or a real historical stat ("49 goal involvements across 51 appearances"). Never write "projects for" or quote model projections - GOAL does not publish projections.
 """
 
     user_prompt = f"""Write the content for this section:
@@ -6023,6 +6044,8 @@ async def generate_draft_from_outline_streaming(
             content_mode=content_mode,
             bet_example_data=bet_example_data,
         )
+    if is_goal:
+        html_output = _strip_projection_sentences(html_output)
     if is_goal and operator_promos:
         promos_section = render_operator_promos_section(
             brand,

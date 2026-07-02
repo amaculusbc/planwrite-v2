@@ -58,6 +58,7 @@ from app.services.draft import (
     _soften_repetitive_intro_opener,
     _strip_formatting_from_headings,
     _strip_market_mismatch_phrasing,
+    _strip_projection_sentences,
     _strip_quoted_stat_phrases,
     _strip_search_query_openers,
     _strip_invalid_non_switchboard_links,
@@ -1214,6 +1215,67 @@ async def test_generate_draft_tolerates_missing_primary_offer(monkeypatch):
 
     assert "<h1>bet365 Bonus Code Test</h1>" in html
     assert "view_top_story" in html
+
+
+def test_strip_projection_sentences_removes_model_numbers():
+    html = (
+        "<p>Vitinha projects for 68.45 passes, and Portugal control the middle. "
+        "Croatia have kept two clean sheets in this tournament.</p>"
+    )
+    cleaned = _strip_projection_sentences(html)
+    assert "projects for" not in cleaned
+    assert "68.45" not in cleaned
+    assert "Croatia have kept two clean sheets in this tournament." in cleaned
+
+
+@pytest.mark.asyncio
+async def test_goal_body_excludes_projection_points(monkeypatch):
+    captured: dict[str, str] = {}
+
+    async def _fake_query_articles(*args, **kwargs):
+        return []
+
+    async def _fake_suggest_links(*args, **kwargs):
+        return []
+
+    async def _fake_generate_completion(*, prompt, system_prompt, temperature, max_tokens):
+        captured["prompt"] = prompt
+        return "<p>Portugal to win (-145) is the natural starting point. Take it.</p><p>Second paragraph.</p>"
+
+    monkeypatch.setattr("app.services.draft.query_articles", _fake_query_articles)
+    monkeypatch.setattr("app.services.draft.suggest_links_for_section", _fake_suggest_links)
+    monkeypatch.setattr("app.services.draft.generate_completion", _fake_generate_completion)
+
+    from app.services.draft import _generate_body_section
+
+    await _generate_body_section(
+        section_title="Croatia vs Portugal - 7:00 PM ET",
+        level="h3",
+        keyword="bet365 bonus code",
+        offer={"brand": "bet365", "offer_text": "Bet $10, Get $150 in Bonus Bets", "bonus_code": "GOALBET", "terms": ""},
+        all_offers=None,
+        state="ALL",
+        offer_property="goal_com",
+        talking_points=[],
+        avoid=[],
+        previous_content="",
+        current_keyword_count=1,
+        target_keyword_total=6,
+        event_context="Featured game: Croatia vs Portugal.",
+        bc_core_context={
+            "event": {"matched": True},
+            "expertise": {
+                "matched": True,
+                "editorial_points": [
+                    "Vitinha projects for 68.45 passes.",
+                    "Croatia is 6-4 ATS in BC Core's Last10 Overall trend sample.",
+                ],
+            },
+        },
+    )
+
+    assert "projects for 68.45" not in captured["prompt"]
+    assert "against the spread over the last 10 games" in captured["prompt"]
 
 
 @pytest.mark.asyncio
