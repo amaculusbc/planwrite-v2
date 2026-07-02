@@ -5321,6 +5321,9 @@ async def _generate_body_section(
 
     title_lower = section_title.lower()
     is_signup = _is_signup_heading(title_lower)
+    if is_goal_property(offer_property) and re.search(r"\bhow to use\b", title_lower):
+        # GOAL's brief puts the numbered sign-up steps under "How to Use the {Operator} Promo Code".
+        is_signup = True
     is_how_to_claim = _is_claim_heading(title_lower, is_signup)
     is_numbered_list = is_signup
     is_overview = (
