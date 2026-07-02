@@ -190,7 +190,9 @@ def test_render_prediction_market_example_section_uses_selected_market_title():
     )
 
     assert html is not None
-    assert "Will Mexico beat South Africa?" in html
+    # The raw question-mark market title is humanized before it reaches copy.
+    assert "Will Mexico beat South Africa" in html
+    assert "Will Mexico beat South Africa?" not in html
     assert "bonus bets" not in html.lower()
     assert "$10 qualifying action" in html
     assert "position on a Yes position on" not in html
