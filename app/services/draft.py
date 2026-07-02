@@ -1912,7 +1912,7 @@ def _ensure_intro_state_specificity(html: str, states_text: str) -> str:
     state_tokens = [s.strip().upper() for s in normalized_states.split(",") if s.strip()]
     plain = re.sub(r"<[^>]+>", " ", html)
     has_availability_phrase = bool(
-        re.search(r"\bavailable (?:in|to)\b|\bavailability varies\b", plain, flags=re.IGNORECASE)
+        re.search(r"\bavailable\b|\bavailability\b", plain, flags=re.IGNORECASE)
     )
     plain_upper = plain.upper()
     has_explicit_state = any(
