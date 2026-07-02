@@ -1,4 +1,4 @@
-﻿"""OpenAI LLM service with streaming support."""
+"""OpenAI LLM service with streaming support."""
 
 from typing import AsyncGenerator, Callable, Any
 
