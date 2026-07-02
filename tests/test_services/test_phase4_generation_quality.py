@@ -1571,6 +1571,14 @@ def test_strip_search_query_openers_rewrites_meta_ledes():
     assert "For readers tracking" not in fixed2
     assert "<p>Celtics vs. Spurs takes center stage tonight.</p>" in fixed2
 
+    tagged_form = (
+        "<p>For readers tracking <strong>DraftKings promo code</strong>, the early window puts "
+        "Pirates-Phillies in focus before first pitch.</p>"
+    )
+    fixed3 = _strip_search_query_openers(tagged_form)
+    assert "For readers tracking" not in fixed3
+    assert "<p>The early window puts Pirates-Phillies in focus before first pitch.</p>" in fixed3
+
     clean = "<p>Pirates-Phillies opens the early window Thursday, and DraftKings has a clean path in.</p>"
     assert _strip_search_query_openers(clean) == clean
 

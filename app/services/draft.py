@@ -1898,10 +1898,12 @@ def _strip_search_query_openers(html: str) -> str:
     if not first_para:
         return html
     inner = first_para.group(2)
+    # (?:<[^>]+>|[^,:]) consumes whole tags atomically so <strong>-wrapped
+    # keywords inside the opener clause do not break the match.
     stripped = re.sub(
         r"^\s*(?:For\s+)?(?:readers|bettors|users|fans|players|traders|those|anyone)\b"
-        r"[^,:<]{0,120}?\b(?:checking|tracking|looking(?:\s+up)?|searching|scanning|hunting|typing)\b"
-        r"[^,:<]{0,120}[,:]\s*",
+        r"(?:<[^>]+>|[^,:]){0,160}?\b(?:checking|tracking|looking(?:\s+up)?|searching|scanning|hunting|typing)\b"
+        r"(?:<[^>]+>|[^,:]){0,160}[,:]\s*",
         "",
         inner,
         count=1,
@@ -4645,6 +4647,7 @@ async def generate_draft_from_outline(
         bet_example_data=bet_example_data,
     )
     html_output = _cap_primary_keyword_density(html_output, keyword)
+    html_output = _strip_search_query_openers(html_output)
     html_output = _title_case_headings(html_output)
     html_output = _normalize_brand_casing(
         html_output,
@@ -5848,6 +5851,7 @@ async def generate_draft_from_outline_streaming(
         bet_example_data=bet_example_data,
     )
     html_output = _cap_primary_keyword_density(html_output, keyword)
+    html_output = _strip_search_query_openers(html_output)
     html_output = _title_case_headings(html_output)
     html_output = _normalize_brand_casing(
         html_output,
