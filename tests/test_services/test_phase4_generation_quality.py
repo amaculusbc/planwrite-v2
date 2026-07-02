@@ -1350,6 +1350,17 @@ def test_goal_outline_matches_brief_structure():
     assert "Total: 2.5 (O -110 / U -120)" in match_points
     assert any("Austria vs Spain" in a for a in outline[5]["avoid"])
 
+    no_odds = build_goal_outline(
+        keyword="bet365 bonus code",
+        brand="bet365",
+        bonus_code="GOALBET",
+        away_team="Croatia",
+        home_team="Portugal",
+        odds=None,
+    )
+    no_odds_points = " ".join(no_odds[5]["talking_points"])
+    assert "NEVER mention that prices are missing" in no_odds_points
+
 
 def test_goal_terms_table_and_promos_section():
     from app.services.goal_template import render_goal_terms_table, render_operator_promos_section
