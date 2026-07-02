@@ -1,4 +1,4 @@
-"""OpenAI LLM service with streaming support."""
+﻿"""OpenAI LLM service with streaming support."""
 
 from typing import AsyncGenerator, Callable, Any
 
@@ -33,6 +33,18 @@ def _token_param(model: str, max_tokens: int) -> dict:
     if model.startswith("gpt-5"):
         return {"max_completion_tokens": max_tokens}
     return {"max_tokens": max_tokens}
+
+
+# gpt-5.5 (and likely later reasoning-first models) reject any non-default
+# temperature; sampling variety comes from the prompts instead.
+_TEMPERATURE_LOCKED_PREFIXES = ("gpt-5.4", "gpt-5.5")
+
+
+def _sampling_params(model: str, temperature: float) -> dict:
+    """Return sampling params supported by the given model."""
+    if model.startswith(_TEMPERATURE_LOCKED_PREFIXES):
+        return {}
+    return {"temperature": temperature}
 
 
 async def _with_openai_retries(op_name: str, fn: Callable[[], Any]) -> Any:
@@ -76,7 +88,7 @@ async def generate_completion(
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},
             ],
-            temperature=temperature,
+            **_sampling_params(model, temperature),
             **_token_param(model, max_tokens),
         )
 
@@ -117,7 +129,7 @@ async def generate_completion_structured(
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},
             ],
-            temperature=temperature,
+            **_sampling_params(model, temperature),
             **_token_param(model, max_tokens),
             response_format=response_format,
         )
@@ -148,7 +160,7 @@ async def generate_completion_streaming(
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},
             ],
-            temperature=temperature,
+            **_sampling_params(model, temperature),
             **_token_param(model, max_tokens),
             stream=True,
         )
