@@ -1873,6 +1873,19 @@ _STATE_FULL_NAMES = {
 }
 
 
+def _intro_opens_with_date(html: str) -> bool:
+    """True when the lede's first words are the calendar date ('Thursday, July 2, 2026 sets up...')."""
+    plain = _html_to_plain_text(html or "").strip()
+    return bool(
+        re.match(
+            r"^(?:(?:Mon|Tues|Wednes|Thurs|Fri|Satur|Sun)day,?\s+)?"
+            r"(?:January|February|March|April|May|June|July|August|September|October|November|December)"
+            r"\s+\d{1,2}(?:,\s+\d{4})?\b",
+            plain,
+        )
+    )
+
+
 def _strip_search_query_openers(html: str) -> str:
     """Drop lede openers that address people searching for the keyword.
 
@@ -4779,8 +4792,19 @@ Output clean HTML only - use <p>, <a>, <strong> tags. No markdown. No exclamatio
     if event_context:
         game_hook = f"GAME HOOK (use this naturally, not as labels):\n{_naturalize_event_context(event_context)}\n\n"
 
+    opener_directives = [
+        "Open sentence one with the matchup itself as the grammatical subject - the two teams doing something - and land the offer value by the end of the first paragraph.",
+        "Open sentence one with what is at stake or why this spot is live, put the matchup and start time after that, and land the offer value by the end of the first paragraph.",
+        "Open sentence one with the offer value (real amounts from OFFER DETAILS) attached to the event in the same sentence, then add the start time naturally.",
+    ]
+    if bc_core_points:
+        opener_directives.append(
+            "Open sentence one with the sharpest stat from the internal matchup notes and what it means for this game, then bring in the offer value."
+        )
+    opener_directive = _choose_variant(variation_key, "intro_opener", opener_directives, keyword)
     requirements = [
-        "If there is a game hook, open with why this game matters right now - the stakes, the form line, or the moment - in plain, confident language, and land the offer value by the end of the first paragraph. Never stack matchup, time, network, and offer into one comma chain.",
+        f"OPENER (mandatory for this run): {opener_directive} Never stack matchup, time, network, and offer into one comma chain.",
+        "Never open sentence one with the calendar date as its first words or subject ('Thursday, July 2, 2026 sets up...' is banned). If the date matters, tuck it mid-sentence after the subject.",
         "Never open by describing people searching for the keyword. Banned openers: 'For readers tracking...', 'Readers looking up...', 'If you're searching for...', 'Bettors looking for...' and anything similar. Write to a fan, not to a search query.",
         "Scale the stakes honestly to the actual event: a midweek regular-season game is a live spot or a clean angle, never 'the biggest game of the year'.",
         "If no game hook, start with a direct offer statement; avoid generic openers like \"If you are looking for a valuable offer...\"",
@@ -4848,26 +4872,45 @@ Output clean HTML only - use <p>, <a>, <strong> tags. No markdown. No exclamatio
 
     code_mention = f" enter {code_strong} at signup," if has_code else ""
     if prediction_market:
-        example_output = (
-            "<p>[Event] anchors the slate tonight - and the [Brand] offer is the cleanest way for a new trader to get a position in it. "
-            "Deposit [qualifying amount], collect [reward], and be in the market before the first pitch.</p>"
-            f"<p>The offer is about as simple as sign-up promotions get. No convoluted opt-in, no fine print that drains the value: sign up,{code_mention} "
-            "make the qualifying deposit, and the credit is ready to deploy on your first position.</p>"
-        )
+        exemplar_options = [
+            (
+                "<p>[Event] anchors the slate tonight - and the [Brand] offer is the cleanest way for a new trader to get a position in it. "
+                "Deposit [qualifying amount], collect [reward], and be in the market before the first pitch.</p>"
+                f"<p>The offer is about as simple as sign-up promotions get. No convoluted opt-in, no fine print that drains the value: sign up,{code_mention} "
+                "make the qualifying deposit, and the credit is ready to deploy on your first position.</p>"
+            ),
+            (
+                "<p>A [qualifying amount] deposit is a small way into a big market: [Brand] adds [reward] for new traders, and [Event] gives that credit a live contract to work with right away.</p>"
+                f"<p>The mechanics stay out of the way. Sign up,{code_mention} make the qualifying deposit, and the credit is ready for your first position before [time].</p>"
+            ),
+        ]
     elif dfs_mode:
-        example_output = (
-            "<p>[Event] headlines tonight's slate - and the [Brand] offer is the cleanest way for a new player to get entries in on it. "
-            "Play [qualifying amount], collect [reward], and have your first card built before lock.</p>"
-            f"<p>The offer is about as simple as sign-up promotions get. No convoluted opt-in, no fine print that drains the value: sign up,{code_mention} "
-            "make the qualifying entry, and the bonus entries land ready for the rest of the slate.</p>"
-        )
+        exemplar_options = [
+            (
+                "<p>[Event] headlines tonight's slate - and the [Brand] offer is the cleanest way for a new player to get entries in on it. "
+                "Play [qualifying amount], collect [reward], and have your first card built before lock.</p>"
+                f"<p>The offer is about as simple as sign-up promotions get. No convoluted opt-in, no fine print that drains the value: sign up,{code_mention} "
+                "make the qualifying entry, and the bonus entries land ready for the rest of the slate.</p>"
+            ),
+            (
+                "<p>A [qualifying amount] entry opens the door: [Brand] adds [reward] in bonus entries for new players, and [Event] is the slate to spend them on.</p>"
+                f"<p>The mechanics stay out of the way. Sign up,{code_mention} make the qualifying entry, and the bonus entries land with time to build a card before lock.</p>"
+            ),
+        ]
     else:
-        example_output = (
-            "<p>[Event] is the spot on tonight's board - and the [Brand] offer is the cleanest way for a new bettor to get a stake in it. "
-            "Bet [qualifying amount], collect [reward], and be set before first pitch.</p>"
-            f"<p>The offer is about as simple as sign-up bonuses get. No convoluted opt-in, no rollover buried in the fine print: sign up,{code_mention} "
-            "place the qualifying bet, and the bonus lands with the rest of the slate still ahead of you.</p>"
-        )
+        exemplar_options = [
+            (
+                "<p>[Event] is the spot on tonight's board - and the [Brand] offer is the cleanest way for a new bettor to get a stake in it. "
+                "Bet [qualifying amount], collect [reward], and be set before first pitch.</p>"
+                f"<p>The offer is about as simple as sign-up bonuses get. No convoluted opt-in, no rollover buried in the fine print: sign up,{code_mention} "
+                "place the qualifying bet, and the bonus lands with the rest of the slate still ahead of you.</p>"
+            ),
+            (
+                "<p>A [qualifying amount] first bet doesn't usually buy this much cover: [Brand] hands new users [reward] once the qualifying bet lands, and [Event] is the natural spot to use it.</p>"
+                f"<p>The mechanics stay out of the way. Sign up,{code_mention} place the qualifying bet on a market you already like, and the bonus arrives with the rest of the slate ahead.</p>"
+            ),
+        ]
+    example_output = _choose_variant(variation_key, "intro_exemplar", exemplar_options, keyword)
 
     user_prompt = f"""Write the intro paragraph for this promo article:
 
@@ -4925,6 +4968,31 @@ Write TWO <p> tags now (HTML only, no markdown):"""
     result = _remove_irrelevant_excluded_state_mentions(result, state)
     result = _remove_irrelevant_single_state_exclusion_phrases(result, state)
     result = _resolve_intro_age_conflicts(result, age_summary)
+    if _intro_opens_with_date(result):
+        date_retry_prompt = (
+            user_prompt
+            + "\n\nMANDATORY CORRECTION:\n"
+            + "Do not open with the calendar date as the first words of sentence one. "
+            + "Rewrite so sentence one starts with the matchup, the stakes, or the offer value; the date may appear mid-sentence."
+        )
+        retried = await generate_completion(
+            prompt=date_retry_prompt,
+            system_prompt=system_prompt,
+            temperature=get_temperature_by_section("intro"),
+            max_tokens=500,
+        )
+        retried = str(retried or "").strip()
+        if retried:
+            if not retried.startswith("<p>"):
+                retried = f"<p>{retried}</p>"
+            retried = _ensure_two_paragraphs(retried, brand, offer_text, has_code, code_strong, states_text)
+            retried = _ensure_intro_state_specificity(retried, states_text)
+            retried = _polish_intro_section_prose(retried)
+            retried = _remove_irrelevant_excluded_state_mentions(retried, state)
+            retried = _remove_irrelevant_single_state_exclusion_phrases(retried, state)
+            retried = _resolve_intro_age_conflicts(retried, age_summary)
+            if not _intro_opens_with_date(retried):
+                result = retried
     if bc_core_points and _bc_core_marker_coverage(result, bc_core_points) < bc_core_required_count:
         retry_prompt = (
             user_prompt

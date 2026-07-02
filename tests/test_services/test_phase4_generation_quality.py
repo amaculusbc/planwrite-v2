@@ -1543,6 +1543,18 @@ def test_normalize_brand_casing_keeps_bet365_lowercase_and_skips_unknown_lowerca
     assert _normalize_brand_casing(unknown, "novig") == unknown
 
 
+def test_intro_opens_with_date_detects_date_first_ledes():
+    from app.services.draft import _intro_opens_with_date
+
+    assert _intro_opens_with_date("<p>Thursday, July 2, 2026 sets up a sharp MLB spot for bettors.</p>")
+    assert _intro_opens_with_date("<p>July 2, 2026 brings Croatia vs. Portugal to FOX.</p>")
+    # A possessive weekday or a mid-sentence date is natural and allowed.
+    assert not _intro_opens_with_date("<p>Thursday's slate has one clear anchor before first pitch.</p>")
+    assert not _intro_opens_with_date(
+        "<p>Croatia and Portugal meet Thursday, July 2, 2026 with a knockout spot on the line.</p>"
+    )
+
+
 def test_strip_search_query_openers_rewrites_meta_ledes():
     html = (
         "<p>Readers checking DraftKings promo code can find the key offer terms right away: "
