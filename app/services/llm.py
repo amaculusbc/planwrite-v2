@@ -28,22 +28,26 @@ MAX_RETRIES = 3
 BASE_BACKOFF = 0.5
 
 
+# gpt-5.4/5.5 are reasoning-first: they reject non-default temperature and
+# spend hidden reasoning tokens from the completion budget.
+_REASONING_FIRST_PREFIXES = ("gpt-5.4", "gpt-5.5")
+
+
 def _token_param(model: str, max_tokens: int) -> dict:
     """Return the correct token limit parameter for the given model."""
+    if model.startswith(_REASONING_FIRST_PREFIXES):
+        # Headroom for hidden reasoning tokens so the visible answer never truncates.
+        return {"max_completion_tokens": max_tokens + 1500}
     if model.startswith("gpt-5"):
         return {"max_completion_tokens": max_tokens}
     return {"max_tokens": max_tokens}
 
 
-# gpt-5.5 (and likely later reasoning-first models) reject any non-default
-# temperature; sampling variety comes from the prompts instead.
-_TEMPERATURE_LOCKED_PREFIXES = ("gpt-5.4", "gpt-5.5")
-
-
 def _sampling_params(model: str, temperature: float) -> dict:
     """Return sampling params supported by the given model."""
-    if model.startswith(_TEMPERATURE_LOCKED_PREFIXES):
-        return {}
+    if model.startswith(_REASONING_FIRST_PREFIXES):
+        # Copywriting needs voice, not deliberation - keep reasoning light.
+        return {"reasoning_effort": "low"}
     return {"temperature": temperature}
 
 
