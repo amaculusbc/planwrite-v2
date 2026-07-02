@@ -3910,16 +3910,21 @@ def _variation_brief(
         "Do not sound like a template. Vary sentence openings and avoid boilerplate transitions.",
     ]
 
-    angle = _choose_variant(variation_key, f"{section_kind}_angle", opener_angles[mode], mode, section_kind)
     shape = _choose_variant(variation_key, f"{section_kind}_shape", sentence_shapes, mode, section_kind)
     focus = _choose_variant(variation_key, f"{section_kind}_focus", focus_map.get(section_kind, focus_map["general"]), mode, section_kind)
     taboo_line = _choose_variant(variation_key, f"{section_kind}_taboo", taboo, mode, section_kind)
-    return "\n".join([
-        f"- Variation angle: {angle}.",
+    lines = []
+    if section_kind != "intro":
+        # The intro's lede shape is fixed by the LEDE TEMPLATE; rotating an
+        # opener angle there would fight it.
+        angle = _choose_variant(variation_key, f"{section_kind}_angle", opener_angles[mode], mode, section_kind)
+        lines.append(f"- Variation angle: {angle}.")
+    lines.extend([
         f"- Sentence movement: {shape}.",
         f"- Section focus: {focus}.",
         f"- {taboo_line}",
     ])
+    return "\n".join(lines)
 
 
 def _dfs_intro_hook_text(event_context: str, article_date: str = "") -> str:
@@ -4795,19 +4800,10 @@ Output clean HTML only - use <p>, <a>, <strong> tags. No markdown. No exclamatio
     if event_context:
         game_hook = f"GAME HOOK (use this naturally, not as labels):\n{_naturalize_event_context(event_context)}\n\n"
 
-    opener_directives = [
-        "Open sentence one with the matchup itself as the grammatical subject - the two teams doing something - and land the offer value by the end of the first paragraph.",
-        "Open sentence one with what is at stake or why this spot is live, put the matchup and start time after that, and land the offer value by the end of the first paragraph.",
-        "Open sentence one with the offer value (real amounts from OFFER DETAILS) attached to the event in the same sentence, then add the start time naturally.",
-    ]
-    if bc_core_points:
-        opener_directives.append(
-            "Open sentence one with the sharpest stat from the internal matchup notes and what it means for this game, then bring in the offer value."
-        )
-    opener_directive = _choose_variant(variation_key, "intro_opener", opener_directives, keyword)
     requirements = [
-        f"OPENER (mandatory for this run): {opener_directive} Never stack matchup, time, network, and offer into one comma chain.",
-        "Never open sentence one with the calendar date as its first words or subject ('Thursday, July 2, 2026 sets up...' is banned). If the date matters, tuck it mid-sentence after the subject.",
+        "LEDE SHAPE (always the same): sentence one opens with the stakes - why this event matters right now - and attaches the offer in the same breath, e.g. '[Why the event matters] - and the [brand] offer is the cleanest way in for new users.' Land the qualifying amount and reward by the end of paragraph one. Paragraph two: how simple the mechanics are, plus one matchup or availability detail. The shape stays fixed; only the facts and phrasing change with the event.",
+        "A time word as the opener is fine ('Tonight', 'Thursday's early window') but never the full calendar date as the subject ('Thursday, July 2, 2026 sets up...' is banned). If the full date matters, tuck it mid-sentence.",
+        "Never stack matchup, time, network, and offer into one comma chain.",
         "Never open by describing people searching for the keyword. Banned openers: 'For readers tracking...', 'Readers looking up...', 'If you're searching for...', 'Bettors looking for...' and anything similar. Write to a fan, not to a search query.",
         "Scale the stakes honestly to the actual event: a midweek regular-season game is a live spot or a clean angle, never 'the biggest game of the year'.",
         "If no game hook, start with a direct offer statement; avoid generic openers like \"If you are looking for a valuable offer...\"",
@@ -4861,7 +4857,7 @@ Output clean HTML only - use <p>, <a>, <strong> tags. No markdown. No exclamatio
         "NO exclamation points anywhere",
         "Do NOT invent numbers not listed above.",
         "Do not default to filler like 'see full terms' unless a missing detail must be acknowledged.",
-        "The intro should feel fresh on each run: keep the facts fixed, but vary phrasing and sentence openings naturally.",
+        "The intro should feel fresh on each run: the lede shape stays fixed, but the wording inside it must never read like a fill-in-the-blanks template.",
     ])
     if bc_core_points:
         requirements.append(
@@ -4875,45 +4871,26 @@ Output clean HTML only - use <p>, <a>, <strong> tags. No markdown. No exclamatio
 
     code_mention = f" enter {code_strong} at signup," if has_code else ""
     if prediction_market:
-        exemplar_options = [
-            (
-                "<p>[Event] anchors the slate tonight - and the [Brand] offer is the cleanest way for a new trader to get a position in it. "
-                "Deposit [qualifying amount], collect [reward], and be in the market before the first pitch.</p>"
-                f"<p>The offer is about as simple as sign-up promotions get. No convoluted opt-in, no fine print that drains the value: sign up,{code_mention} "
-                "make the qualifying deposit, and the credit is ready to deploy on your first position.</p>"
-            ),
-            (
-                "<p>A [qualifying amount] deposit is a small way into a big market: [Brand] adds [reward] for new traders, and [Event] gives that credit a live contract to work with right away.</p>"
-                f"<p>The mechanics stay out of the way. Sign up,{code_mention} make the qualifying deposit, and the credit is ready for your first position before [time].</p>"
-            ),
-        ]
+        example_output = (
+            "<p>[Why the event matters right now] - and the [Brand] offer is the cleanest way for a new trader to get a position in it. "
+            "Deposit [qualifying amount], collect [reward], and be in the market before [start time].</p>"
+            f"<p>The offer is about as simple as sign-up promotions get. No convoluted opt-in, no fine print that drains the value: sign up,{code_mention} "
+            "make the qualifying deposit, and the credit is ready to deploy on your first position.</p>"
+        )
     elif dfs_mode:
-        exemplar_options = [
-            (
-                "<p>[Event] headlines tonight's slate - and the [Brand] offer is the cleanest way for a new player to get entries in on it. "
-                "Play [qualifying amount], collect [reward], and have your first card built before lock.</p>"
-                f"<p>The offer is about as simple as sign-up promotions get. No convoluted opt-in, no fine print that drains the value: sign up,{code_mention} "
-                "make the qualifying entry, and the bonus entries land ready for the rest of the slate.</p>"
-            ),
-            (
-                "<p>A [qualifying amount] entry opens the door: [Brand] adds [reward] in bonus entries for new players, and [Event] is the slate to spend them on.</p>"
-                f"<p>The mechanics stay out of the way. Sign up,{code_mention} make the qualifying entry, and the bonus entries land with time to build a card before lock.</p>"
-            ),
-        ]
+        example_output = (
+            "<p>[Why the event matters right now] - and the [Brand] offer is the cleanest way for a new player to get entries in on it. "
+            "Play [qualifying amount], collect [reward], and have your first card built before lock.</p>"
+            f"<p>The offer is about as simple as sign-up promotions get. No convoluted opt-in, no fine print that drains the value: sign up,{code_mention} "
+            "make the qualifying entry, and the bonus entries land ready for the rest of the slate.</p>"
+        )
     else:
-        exemplar_options = [
-            (
-                "<p>[Event] is the spot on tonight's board - and the [Brand] offer is the cleanest way for a new bettor to get a stake in it. "
-                "Bet [qualifying amount], collect [reward], and be set before first pitch.</p>"
-                f"<p>The offer is about as simple as sign-up bonuses get. No convoluted opt-in, no rollover buried in the fine print: sign up,{code_mention} "
-                "place the qualifying bet, and the bonus lands with the rest of the slate still ahead of you.</p>"
-            ),
-            (
-                "<p>A [qualifying amount] first bet doesn't usually buy this much cover: [Brand] hands new users [reward] once the qualifying bet lands, and [Event] is the natural spot to use it.</p>"
-                f"<p>The mechanics stay out of the way. Sign up,{code_mention} place the qualifying bet on a market you already like, and the bonus arrives with the rest of the slate ahead.</p>"
-            ),
-        ]
-    example_output = _choose_variant(variation_key, "intro_exemplar", exemplar_options, keyword)
+        example_output = (
+            "<p>[Why the event matters right now] - and the [Brand] offer is the cleanest way for a new bettor to get a stake in it. "
+            "Bet [qualifying amount], collect [reward], and be set before [start time].</p>"
+            f"<p>The offer is about as simple as sign-up bonuses get. No convoluted opt-in, no rollover buried in the fine print: sign up,{code_mention} "
+            "place the qualifying bet, and the bonus lands with the rest of the slate still ahead of you.</p>"
+        )
 
     user_prompt = f"""Write the intro paragraph for this promo article:
 
@@ -4948,7 +4925,7 @@ CRITICAL REQUIREMENTS:
 VARIATION BRIEF:
 {variation_md}
 
-VOICE EXEMPLAR (match the confidence, rhythm, and stakes-first attitude of this lede - NEVER copy its phrases, placeholders, or structure word-for-word; your facts come only from the blocks above):
+LEDE TEMPLATE (follow this exact shape every time; fill the brackets from the real facts above and rephrase the connective wording naturally - the shape is fixed, the words are not):
 {example_output}
 
 Write TWO <p> tags now (HTML only, no markdown):"""
