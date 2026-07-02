@@ -5594,6 +5594,16 @@ Do NOT repeat information from previous sections."""
         format_guardrails.append("- Prefer active voice and direct verbs. Avoid passive phrasing when a direct construction works.")
     format_guardrails_md = "\n".join(format_guardrails)
 
+    goal_voice_md = ""
+    if is_goal_property(offer_property):
+        goal_voice_md = """GOAL HOUSE VOICE (match this exactly - it is how GOAL's own writers sound):
+- One pick per paragraph. Open with the market and its price in parentheses, e.g. "Luis Diaz anytime goalscorer (+180) is the natural starting point."
+- Follow with one or two short supporting sentences carrying a concrete stat, then a punchy verdict, e.g. "At +180, this is probably the most comfortable plus-money pick on the board."
+- Phrase picks directly: "Take Mexico to win and keep a clean sheet." Never hedge with wording like "worth checking", "on the shortlist", "puts X in play", or "before you lock in".
+- Short, plain sentences. Never stack clauses (banned shape: "putting Portugal ball-control props on the shortlist before you lock in a pregame wager").
+- Signal confidence through frames like "the natural starting point", "the swing", "nice if you trust the attack" - not adverbs.
+"""
+
     user_prompt = f"""Write the content for this section:
 
 SECTION TITLE: {section_title}
@@ -5661,7 +5671,7 @@ PREVIOUSLY WRITTEN (do NOT repeat this content):
 {"PHRASES TO AVOID (overused):" + chr(10) + blacklisted_md if blacklisted_md else ""}
 {language_guardrail}
 {format_guardrails_md}
-
+{goal_voice_md}
 SECTION-SPECIFIC GUARDRAILS:
 - Do not repeat the H1 wording or simply restate the heading.
 - Do not call the offer nationwide.

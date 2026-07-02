@@ -1216,6 +1216,47 @@ async def test_generate_draft_tolerates_missing_primary_offer(monkeypatch):
     assert "view_top_story" in html
 
 
+@pytest.mark.asyncio
+async def test_goal_body_prompt_carries_goal_house_voice(monkeypatch):
+    captured: dict[str, str] = {}
+
+    async def _fake_query_articles(*args, **kwargs):
+        return []
+
+    async def _fake_suggest_links(*args, **kwargs):
+        return []
+
+    async def _fake_generate_completion(*, prompt, system_prompt, temperature, max_tokens):
+        captured["prompt"] = prompt
+        return "<p>Portugal to win (-145) is the natural starting point. Take it.</p><p>Vitinha over passes is the swing.</p>"
+
+    monkeypatch.setattr("app.services.draft.query_articles", _fake_query_articles)
+    monkeypatch.setattr("app.services.draft.suggest_links_for_section", _fake_suggest_links)
+    monkeypatch.setattr("app.services.draft.generate_completion", _fake_generate_completion)
+
+    from app.services.draft import _generate_body_section
+
+    await _generate_body_section(
+        section_title="Croatia vs Portugal - 2026-07-02 - 7:00 PM ET",
+        level="h3",
+        keyword="bet365 bonus code",
+        offer={"brand": "bet365", "offer_text": "Bet $10, Get $150 in Bonus Bets", "bonus_code": "GOALBET", "terms": ""},
+        all_offers=None,
+        state="ALL",
+        offer_property="goal_com",
+        talking_points=["Moneyline: Croatia +320 / Portugal -145"],
+        avoid=[],
+        previous_content="",
+        current_keyword_count=1,
+        target_keyword_total=6,
+        event_context="Featured game: Croatia vs Portugal.",
+    )
+
+    assert "GOAL HOUSE VOICE" in captured["prompt"]
+    assert "natural starting point" in captured["prompt"]
+    assert "Never hedge" in captured["prompt"]
+
+
 def test_goal_outline_matches_brief_structure():
     from app.services.goal_template import build_goal_outline
 
