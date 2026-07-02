@@ -1025,7 +1025,8 @@ def test_select_bc_core_editorial_points_prioritizes_market_intelligence():
     )
 
     joined = " ".join(points)
-    assert "projects for 29.5 points" in joined
+    # Model projections never publish; posted lines and market data do.
+    assert "projects for" not in joined
     assert "DFS lines list" in joined
     assert "Ticket data shows 64%" in joined
 
@@ -1057,10 +1058,12 @@ def test_select_bc_core_editorial_points_filters_by_content_mode():
         dfs_mode=True,
     )
 
-    assert any("projects for 29.5 points" in point for point in prediction_points)
+    assert not any("projects for" in point for point in prediction_points)
     assert not any("DFS lines list" in point for point in prediction_points)
     assert not any("covered three" in point for point in prediction_points)
+    assert any("Ticket data shows" in point for point in prediction_points)
     assert any("DFS lines list" in point for point in dfs_points)
+    assert not any("projects for" in point for point in dfs_points)
     assert not any("Market percents show" in point for point in dfs_points)
     assert not any("covered three" in point for point in dfs_points)
 
@@ -1556,7 +1559,7 @@ async def test_ensure_editorial_body_length_builds_numbers_section_with_play_clo
             "editorial_points": [
                 "Boston enter at 44-43 overall this season.",
                 "Washington went 6-4 against the spread over the last 10 games.",
-                "Payton Tolle projects for 6.25 pitching hits allowed.",
+                "Payton Tolle has allowed six hits or fewer in each of his last 4 starts.",
             ],
         },
         "event": {"matched": False},
@@ -1578,7 +1581,7 @@ async def test_ensure_editorial_body_length_builds_numbers_section_with_play_clo
     )
 
     assert "What the Numbers Say About Nationals vs Red Sox" in expanded
-    assert "Payton Tolle projects for 6.25 pitching hits allowed." in expanded
+    assert "Payton Tolle has allowed six hits or fewer in each of his last 4 starts." in expanded
     assert "The play: use the qualifying bet on Boston Red Sox ML at -140" in expanded
     # Editor/writer-facing meta guidance must never ship in published copy.
     assert "gives editors" not in expanded
@@ -1593,8 +1596,8 @@ async def test_ensure_editorial_body_length_uses_narrative_composition_when_vali
         "A team sitting one game over even in July is not coasting; it is fighting for its season every night, "
         "and that urgency is exactly what this matchup demands.</p>"
         "<p>The problem is the opposition's form. Washington have covered in six of their last ten, a 6-4 run "
-        "against the spread that reads like a team playing better than its record. Payton Tolle projects for "
-        "6.25 pitching hits allowed, and that is the profile of a starter who keeps traffic off the bases and "
+        "against the spread that reads like a team playing better than its record. Payton Tolle has allowed six "
+        "hits or fewer in each of his last 4 starts, the profile of a starter who keeps traffic off the bases and "
         "keeps his side in front. For a first bet with bet365, the $10 qualifying wager fits a straightforward "
         "market here, with $365 in bonus bets to follow.</p>"
         "<p>The play: back Boston Red Sox ML at -140 with the qualifying bet, then keep the bonus bets for later "
@@ -1620,7 +1623,7 @@ async def test_ensure_editorial_body_length_uses_narrative_composition_when_vali
             "editorial_points": [
                 "Boston enter at 44-43 overall this season.",
                 "Washington went 6-4 against the spread over the last 10 games.",
-                "Payton Tolle projects for 6.25 pitching hits allowed.",
+                "Payton Tolle has allowed six hits or fewer in each of his last 4 starts.",
             ],
         },
         "event": {"matched": False},
@@ -1655,9 +1658,9 @@ async def test_ensure_matchup_analysis_section_renders_even_when_body_is_long(mo
         "A team sitting one game over even in July is not coasting; it is fighting for its season every night, "
         "and that urgency is exactly what this matchup demands.</p>"
         "<p>Washington have covered in six of their last ten, a 6-4 run against the spread that reads like a team "
-        "playing better than its record. Payton Tolle projects for 6.25 pitching hits allowed, the profile of a "
-        "starter who keeps traffic off the bases. For a first bet with bet365, the $10 qualifying wager fits a "
-        "straightforward market here, with $365 in bonus bets to follow.</p>"
+        "playing better than its record. Payton Tolle has allowed six hits or fewer in each of his last 4 starts, "
+        "the profile of a starter who keeps traffic off the bases. For a first bet with bet365, the $10 qualifying "
+        "wager fits a straightforward market here, with $365 in bonus bets to follow.</p>"
         "<p>The play: back Boston Red Sox ML at -140 with the qualifying bet, then keep the bonus bets for later "
         "eligible markets once they post.</p>"
     )
@@ -1679,7 +1682,7 @@ async def test_ensure_matchup_analysis_section_renders_even_when_body_is_long(mo
             "editorial_points": [
                 "Boston enter at 44-43 overall this season.",
                 "Washington went 6-4 against the spread over the last 10 games.",
-                "Payton Tolle projects for 6.25 pitching hits allowed.",
+                "Payton Tolle has allowed six hits or fewer in each of his last 4 starts.",
             ],
         },
         "event": {"matched": False},
@@ -1736,7 +1739,7 @@ async def test_ensure_editorial_body_length_rejects_narrative_with_invented_numb
             "editorial_points": [
                 "Boston enter at 44-43 overall this season.",
                 "Washington went 6-4 against the spread over the last 10 games.",
-                "Payton Tolle projects for 6.25 pitching hits allowed.",
+                "Payton Tolle has allowed six hits or fewer in each of his last 4 starts.",
             ],
         },
         "event": {"matched": False},

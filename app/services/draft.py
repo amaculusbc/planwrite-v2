@@ -270,6 +270,9 @@ def _select_bc_core_editorial_points(
         if normalized and normalized not in seen:
             seen.add(normalized)
             deduped.append(point)
+    # Raw model projections ("X projects for 68.45 passes") never publish in any
+    # article - posted market lines and real historical stats only.
+    deduped = [point for point in deduped if _bc_core_point_category(point) != "projection"]
     deduped = _filter_bc_core_points_for_mode(
         deduped,
         prediction_market=prediction_market,
@@ -3387,6 +3390,7 @@ def _apply_generation_quality_postprocess(html: str, keyword: str, market: str =
     html = _convert_availability_labels_to_prose(html)
     html = _decapitalize_inline_reward_mentions(html)
     html = _strip_quoted_stat_phrases(html)
+    html = _strip_projection_sentences(html)
     html = _strip_market_mismatch_phrasing(html, market)
     html = _trim_dangling_paragraph_endings(html)
     html = _normalize_visible_punctuation(html)
@@ -4701,8 +4705,6 @@ async def generate_draft_from_outline(
             content_mode=content_mode,
             bet_example_data=bet_example_data,
         )
-    if is_goal:
-        html_output = _strip_projection_sentences(html_output)
     if is_goal and operator_promos:
         promos_section = render_operator_promos_section(
             brand,
@@ -5035,6 +5037,7 @@ Output clean HTML only - use <p>, <a>, <strong> tags. No markdown. No exclamatio
         "Do not use links in headings or heading-like text.",
         "NO exclamation points anywhere",
         "Do NOT invent numbers not listed above.",
+        "Never write 'projects for' or quote model projections; publishable numbers are posted market lines/prices and real historical stats only.",
         "Do not default to filler like 'see full terms' unless a missing detail must be acknowledged.",
         "The intro should feel fresh on each run: the lede shape stays fixed, but the wording inside it must never read like a fill-in-the-blanks template.",
     ])
@@ -5418,13 +5421,6 @@ async def _generate_body_section(
         if bc_core_context and not is_terms and not is_numbered_list and not is_daily_promos
         else []
     )
-    if is_goal_property(offer_property):
-        # GOAL only prints posted market lines/prices and real historical stats -
-        # internal model projections ("projects for 68.45 passes") never publish there.
-        bc_core_points = [
-            point for point in bc_core_points
-            if _bc_core_point_category(point) != "projection"
-        ]
     bc_core_required_count = 2 if section_kind != "claim" and len(bc_core_points) >= 2 else 1 if bc_core_points else 0
 
     reference_mechanics = ""
@@ -5703,6 +5699,7 @@ SECTION-SPECIFIC GUARDRAILS:
 - For worked-example sections, use the exact mechanics and numbers from the reference blocks above, but write the prose in fresh language.
 - For worked-example sections, the exact claim facts block is mandatory. Do not change those numbers or swap in a different first amount.
 - If internal expertise notes are present, work at least {bc_core_required_count or 1} of them into the body naturally. Use distinct facts when more than one is available. Never mention BC Core or call anything a trend sample.
+- Never write "projects for" or quote model projections; publishable numbers are posted market lines/prices and real historical stats only.
 - The article should feel new on each run. Keep the structure tight, but vary the phrasing and sentence openings naturally.
 
 DO NOT add responsible gaming disclaimers in this section (handled at the end).
@@ -6044,8 +6041,6 @@ async def generate_draft_from_outline_streaming(
             content_mode=content_mode,
             bet_example_data=bet_example_data,
         )
-    if is_goal:
-        html_output = _strip_projection_sentences(html_output)
     if is_goal and operator_promos:
         promos_section = render_operator_promos_section(
             brand,
