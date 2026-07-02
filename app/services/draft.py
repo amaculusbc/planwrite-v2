@@ -2363,7 +2363,8 @@ def _polish_intro_section_prose(html: str) -> str:
         cleaned,
         lambda text: re.sub(
             # "Thursday's window ... on Thursday, July 2, 2026" - drop the repeated weekday.
-            r"\b((?:Mon|Tues|Wednes|Thurs|Fri|Satur|Sun)day)((?:'|’)s[^.]{0,120}?\bon )\1,\s*",
+            # (.{0,120} spans abbreviation periods like "12:35 p.m. ET".)
+            r"\b((?:Mon|Tues|Wednes|Thurs|Fri|Satur|Sun)day)((?:'|’)s.{0,120}?\bon )\1,\s*",
             r"\1\2",
             text,
         ),
