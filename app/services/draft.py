@@ -4762,6 +4762,7 @@ Output clean HTML only - use <p>, <a>, <strong> tags. No markdown. No exclamatio
         "Scale the stakes honestly to the actual event: a midweek regular-season game is a live spot or a clean angle, never 'the biggest game of the year'.",
         "If no game hook, start with a direct offer statement; avoid generic openers like \"If you are looking for a valuable offer...\"",
         f"Mention availability in one short natural clause (e.g. 'available to new users in NJ' or 'availability varies by {availability_label}'). The full {availability_label} list belongs in the eligibility or terms section, never the lede. Do not say nationwide.",
+        f"A single {availability_label} is listed for this article: name it exactly once in the lede (e.g. 'in {states_text}'). Never substitute vague phrasing like 'supported states' for the actual {availability_label}." if states_text and "," not in states_text and not states_text.lower().startswith("all") else "",
         "Never use a 'Provinces Available:' or 'States Available:' label format." if is_canada_market else "Never use a 'States Available:' label format.",
         "Do not paste the full raw offer string more than once. Prefer a natural summary.",
         "When referencing the offer mid-sentence, use sentence casing ('$200 in bonus bets'), never the promo headline casing ('Bonus Bets Instantly').",
@@ -4818,7 +4819,7 @@ Output clean HTML only - use <p>, <a>, <strong> tags. No markdown. No exclamatio
         )
     if prefs["enforce_active_voice"]:
         requirements.append("Use active voice. Avoid passive phrasing like 'is offered' or 'is highlighted' when a direct verb works.")
-    requirements_md = "\n".join(f"- {r}" for r in requirements)
+    requirements_md = "\n".join(f"- {r}" for r in requirements if r)
     secondary_keywords_md = "\n".join(f"- {phrase}" for phrase in prefs["secondary_keywords"]) if prefs["secondary_keywords"] else ""
     structure_notes_md = prefs["structure_notes"]
 
