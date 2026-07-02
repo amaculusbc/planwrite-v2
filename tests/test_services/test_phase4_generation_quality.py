@@ -54,6 +54,7 @@ from app.services.draft import (
     _render_terms_section_html,
     _remove_inline_compliance_fragments,
     _resolve_intro_age_conflicts,
+    _bc_core_point_category,
     _select_bc_core_editorial_points,
     _soften_repetitive_intro_opener,
     _strip_formatting_from_headings,
@@ -1066,6 +1067,26 @@ def test_select_bc_core_editorial_points_filters_by_content_mode():
     assert not any("projects for" in point for point in dfs_points)
     assert not any("Market percents show" in point for point in dfs_points)
     assert not any("covered three" in point for point in dfs_points)
+
+
+def test_projection_points_never_misclassified_by_substring():
+    # "pitching outs" contains "out", which used to bucket projections as injury
+    # and let them slip past the projection ban.
+    assert _bc_core_point_category("Jared Jones projects for 14.28 pitching outs.") == "projection"
+    assert _bc_core_point_category("Alan Rangel projects for 13.2 pitching outs.") == "projection"
+    context = {
+        "event": {"matched": True},
+        "expertise": {
+            "matched": True,
+            "editorial_points": [
+                "Jared Jones projects for 14.28 pitching outs.",
+                "Baltimore has covered three of its last four games.",
+            ],
+        },
+    }
+    points = _select_bc_core_editorial_points(context, section_kind="overview", max_points=4)
+    assert not any("projects for" in point for point in points)
+    assert any("covered three" in point for point in points)
 
 
 def test_naturalize_bc_core_point_fixes_mononyms_and_formations():

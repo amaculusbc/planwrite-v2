@@ -160,18 +160,20 @@ def _naturalize_bc_core_editorial_point(point: str) -> str:
 def _bc_core_point_category(point: str) -> str:
     """Classify an editorial point so surfaced facts vary in type."""
     text = str(point or "").lower()
+    # Projection check runs first: "projects for 14.28 pitching outs" must never
+    # fall into another bucket via substring accidents ("outs" contains "out").
+    if any(token in text for token in ["projects for", "projection", "projected stat"]):
+        return "projection"
     if any(token in text for token in ["weather", "degrees", "wind", "precipitation", "cloudy", "rain"]):
         return "weather"
     if any(token in text for token in ["listed score", "latest listed score", "completed games", "went "]):
         return "matchup"
     if any(token in text for token in ["lineup", "formation", "starters"]):
         return "lineup"
-    if any(token in text for token in ["injury", "absence", "out", "questionable"]):
+    if any(token in text for token in ["injury", "absence", "questionable"]) or re.search(r"\bout\b", text):
         return "injury"
     if any(token in text for token in ["against the spread", "straight up", "ats", "covered", "last 10", "recent sample", "matchup sample"]):
         return "trend"
-    if any(token in text for token in ["projects for", "projection", "projected stat"]):
-        return "projection"
     if any(token in text for token in ["dfs lines", "fantasy users", "prop angle"]):
         return "dfs_line"
     if any(token in text for token in ["market percents", "tickets", "handle", "market activity"]):
@@ -2853,7 +2855,7 @@ def _narrative_section_is_valid(
     # Prompt-label echoes read broken in copy ("a qualifying wager $5 and reward $200").
     if re.search(r"\b(?:qualifying wager|reward)\s+\$\d", plain):
         return False
-    banned = ("bc core", "source data", "internal note", "data feed", "our model", "our projections")
+    banned = ("bc core", "source data", "internal note", "data feed", "our model", "our projections", "projects for", "projection")
     lowered = plain.lower()
     if any(token in lowered for token in banned):
         return False
@@ -4713,6 +4715,9 @@ async def generate_draft_from_outline(
         )
         if promos_section:
             html_output = _insert_section_before_terms(html_output, promos_section)
+    # Late pass: sections appended after the main postprocess (analysis, promos)
+    # must also honor the no-model-projections rule.
+    html_output = _strip_projection_sentences(html_output)
     html_output = _cap_primary_keyword_density(html_output, keyword)
     html_output = _strip_search_query_openers(html_output)
     html_output = _title_case_headings(html_output)
@@ -6049,6 +6054,9 @@ async def generate_draft_from_outline_streaming(
         )
         if promos_section:
             html_output = _insert_section_before_terms(html_output, promos_section)
+    # Late pass: sections appended after the main postprocess (analysis, promos)
+    # must also honor the no-model-projections rule.
+    html_output = _strip_projection_sentences(html_output)
     html_output = _cap_primary_keyword_density(html_output, keyword)
     html_output = _strip_search_query_openers(html_output)
     html_output = _title_case_headings(html_output)
