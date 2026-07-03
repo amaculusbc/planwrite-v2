@@ -1204,6 +1204,26 @@ def test_strip_priceless_market_picks_requires_a_posted_price():
     assert "anytime goalscorer (+180)" in cleaned
 
 
+def test_strip_vacuous_qualifiers_removes_cta_hedges():
+    from app.services.draft import _strip_vacuous_qualifiers
+
+    html = (
+        "<p>Use the bet365 bonus code GOALBET when relevant, and a $10 bet can unlock $150.</p>"
+        "<p>Enter GOALBET where applicable. Australia stretch the wings.</p>"
+        "<p>Claim the offer if it makes sense for your bankroll.</p>"
+    )
+    cleaned = _strip_vacuous_qualifiers(html)
+    assert "when relevant" not in cleaned
+    assert "where applicable" not in cleaned
+    assert "if it makes sense" not in cleaned
+    assert "Use the bet365 bonus code GOALBET, and a $10 bet can unlock $150." in cleaned
+    assert "Enter GOALBET. Australia stretch the wings." in cleaned
+    assert "Claim the offer for your bankroll." in cleaned
+    # A legitimate temporal "when" clause must survive.
+    keep = "<p>The bonus posts when the qualifying bet settles.</p>"
+    assert _strip_vacuous_qualifiers(keep) == keep
+
+
 def test_projection_points_never_misclassified_by_substring():
     # "pitching outs" contains "out", which used to bucket projections as injury
     # and let them slip past the projection ban.

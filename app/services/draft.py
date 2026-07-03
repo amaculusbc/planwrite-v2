@@ -2127,6 +2127,30 @@ def _strip_priceless_market_picks(html: str) -> str:
     return _normalize_visible_punctuation(_rewrite_html_text_nodes(html, _transform))
 
 
+# Vacuous conditional qualifiers the model tacks onto the CTA ("use the code
+# when relevant") - you use the code when you sign up, so they say nothing.
+_VACUOUS_QUALIFIER = re.compile(
+    r"\s*,?\s*\b(?:when|where|if|as)\s+"
+    r"(?:relevant|applicable|appropriate|needed|desired|available|it\s+applies|it\s+makes\s+sense|it\s+fits)\b",
+    re.IGNORECASE,
+)
+
+
+def _strip_vacuous_qualifiers(html: str) -> str:
+    """Drop meaningless CTA hedges like 'when relevant' / 'where applicable'."""
+    if not html:
+        return html
+
+    def _transform(text: str) -> str:
+        text = _VACUOUS_QUALIFIER.sub("", text)
+        # A leftover sentence-initial ", and ..." after removing a leading qualifier.
+        text = re.sub(r"(^|[.!?]\s+),\s*", r"\1", text)
+        text = re.sub(r"\s+([.,!?])", r"\1", text)
+        return text
+
+    return _normalize_visible_punctuation(_rewrite_html_text_nodes(html, _transform))
+
+
 def _strip_quoted_stat_phrases(html: str) -> str:
     """Unwrap stats the model quoted verbatim from internal notes."""
     if not html:
@@ -4892,6 +4916,7 @@ async def generate_draft_from_outline(
     html_output = _dedupe_latest_meeting_sentences(html_output)
     if is_goal_property(offer_property):
         html_output = _strip_state_callouts_from_goal_body(html_output)
+    html_output = _strip_vacuous_qualifiers(html_output)
     html_output = _cap_primary_keyword_density(html_output, keyword)
     html_output = _strip_search_query_openers(html_output)
     html_output = _title_case_headings(html_output)
@@ -5830,6 +5855,7 @@ Do NOT repeat information from previous sections."""
 - One pick per paragraph. Open with the market and its price in parentheses, e.g. "Luis Diaz anytime goalscorer (+180) is the natural starting point."
 - Follow with one or two short supporting sentences carrying a concrete stat, then a punchy verdict, e.g. "At +180, this is probably the most comfortable plus-money pick on the board."
 - Phrase picks directly: "Take Mexico to win and keep a clean sheet." Never hedge with wording like "worth checking", "on the shortlist", "puts X in play", or "before you lock in".
+- Never attach a vacuous conditional to the CTA ("use the code when relevant", "where applicable", "if it makes sense") - the reader uses the code when they sign up. State it plainly: "Use bet365 bonus code GOALBET to..." or "Enter GOALBET at signup."
 - Short, plain sentences. Never stack clauses (banned shape: "putting Portugal ball-control props on the shortlist before you lock in a pregame wager").
 - Signal confidence through frames like "the natural starting point", "the swing", "nice if you trust the attack" - not adverbs.
 - Every number must be a posted market price/line or a real historical stat ("49 goal involvements across 51 appearances"). Never write "projects for" or quote model projections - GOAL does not publish projections.
@@ -6278,6 +6304,7 @@ async def generate_draft_from_outline_streaming(
     html_output = _dedupe_latest_meeting_sentences(html_output)
     if is_goal_property(offer_property):
         html_output = _strip_state_callouts_from_goal_body(html_output)
+    html_output = _strip_vacuous_qualifiers(html_output)
     html_output = _cap_primary_keyword_density(html_output, keyword)
     html_output = _strip_search_query_openers(html_output)
     html_output = _title_case_headings(html_output)
