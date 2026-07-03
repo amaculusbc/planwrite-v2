@@ -288,6 +288,19 @@ def _select_bc_core_editorial_points(
     return _prioritize_bc_core_points(deduped, max_points)
 
 
+def _bc_core_point_facts_already_used(point: str, previous_content: str) -> bool:
+    """True when a point's concrete markers (scores, formations) already appear in earlier sections."""
+    haystack = str(previous_content or "").lower()
+    if not haystack:
+        return False
+    markers = re.findall(r"\b\d+(?:\.\d+)?(?:-\d+)?%?\b", str(point or ""))
+    # Single digits ("1 absence") false-positive on any copy; only compound markers count.
+    markers = [m for m in markers if len(m) >= 3 or "-" in m or "." in m or "%" in m]
+    if not markers:
+        return False
+    return all(marker.lower() in haystack for marker in markers)
+
+
 def _bc_core_marker_coverage(text: str, points: list[str]) -> int:
     """Count how many selected BC-backed notes appear in visible copy."""
     haystack = str(text or "").lower()
@@ -5527,6 +5540,13 @@ async def _generate_body_section(
         if bc_core_context and not is_terms and not is_numbered_list and not is_daily_promos
         else []
     )
+    # GOAL articles are short with few facts; a fact restated per section reads
+    # like filler, so each concrete fact appears in exactly one section.
+    if bc_core_points and is_goal_property(offer_property) and previous_content:
+        bc_core_points = [
+            point for point in bc_core_points
+            if not _bc_core_point_facts_already_used(point, previous_content)
+        ]
     bc_core_required_count = 2 if section_kind != "claim" and len(bc_core_points) >= 2 else 1 if bc_core_points else 0
 
     reference_mechanics = ""

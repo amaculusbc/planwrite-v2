@@ -1097,6 +1097,20 @@ async def test_goal_intro_retries_away_availability_language(monkeypatch):
     assert "GOALBET" in result
 
 
+def test_bc_core_point_facts_already_used_detects_repeats():
+    from app.services.draft import _bc_core_point_facts_already_used
+
+    shape_point = "Both teams set up in the same 4-2-3-1 shape (official lineups)."
+    score_point = "Portugal won the latest meeting with Croatia 2-1."
+    previous = "Intro copy. Both sides play out of a 4-2-3-1, putting the midfield battle at the center."
+    assert _bc_core_point_facts_already_used(shape_point, previous)
+    assert not _bc_core_point_facts_already_used(score_point, previous)
+    assert not _bc_core_point_facts_already_used(shape_point, "")
+    # Single-digit markers must not trigger on unrelated copy ($10 bets etc).
+    absence_point = "Mexico has 1 listed player absence: J. Alvarez (Out, Hamstring)."
+    assert not _bc_core_point_facts_already_used(absence_point, "Bet $10 to get $150 in bonus bets, 1 time.")
+
+
 def test_strip_starter_count_phrases_keeps_only_the_formation():
     html = (
         "<p>Both teams list 11 starters in a 4-2-3-1, putting the midfield at the center.</p>"
