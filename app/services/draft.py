@@ -289,13 +289,16 @@ def _select_bc_core_editorial_points(
 
 
 def _bc_core_point_facts_already_used(point: str, previous_content: str) -> bool:
-    """True when a point's concrete markers (scores, formations) already appear in earlier sections."""
+    """True when a point's concrete markers (scores, formations, player names) already appear in earlier sections."""
     haystack = str(previous_content or "").lower()
     if not haystack:
         return False
-    markers = re.findall(r"\b\d+(?:\.\d+)?(?:-\d+)?%?\b", str(point or ""))
+    text = str(point or "")
+    markers = re.findall(r"\b\d+(?:\.\d+)?(?:-\d+)?%?\b", text)
     # Single digits ("1 absence") false-positive on any copy; only compound markers count.
     markers = [m for m in markers if len(m) >= 3 or "-" in m or "." in m or "%" in m]
+    # Absence/lineup points carry no compound numbers; their marker is the player name.
+    markers += re.findall(r"\b[A-Z]\.\s*([A-Z][\w'-]{3,})", text)
     if not markers:
         return False
     return all(marker.lower() in haystack for marker in markers)

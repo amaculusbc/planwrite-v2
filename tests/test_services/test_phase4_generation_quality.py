@@ -1109,6 +1109,11 @@ def test_bc_core_point_facts_already_used_detects_repeats():
     # Single-digit markers must not trigger on unrelated copy ($10 bets etc).
     absence_point = "Mexico has 1 listed player absence: J. Alvarez (Out, Hamstring)."
     assert not _bc_core_point_facts_already_used(absence_point, "Bet $10 to get $150 in bonus bets, 1 time.")
+    # ...but the player name is the marker once it has been used.
+    assert _bc_core_point_facts_already_used(absence_point, "Mexico are without J. Alvarez at the back.")
+    two_absences = "Egypt has 2 listed player absences: A. Fatouh (Out, Hamstring), M. Abdelmoneim (Out, Muscle)."
+    assert _bc_core_point_facts_already_used(two_absences, "with A. Fatouh and M. Abdelmoneim both out")
+    assert not _bc_core_point_facts_already_used(two_absences, "with A. Fatouh out")  # only one of two names used
 
 
 def test_strip_starter_count_phrases_keeps_only_the_formation():
