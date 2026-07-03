@@ -1072,6 +1072,31 @@ def test_select_bc_core_editorial_points_filters_by_content_mode():
     assert not any("covered three" in point for point in dfs_points)
 
 
+@pytest.mark.asyncio
+async def test_goal_intro_retries_away_availability_language(monkeypatch):
+    from app.services import draft as draft_module
+
+    responses = iter(
+        [
+            "<p>bet365 bonus code GOALBET is not available in your state, but you can get $150 in bonus bets after $10.</p>",
+            "<p>Pre Croatia vs Portugal at 7pm ET, bet365 bonus code GOALBET gets you $150 in bonus bets win or lose (7/2).</p>",
+        ]
+    )
+
+    async def fake_completion(**kwargs):
+        return next(responses)
+
+    monkeypatch.setattr(draft_module, "generate_completion", fake_completion)
+    result = await draft_module._generate_goal_intro(
+        keyword="bet365 bonus code",
+        offer={"brand": "bet365", "bonus_code": "GOALBET", "offer_text": "Bet $10, Get $150 in Bonus Bets Win or Lose!"},
+        article_date="2026-07-02",
+    )
+    assert "your state" not in result
+    assert "not available" not in result
+    assert "GOALBET" in result
+
+
 def test_strip_starter_count_phrases_keeps_only_the_formation():
     html = (
         "<p>Both teams list 11 starters in a 4-2-3-1, putting the midfield at the center.</p>"

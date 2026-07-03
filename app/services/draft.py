@@ -4861,6 +4861,17 @@ def _build_goal_signup_list(
     return f"<ol>\n{items}\n</ol>"
 
 
+_GOAL_INTRO_AVAILABILITY_PATTERN = re.compile(
+    r"\b(?:not available|unavailable|your state|your province|eligib\w*|isn'?t offered|where legal|restricted)\b",
+    re.IGNORECASE,
+)
+
+
+def _goal_intro_mentions_availability(html: str) -> bool:
+    """An article lede is not personalized; availability talk never belongs in it."""
+    return bool(_GOAL_INTRO_AVAILABILITY_PATTERN.search(_html_to_plain_text(html or "")))
+
+
 async def _generate_goal_intro(
     *,
     keyword: str,
@@ -4894,6 +4905,7 @@ KEYWORD (use exactly once): {keyword}
 
 GOAL's house shape, for rhythm only: "Pre the Seahawks vs Cardinals NFL matchup at 8pm ET, use DraftKings promo code GOAL, to get $200 in bonuses (11/18)."
 Include: the keyword, the code status, the bonus amount, the matchup with its start time, and the (M/D) date tag when a date is provided.
+Never mention availability, eligibility, or state restrictions - the terms section covers that.
 Output one <p> paragraph only."""
 
     async def _attempt(extra: str = "", max_tokens: int = 300) -> str:
@@ -4910,6 +4922,17 @@ Output one <p> paragraph only."""
         return first.group(0) if first else text
 
     result = await _attempt()
+    for correction in (
+        "\n\nMANDATORY CORRECTION: never mention availability, eligibility, or states in the lede."
+        " Rewrite with only the keyword, code status, bonus amount, matchup, start time, and date tag.",
+        "\n\nMANDATORY CORRECTION: the previous attempt mentioned availability again. Remove every"
+        " availability, eligibility, or state reference and rewrite the lede.",
+    ):
+        if not _goal_intro_mentions_availability(result):
+            break
+        retry = await _attempt(correction, max_tokens=200)
+        if retry:
+            result = retry
     if len(_html_to_plain_text(result)) > 240:
         retry = await _attempt(
             "\n\nMANDATORY CORRECTION: your previous attempt was too long. Rewrite in under 150 characters.",
