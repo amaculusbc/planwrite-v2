@@ -2020,6 +2020,22 @@ def _dedupe_formation_mentions(html: str) -> str:
     return _normalize_visible_punctuation(_rewrite_html_text_nodes(html, _transform))
 
 
+def _dedupe_latest_meeting_sentences(html: str) -> str:
+    """The head-to-head result is one fact; keep the first sentence that states it."""
+    if not html:
+        return html
+    seen = {"count": 0}
+
+    def _transform(text: str) -> str:
+        def _sub(match: "re.Match[str]") -> str:
+            seen["count"] += 1
+            return match.group(0) if seen["count"] == 1 else ""
+
+        return re.sub(r"[^.!?<>]*\b(?:latest|last)\s+(?:listed\s+)?meeting\b[^.!?<>]*[.!?]\s*", _sub, text, flags=re.IGNORECASE)
+
+    return _normalize_visible_punctuation(_rewrite_html_text_nodes(html, _transform))
+
+
 _PRICELESS_PICK_MARKETS = re.compile(
     r"\b(?:draw no bet|anytime goalscorer|both teams to score|(?:over|under) total goals)\b",
     re.IGNORECASE,
@@ -4809,6 +4825,7 @@ async def generate_draft_from_outline(
     html_output = _strip_priceless_market_picks(html_output)
     html_output = _strip_starter_count_phrases(html_output)
     html_output = _dedupe_formation_mentions(html_output)
+    html_output = _dedupe_latest_meeting_sentences(html_output)
     html_output = _cap_primary_keyword_density(html_output, keyword)
     html_output = _strip_search_query_openers(html_output)
     html_output = _title_case_headings(html_output)
@@ -5747,6 +5764,7 @@ Do NOT repeat information from previous sections."""
 - Every number must be a posted market price/line or a real historical stat ("49 goal involvements across 51 appearances"). Never write "projects for" or quote model projections - GOAL does not publish projections.
 - Only name a market or pick when you attach its posted price in parentheses. With no posted price, do not name a market at all ("Portugal draw no bet is the natural starting point" with no price is banned) - argue from form, tactics, and lineups instead.
 - Never mention starter counts ("lists 11 starters" is banned - every team fields 11). Name a formation at most ONCE in the whole article; if both teams share it, say it once ("Both teams set up in the same 4-2-3-1") and never repeat the numbers again.
+- A match fact (a result like 2-1, a formation, a stat) appears exactly ONCE in the whole article. If it is already in PREVIOUSLY WRITTEN, do not restate it in new words - argue from something else.
 """
 
     user_prompt = f"""Write the content for this section:
@@ -6185,6 +6203,7 @@ async def generate_draft_from_outline_streaming(
     html_output = _strip_priceless_market_picks(html_output)
     html_output = _strip_starter_count_phrases(html_output)
     html_output = _dedupe_formation_mentions(html_output)
+    html_output = _dedupe_latest_meeting_sentences(html_output)
     html_output = _cap_primary_keyword_density(html_output, keyword)
     html_output = _strip_search_query_openers(html_output)
     html_output = _title_case_headings(html_output)
