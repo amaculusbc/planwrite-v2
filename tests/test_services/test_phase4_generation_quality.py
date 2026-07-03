@@ -1145,13 +1145,13 @@ def test_dedupe_latest_meeting_sentences_keeps_first_only():
     from app.services.draft import _dedupe_latest_meeting_sentences
 
     html = (
-        "<p>Portugal took the latest meeting 2-1, so there is a recent blueprint.</p>"
+        "<p>Portugal took the latest meeting 2-1, a spot for the <strong>bet365 bonus code</strong> GOALBET.</p>"
         "<p>Portugal won the latest meeting 2-1, but Croatia rarely settles. Croatia presses high.</p>"
         "<p>Portugal's 2-1 win in the latest meeting matters here.</p>"
     )
     cleaned = _dedupe_latest_meeting_sentences(html)
     assert cleaned.count("latest meeting") == 1
-    assert "recent blueprint" in cleaned
+    assert "bet365 bonus code" in cleaned  # tag-split first sentence is the one kept
     assert "Croatia presses high." in cleaned
 
 

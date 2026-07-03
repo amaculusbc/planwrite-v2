@@ -2020,20 +2020,25 @@ def _dedupe_formation_mentions(html: str) -> str:
     return _normalize_visible_punctuation(_rewrite_html_text_nodes(html, _transform))
 
 
+_INLINE_TAG = r"(?:</?(?:strong|em|b|i|a|span)(?:\s[^>]*)?>)"
+# Sentences split by inline tags (<strong>keyword</strong>) must still match whole.
+_LATEST_MEETING_SENTENCE = re.compile(
+    rf"(?:{_INLINE_TAG}|[^.!?<>])*\b(?:latest|last)\s+(?:listed\s+)?meeting\b(?:{_INLINE_TAG}|[^.!?<>])*[.!?]\s*",
+    re.IGNORECASE,
+)
+
+
 def _dedupe_latest_meeting_sentences(html: str) -> str:
     """The head-to-head result is one fact; keep the first sentence that states it."""
     if not html:
         return html
     seen = {"count": 0}
 
-    def _transform(text: str) -> str:
-        def _sub(match: "re.Match[str]") -> str:
-            seen["count"] += 1
-            return match.group(0) if seen["count"] == 1 else ""
+    def _sub(match: "re.Match[str]") -> str:
+        seen["count"] += 1
+        return match.group(0) if seen["count"] == 1 else ""
 
-        return re.sub(r"[^.!?<>]*\b(?:latest|last)\s+(?:listed\s+)?meeting\b[^.!?<>]*[.!?]\s*", _sub, text, flags=re.IGNORECASE)
-
-    return _normalize_visible_punctuation(_rewrite_html_text_nodes(html, _transform))
+    return _normalize_visible_punctuation(_LATEST_MEETING_SENTENCE.sub(_sub, html))
 
 
 _PRICELESS_PICK_MARKETS = re.compile(
