@@ -269,6 +269,17 @@ async def test_build_expertise_context_adds_soccer_lineups_absences_matchups_and
             return {
                 "results": [
                     {
+                        # The previewed event itself shows up here once it finishes;
+                        # it must never be quoted as head-to-head history.
+                        "eventId": 7001,
+                        "name": "Mexico at South Africa",
+                        "scheduledDate": "2026-06-12T19:00:00Z",
+                        "teams": [
+                            {"teamId": 11, "teamName": "Mexico", "score": 3},
+                            {"teamId": 22, "teamName": "South Africa", "score": 0},
+                        ],
+                    },
+                    {
                         "eventId": 6001,
                         "name": "Mexico at South Africa",
                         "scheduledDate": "2025-06-11T19:00:00Z",
@@ -276,7 +287,7 @@ async def test_build_expertise_context_adds_soccer_lineups_absences_matchups_and
                             {"teamId": 11, "teamName": "Mexico", "score": 2},
                             {"teamId": 22, "teamName": "South Africa", "score": 1},
                         ],
-                    }
+                    },
                 ]
             }
         if path == "/soccer/event/7001/lineups":
@@ -360,6 +371,8 @@ async def test_build_expertise_context_adds_soccer_lineups_absences_matchups_and
     assert payload["absences"]["matched"] is True
     assert payload["weather"]["matched"] is True
     assert any("Mexico won the latest meeting with South Africa 2-1" in point for point in payload["editorial_points"])
+    assert not any("3-0" in point for point in payload["editorial_points"])  # the previewed event's own score
+    assert all(str(event.get("event_id")) != "7001" for event in payload["matchups"]["events"])
     assert not any("matchup sample" in point for point in payload["editorial_points"])
     assert any("Mexico's official lineup sets up in a 4-3-3" in point for point in payload["editorial_points"])
     assert not any("11 starters" in point for point in payload["editorial_points"])

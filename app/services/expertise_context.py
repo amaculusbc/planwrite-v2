@@ -575,9 +575,13 @@ def _summarize_soccer_lineups(results: list[dict]) -> tuple[dict, list[str]]:
     return {"matched": bool(lineups), "teams": lineups}, points[:2]
 
 
-def _summarize_soccer_matchups(results: list[dict]) -> tuple[dict, list[str]]:
+def _summarize_soccer_matchups(results: list[dict], *, exclude_event_id=None) -> tuple[dict, list[str]]:
     completed: list[dict] = []
     for item in results:
+        # BC Core lists the previewed event itself among past events once it
+        # finishes; quoting its own final score as head-to-head history is wrong.
+        if exclude_event_id is not None and str(item.get("eventId")) == str(exclude_event_id):
+            continue
         teams = item.get("teams") if isinstance(item.get("teams"), list) else []
         if len(teams) < 2:
             continue
@@ -645,7 +649,7 @@ async def _build_soccer_expertise_context(bc_event: dict) -> tuple[dict, str]:
     absences_payload = results[2] if not isinstance(results[2], Exception) else {}
     weather_payload = results[3] if len(results) > 3 and not isinstance(results[3], Exception) else {}
 
-    matchups, matchup_points = _summarize_soccer_matchups(matchup_payload.get("results", []) or [])
+    matchups, matchup_points = _summarize_soccer_matchups(matchup_payload.get("results", []) or [], exclude_event_id=event_id)
     lineups, lineup_points = _summarize_soccer_lineups(lineup_payload.get("results", []) or [])
     absences, absence_points = _summarize_soccer_absences(absences_payload.get("results", []) or [])
     weather_results = weather_payload.get("results", []) if isinstance(weather_payload, dict) else []

@@ -2067,6 +2067,36 @@ def _dedupe_latest_meeting_sentences(html: str) -> str:
     return _normalize_visible_punctuation(_SCORE_SENTENCE.sub(_score_sub, html))
 
 
+def _strip_state_callouts_from_goal_body(html: str) -> str:
+    """GOAL is a national site; body copy must not address readers by state.
+
+    Only <p> text is touched - the legal-states line in the how-to <li> steps
+    and the terms table stay as-is.
+    """
+    if not html:
+        return html
+    names = "|".join(re.escape(name) for name in _STATE_FULL_NAMES.values())
+
+    def _transform(text: str) -> str:
+        # "gives Kentucky bettors", "eligible Kentucky users 21+" -> drop the state adjective
+        text = re.sub(rf"\b(?:{names})\s+(bettors|users|players|residents)\b", r"\1", text)
+        # "In Kentucky, a $10 bet..." -> "A $10 bet..."
+        text = re.sub(
+            rf"(^|[.!?]\s+)In (?:{names}),\s*(\w)",
+            lambda m: m.group(1) + m.group(2).upper(),
+            text,
+        )
+        # mid-sentence "in Kentucky" leftovers
+        text = re.sub(rf"\s+in (?:{names})\b(?!\s*-)", "", text)
+        return text
+
+    parts = re.split(r"(<p>.*?</p>)", html, flags=re.DOTALL)
+    for i, part in enumerate(parts):
+        if part.startswith("<p>"):
+            parts[i] = _rewrite_html_text_nodes(part, _transform)
+    return "".join(parts)
+
+
 _PRICELESS_PICK_MARKETS = re.compile(
     r"\b(?:draw no bet|anytime goalscorer|both teams to score|(?:over|under) total goals)\b",
     re.IGNORECASE,
@@ -4857,6 +4887,8 @@ async def generate_draft_from_outline(
     html_output = _strip_starter_count_phrases(html_output)
     html_output = _dedupe_formation_mentions(html_output)
     html_output = _dedupe_latest_meeting_sentences(html_output)
+    if is_goal_property(offer_property):
+        html_output = _strip_state_callouts_from_goal_body(html_output)
     html_output = _cap_primary_keyword_density(html_output, keyword)
     html_output = _strip_search_query_openers(html_output)
     html_output = _title_case_headings(html_output)
@@ -4918,7 +4950,12 @@ def _build_goal_signup_list(
         expiry_step += f" and expire after {expiration_days} days"
     steps.append(expiry_step)
     if states_text and "listed by the operator" not in states_text.lower():
-        steps.append(f"The offer is available in {states_text} - you must be in one of these {noun} to claim it")
+        single_state = "," not in states_text and " and " not in states_text
+        noun_singular = noun.rstrip("s")
+        if single_state:
+            steps.append(f"The offer is available in {states_text} - you must be in that {noun_singular} to claim it")
+        else:
+            steps.append(f"The offer is available in {states_text} - you must be in one of these {noun} to claim it")
 
     items = "\n".join(f"<li>{step}</li>" for step in steps)
     return f"<ol>\n{items}\n</ol>"
@@ -5796,6 +5833,7 @@ Do NOT repeat information from previous sections."""
 - Only name a market or pick when you attach its posted price in parentheses. With no posted price, do not name a market at all ("Portugal draw no bet is the natural starting point" with no price is banned) - argue from form, tactics, and lineups instead.
 - Never mention starter counts ("lists 11 starters" is banned - every team fields 11). Name a formation at most ONCE in the whole article; if both teams share it, say it once ("Both teams set up in the same 4-2-3-1") and never repeat the numbers again.
 - A match fact (a result like 2-1, a formation, a stat) appears exactly ONCE in the whole article. If it is already in PREVIOUSLY WRITTEN, do not restate it in new words - argue from something else.
+- Never address readers by state or single out a state in body copy ("Kentucky bettors", "For eligible Kentucky users 21+", "In Kentucky") - GOAL is a national site. Legal states appear only in the how-to steps.
 """
 
     user_prompt = f"""Write the content for this section:
@@ -6235,6 +6273,8 @@ async def generate_draft_from_outline_streaming(
     html_output = _strip_starter_count_phrases(html_output)
     html_output = _dedupe_formation_mentions(html_output)
     html_output = _dedupe_latest_meeting_sentences(html_output)
+    if is_goal_property(offer_property):
+        html_output = _strip_state_callouts_from_goal_body(html_output)
     html_output = _cap_primary_keyword_density(html_output, keyword)
     html_output = _strip_search_query_openers(html_output)
     html_output = _title_case_headings(html_output)

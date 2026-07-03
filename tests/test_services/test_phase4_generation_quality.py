@@ -1155,6 +1155,23 @@ def test_dedupe_latest_meeting_sentences_keeps_first_only():
     assert "Croatia presses high." in cleaned
 
 
+def test_strip_state_callouts_from_goal_body():
+    from app.services.draft import _strip_state_callouts_from_goal_body
+
+    html = (
+        "<p>The code gives Kentucky bettors a straightforward way in. "
+        "In Kentucky, a $10 bet can unlock $150. "
+        "For eligible Kentucky users 21+, the offer applies.</p>"
+        "<ol><li>The offer is available in KY - you must be in that state to claim it</li></ol>"
+    )
+    cleaned = _strip_state_callouts_from_goal_body(html)
+    assert "Kentucky" not in cleaned
+    assert "gives bettors a straightforward way in" in cleaned
+    assert "A $10 bet can unlock $150." in cleaned
+    assert "eligible users 21+" in cleaned
+    assert "available in KY - you must be in that state" in cleaned  # steps untouched
+
+
 def test_dedupe_result_score_survives_paraphrase():
     from app.services.draft import _dedupe_latest_meeting_sentences
 
