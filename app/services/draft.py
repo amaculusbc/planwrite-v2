@@ -1959,6 +1959,79 @@ def _strip_projection_sentences(html: str) -> str:
     return _normalize_visible_punctuation(_rewrite_html_text_nodes(html, _transform))
 
 
+_FORMATION_PATTERN = re.compile(r"\b\d-\d-\d(?:-\d)?\b")
+
+
+def _strip_starter_count_phrases(html: str) -> str:
+    """A soccer XI is always 11; saying so reads absurd. Keep only the formation."""
+    if not html:
+        return html
+
+    def _transform(text: str) -> str:
+        text = re.sub(
+            r"\bBoth teams list(?:ed)? 11 starters in (?:a|the) (\d-\d-\d(?:-\d)?)",
+            r"Both teams line up in the same \1",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            r"\b(lists?|fields?|names?)\s+11\s+starters\s+in\s+(a|the)\s+",
+            lambda m: ("lines up in " if m.group(1).lower().endswith("s") else "line up in ") + m.group(2) + " ",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(r"\b(?:with\s+)?11\s+starters\b", "its starting XI", text, flags=re.IGNORECASE)
+        return text
+
+    return _rewrite_html_text_nodes(html, _transform)
+
+
+def _dedupe_formation_mentions(html: str) -> str:
+    """Name a formation once; later repeats of the same numbers become 'shape'."""
+    if not html:
+        return html
+    seen: set[str] = set()
+
+    def _transform(text: str) -> str:
+        def _sub(match: "re.Match[str]") -> str:
+            token = match.group(2)
+            if token not in seen:
+                seen.add(token)
+                return match.group(0)
+            return "that shape" if match.group(1) else "shape"
+
+        return re.sub(r"(?:(a|the|its|their)\s+)?(" + _FORMATION_PATTERN.pattern + r")", _sub, text)
+
+    return _normalize_visible_punctuation(_rewrite_html_text_nodes(html, _transform))
+
+
+_PRICELESS_PICK_MARKETS = re.compile(
+    r"\b(?:draw no bet|anytime goalscorer|both teams to score|(?:over|under) total goals)\b",
+    re.IGNORECASE,
+)
+_POSTED_PRICE_TOKEN = re.compile(r"[+-]\d{2,4}\b|\d+\s*¢|\$\d")
+
+
+def _strip_priceless_market_picks(html: str) -> str:
+    """A named pick without a posted price never publishes."""
+    if not html:
+        return html
+
+    def _transform(text: str) -> str:
+        def _sub(match: "re.Match[str]") -> str:
+            sentence = match.group(0)
+            return sentence if _POSTED_PRICE_TOKEN.search(sentence) else ""
+
+        return re.sub(
+            r"[^.!?<>]*" + _PRICELESS_PICK_MARKETS.pattern + r"[^.!?<>]*[.!?]\s*",
+            _sub,
+            text,
+            flags=re.IGNORECASE,
+        )
+
+    return _normalize_visible_punctuation(_rewrite_html_text_nodes(html, _transform))
+
+
 def _strip_quoted_stat_phrases(html: str) -> str:
     """Unwrap stats the model quoted verbatim from internal notes."""
     if not html:
@@ -4718,6 +4791,9 @@ async def generate_draft_from_outline(
     # Late pass: sections appended after the main postprocess (analysis, promos)
     # must also honor the no-model-projections rule.
     html_output = _strip_projection_sentences(html_output)
+    html_output = _strip_priceless_market_picks(html_output)
+    html_output = _strip_starter_count_phrases(html_output)
+    html_output = _dedupe_formation_mentions(html_output)
     html_output = _cap_primary_keyword_density(html_output, keyword)
     html_output = _strip_search_query_openers(html_output)
     html_output = _title_case_headings(html_output)
@@ -5624,6 +5700,8 @@ Do NOT repeat information from previous sections."""
 - Short, plain sentences. Never stack clauses (banned shape: "putting Portugal ball-control props on the shortlist before you lock in a pregame wager").
 - Signal confidence through frames like "the natural starting point", "the swing", "nice if you trust the attack" - not adverbs.
 - Every number must be a posted market price/line or a real historical stat ("49 goal involvements across 51 appearances"). Never write "projects for" or quote model projections - GOAL does not publish projections.
+- Only name a market or pick when you attach its posted price in parentheses. With no posted price, do not name a market at all ("Portugal draw no bet is the natural starting point" with no price is banned) - argue from form, tactics, and lineups instead.
+- Never mention starter counts ("lists 11 starters" is banned - every team fields 11). Name a formation at most ONCE in the whole article; if both teams share it, say it once ("Both teams set up in the same 4-2-3-1") and never repeat the numbers again.
 """
 
     user_prompt = f"""Write the content for this section:
@@ -6057,6 +6135,9 @@ async def generate_draft_from_outline_streaming(
     # Late pass: sections appended after the main postprocess (analysis, promos)
     # must also honor the no-model-projections rule.
     html_output = _strip_projection_sentences(html_output)
+    html_output = _strip_priceless_market_picks(html_output)
+    html_output = _strip_starter_count_phrases(html_output)
+    html_output = _dedupe_formation_mentions(html_output)
     html_output = _cap_primary_keyword_density(html_output, keyword)
     html_output = _strip_search_query_openers(html_output)
     html_output = _title_case_headings(html_output)

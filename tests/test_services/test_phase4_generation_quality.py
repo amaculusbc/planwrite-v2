@@ -59,8 +59,11 @@ from app.services.draft import (
     _soften_repetitive_intro_opener,
     _strip_formatting_from_headings,
     _strip_market_mismatch_phrasing,
+    _strip_priceless_market_picks,
     _strip_projection_sentences,
     _strip_quoted_stat_phrases,
+    _strip_starter_count_phrases,
+    _dedupe_formation_mentions,
     _strip_search_query_openers,
     _strip_invalid_non_switchboard_links,
     _strip_unprovided_article_date,
@@ -1067,6 +1070,42 @@ def test_select_bc_core_editorial_points_filters_by_content_mode():
     assert not any("projects for" in point for point in dfs_points)
     assert not any("Market percents show" in point for point in dfs_points)
     assert not any("covered three" in point for point in dfs_points)
+
+
+def test_strip_starter_count_phrases_keeps_only_the_formation():
+    html = (
+        "<p>Both teams list 11 starters in a 4-2-3-1, putting the midfield at the center.</p>"
+        "<p>Croatia also lists 11 starters in a 4-2-3-1, setting up a controlled game.</p>"
+    )
+    cleaned = _strip_starter_count_phrases(html)
+    assert "11 starters" not in cleaned
+    assert "Both teams line up in the same 4-2-3-1" in cleaned
+    assert "Croatia also lines up in a 4-2-3-1" in cleaned
+
+
+def test_dedupe_formation_mentions_names_formation_once():
+    html = (
+        "<p>Both teams set up in the same 4-2-3-1.</p>"
+        "<p>Portugal's listed 4-2-3-1 gives Bruno Fernandes space.</p>"
+        "<p>Croatia's 4-2-3-1 mirrors it, and the score was 2-1 last time.</p>"
+    )
+    cleaned = _dedupe_formation_mentions(html)
+    assert cleaned.count("4-2-3-1") == 1
+    assert "Portugal's listed shape" in cleaned
+    assert "2-1 last time" in cleaned  # scores are not formations
+
+
+def test_strip_priceless_market_picks_requires_a_posted_price():
+    html = (
+        "<p>Portugal draw no bet is the natural starting point. This is a knockout match.</p>"
+        "<p>Under total goals is the cleaner match angle. Favor a tight script.</p>"
+        "<p>Luis Diaz anytime goalscorer (+180) is the natural starting point.</p>"
+    )
+    cleaned = _strip_priceless_market_picks(html)
+    assert "draw no bet" not in cleaned
+    assert "Under total goals" not in cleaned
+    assert "This is a knockout match." in cleaned
+    assert "anytime goalscorer (+180)" in cleaned
 
 
 def test_projection_points_never_misclassified_by_substring():

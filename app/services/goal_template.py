@@ -115,8 +115,9 @@ def build_goal_outline(
     odds_points = format_odds_talking_points(odds, away_team, home_team, preferred_book=_brand_book_key(brand))
     if not odds_points:
         odds_points = [
-            "No posted prices are available for this match. Build the breakdown on form, tactics, and matchup logic; "
-            "name the markets you like without quoting any price, and NEVER mention that prices are missing or unavailable."
+            "No posted prices are available for this match. Build the breakdown on form, tactics, lineups, and matchup logic. "
+            "Do NOT name any betting market or pick (no 'draw no bet', 'anytime goalscorer', over/under calls) - a pick "
+            "without a posted price never publishes. NEVER mention that prices are missing or unavailable."
         ]
 
     return [

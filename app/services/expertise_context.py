@@ -558,10 +558,20 @@ def _summarize_soccer_lineups(results: list[dict]) -> tuple[dict, list[str]]:
                     "official": official,
                 }
             )
-            if team_name and (formation or starter_count):
-                label = "official" if official else "projected"
-                formation_text = f" in a {formation}" if formation else ""
-                points.append(f"{team_name}'s {label} lineup lists {starter_count or 'multiple'} starters{formation_text}.")
+    # Never mention starter counts (a soccer XI is always 11). The shared-shape
+    # case is the interesting one, so merge it into a single point.
+    named = [l for l in lineups if l["team_name"] and (l["formation"] or l["official"])]
+    formations = [l["formation"] for l in named[:2] if l["formation"]]
+    if len(named) >= 2 and len(formations) == 2 and formations[0] == formations[1]:
+        label = "official" if all(l["official"] for l in named[:2]) else "projected"
+        points.append(f"Both teams set up in the same {formations[0]} shape ({label} lineups).")
+    else:
+        for team_lineup in named[:2]:
+            label = "official" if team_lineup["official"] else "projected"
+            if team_lineup["formation"]:
+                points.append(f"{team_lineup['team_name']}'s {label} lineup sets up in a {team_lineup['formation']}.")
+            else:
+                points.append(f"{team_lineup['team_name']}'s {label} lineup is confirmed.")
     return {"matched": bool(lineups), "teams": lineups}, points[:2]
 
 
