@@ -1155,6 +1155,20 @@ def test_dedupe_latest_meeting_sentences_keeps_first_only():
     assert "Croatia presses high." in cleaned
 
 
+def test_dedupe_result_score_survives_paraphrase():
+    from app.services.draft import _dedupe_latest_meeting_sentences
+
+    html = (
+        "<p>Portugal won the most recent meeting 2-1, adding a recent result.</p>"
+        "<p>Both sides use the same 4-2-3-1, putting the focus on midfield.</p>"
+        "<p>Portugal also won the most recent meeting, 2-1, which supports the lean. Kickoff is at 7 p.m.</p>"
+    )
+    cleaned = _dedupe_latest_meeting_sentences(html)
+    assert cleaned.count("2-1") == 1
+    assert "4-2-3-1" in cleaned  # formations are not scores
+    assert "Kickoff is at 7 p.m." in cleaned
+
+
 def test_strip_priceless_market_picks_requires_a_posted_price():
     html = (
         "<p>Portugal draw no bet is the natural starting point. This is a knockout match.</p>"

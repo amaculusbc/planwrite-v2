@@ -2023,22 +2023,48 @@ def _dedupe_formation_mentions(html: str) -> str:
 _INLINE_TAG = r"(?:</?(?:strong|em|b|i|a|span)(?:\s[^>]*)?>)"
 # Sentences split by inline tags (<strong>keyword</strong>) must still match whole.
 _LATEST_MEETING_SENTENCE = re.compile(
-    rf"(?:{_INLINE_TAG}|[^.!?<>])*\b(?:latest|last)\s+(?:listed\s+)?meeting\b(?:{_INLINE_TAG}|[^.!?<>])*[.!?]\s*",
+    rf"(?:{_INLINE_TAG}|[^.!?<>])*\b(?:latest|last|most\s+recent|previous)\s+(?:listed\s+)?meeting\b(?:{_INLINE_TAG}|[^.!?<>])*[.!?]\s*",
+    re.IGNORECASE,
+)
+# Standalone score like 2-1, not the 4-2 inside a 4-2-3-1 formation.
+_SCORE_TOKEN = re.compile(r"(?<![\d-])(\d{1,2}-\d{1,2})(?![\d-])")
+_RESULT_WORD = re.compile(r"\b(?:won|win|wins|beat|beats|beating|took|takes|edged|edges|defeated|meeting|head-to-head)\b", re.IGNORECASE)
+_SCORE_SENTENCE = re.compile(
+    rf"(?:{_INLINE_TAG}|[^.!?<>])*(?<![\d-])\d{{1,2}}-\d{{1,2}}(?![\d-])(?:{_INLINE_TAG}|[^.!?<>])*[.!?]\s*",
     re.IGNORECASE,
 )
 
 
 def _dedupe_latest_meeting_sentences(html: str) -> str:
-    """The head-to-head result is one fact; keep the first sentence that states it."""
+    """The head-to-head result is one fact; keep the first sentence that states it.
+
+    Models paraphrase ("latest meeting" -> "most recent meeting" -> a bare
+    "2-1 win"), so beyond the meeting phrasing this also dedupes by the score
+    itself: later result sentences repeating an already-used score are dropped.
+    """
     if not html:
         return html
     seen = {"count": 0}
 
-    def _sub(match: "re.Match[str]") -> str:
+    def _meeting_sub(match: "re.Match[str]") -> str:
         seen["count"] += 1
         return match.group(0) if seen["count"] == 1 else ""
 
-    return _normalize_visible_punctuation(_LATEST_MEETING_SENTENCE.sub(_sub, html))
+    html = _LATEST_MEETING_SENTENCE.sub(_meeting_sub, html)
+
+    seen_scores: set[str] = set()
+
+    def _score_sub(match: "re.Match[str]") -> str:
+        sentence = match.group(0)
+        if not _RESULT_WORD.search(sentence):
+            return sentence
+        scores = set(_SCORE_TOKEN.findall(sentence))
+        if scores & seen_scores:
+            return ""
+        seen_scores.update(scores)
+        return sentence
+
+    return _normalize_visible_punctuation(_SCORE_SENTENCE.sub(_score_sub, html))
 
 
 _PRICELESS_PICK_MARKETS = re.compile(
