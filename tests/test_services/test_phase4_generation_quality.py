@@ -1120,6 +1120,13 @@ def test_dedupe_formation_mentions_names_formation_once():
     assert "2-1 last time" in cleaned  # scores are not formations
 
 
+def test_dedupe_formation_mentions_collapses_shape_shape():
+    html = "<p>Portugal use a 4-2-3-1.</p><p>Both teams line up in the same 4-2-3-1 shape tonight.</p>"
+    cleaned = _dedupe_formation_mentions(html)
+    assert "shape shape" not in cleaned
+    assert "in the same shape tonight" in cleaned
+
+
 def test_strip_priceless_market_picks_requires_a_posted_price():
     html = (
         "<p>Portugal draw no bet is the natural starting point. This is a knockout match.</p>"

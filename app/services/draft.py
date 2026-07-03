@@ -2000,7 +2000,9 @@ def _dedupe_formation_mentions(html: str) -> str:
                 return match.group(0)
             return "that shape" if match.group(1) else "shape"
 
-        return re.sub(r"(?:(a|the|its|their)\s+)?(" + _FORMATION_PATTERN.pattern + r")", _sub, text)
+        text = re.sub(r"(?:(a|the|its|their)\s+)?(" + _FORMATION_PATTERN.pattern + r")", _sub, text)
+        # "in the same 4-2-3-1 shape" -> "in the same shape shape" without this collapse.
+        return re.sub(r"\b(that\s+)?shape(\s+)shape\b", lambda m: (m.group(1) or "") + "shape", text, flags=re.IGNORECASE)
 
     return _normalize_visible_punctuation(_rewrite_html_text_nodes(html, _transform))
 
