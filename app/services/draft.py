@@ -166,7 +166,7 @@ def _bc_core_point_category(point: str) -> str:
         return "projection"
     if any(token in text for token in ["weather", "degrees", "wind", "precipitation", "cloudy", "rain"]):
         return "weather"
-    if any(token in text for token in ["listed score", "latest listed score", "completed games", "went "]):
+    if any(token in text for token in ["listed score", "latest listed score", "completed games", "went ", "latest meeting", "met "]):
         return "matchup"
     if any(token in text for token in ["lineup", "formation", "starters"]):
         return "lineup"
@@ -5884,7 +5884,9 @@ Write the section now (HTML only, no heading, no markdown):"""
             result = f"<p>{result}</p>"
         if not is_eligibility:
             result = _polish_body_section_prose(result)
-        if _bc_core_marker_coverage(result, bc_core_points) < bc_core_required_count:
+        # GOAL sections are template-driven and voice-sensitive; appending points
+        # verbatim reads robotic, so the retry above is the last resort there.
+        if not is_goal_property(offer_property) and _bc_core_marker_coverage(result, bc_core_points) < bc_core_required_count:
             result = _inject_bc_core_points_into_html(result, bc_core_points[:bc_core_required_count], max_injections=bc_core_required_count)
     return result
 

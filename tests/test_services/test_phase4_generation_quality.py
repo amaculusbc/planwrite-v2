@@ -995,8 +995,8 @@ def test_select_bc_core_editorial_points_prioritizes_soccer_specific_context():
                 "matched": True,
                 "editorial_points": [
                     "Weather context points to 72 degrees, 9 mph NW wind, and 15% precipitation.",
-                    "Mexico's official lineup lists 11 starters in a 4-3-3.",
-                    "The latest listed score was Mexico 2, South Africa 1.",
+                    "Mexico's official lineup sets up in a 4-3-3.",
+                    "Mexico won the latest meeting with South Africa 2-1.",
                     "Mexico has 1 listed player absence: J. Alvarez (Out, Hamstring).",
                 ],
             },
@@ -1005,7 +1005,7 @@ def test_select_bc_core_editorial_points_prioritizes_soccer_specific_context():
         max_points=3,
     )
     joined = " ".join(points)
-    assert "latest listed score" in joined
+    assert "latest meeting" in joined
     assert "official lineup" in joined
     assert "listed player absence" in joined
 

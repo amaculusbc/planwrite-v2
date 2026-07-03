@@ -599,11 +599,24 @@ def _summarize_soccer_matchups(results: list[dict]) -> tuple[dict, list[str]]:
         latest = completed[0]
         teams = latest.get("teams") or []
         if len(teams) >= 2 and teams[0].get("score") is not None and teams[1].get("score") is not None:
-            points.append(
-                f"The recent matchup sample includes {len(completed)} meeting{'s' if len(completed) != 1 else ''}; the latest listed score was {teams[0].get('team_name')} {teams[0].get('score')}, {teams[1].get('team_name')} {teams[1].get('score')}."
-            )
-        else:
-            points.append(f"The recent matchup sample includes {len(completed)} previous meeting{'s' if len(completed) != 1 else ''}.")
+            first_team, second_team = teams[0], teams[1]
+            try:
+                first_score, second_score = int(first_team.get("score")), int(second_team.get("score"))
+            except (TypeError, ValueError):
+                first_score = second_score = None
+            if first_score is None:
+                points.append(
+                    f"The latest meeting went {first_team.get('team_name')} {first_team.get('score')}, {second_team.get('team_name')} {second_team.get('score')}."
+                )
+            elif first_score == second_score:
+                points.append(f"The latest meeting between the teams ended level, {first_score}-{second_score}.")
+            else:
+                winner, loser = (first_team, second_team) if first_score > second_score else (second_team, first_team)
+                points.append(
+                    f"{winner.get('team_name')} won the latest meeting with {loser.get('team_name')} {max(first_score, second_score)}-{min(first_score, second_score)}."
+                )
+        elif len(completed) > 1:
+            points.append(f"The teams have met {len(completed)} times recently.")
     return {"matched": bool(completed), "events": completed[:5]}, points
 
 

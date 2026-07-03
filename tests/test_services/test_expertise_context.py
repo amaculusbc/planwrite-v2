@@ -359,7 +359,8 @@ async def test_build_expertise_context_adds_soccer_lineups_absences_matchups_and
     assert payload["lineups"]["matched"] is True
     assert payload["absences"]["matched"] is True
     assert payload["weather"]["matched"] is True
-    assert any("latest listed score was Mexico 2, South Africa 1" in point for point in payload["editorial_points"])
+    assert any("Mexico won the latest meeting with South Africa 2-1" in point for point in payload["editorial_points"])
+    assert not any("matchup sample" in point for point in payload["editorial_points"])
     assert any("Mexico's official lineup sets up in a 4-3-3" in point for point in payload["editorial_points"])
     assert not any("11 starters" in point for point in payload["editorial_points"])
     assert any("Mexico has 1 listed player absence" in point for point in payload["editorial_points"])
