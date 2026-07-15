@@ -4913,7 +4913,7 @@ async def generate_draft_from_outline(
             content_mode=content_mode,
             bet_example_data=bet_example_data,
         )
-    if is_goal and (operator_promos or operator_boosts or get_standing_promos(brand)):
+    if is_goal and (operator_promos or operator_boosts or get_standing_promos(brand, sport)):
         promos_section = render_operator_promos_section(
             brand,
             operator_promos or [],
@@ -4922,7 +4922,7 @@ async def generate_draft_from_outline(
             bonus_code=str(offer.get("bonus_code") or ""),
             sport=sport,
             boosts=operator_boosts,
-            standing_promos=get_standing_promos(brand),
+            standing_promos=get_standing_promos(brand, sport),
         )
         if promos_section:
             html_output = _insert_section_before_terms(html_output, promos_section)
@@ -6311,7 +6311,7 @@ async def generate_draft_from_outline_streaming(
             content_mode=content_mode,
             bet_example_data=bet_example_data,
         )
-    if is_goal and (operator_promos or operator_boosts or get_standing_promos(brand)):
+    if is_goal and (operator_promos or operator_boosts or get_standing_promos(brand, sport)):
         promos_section = render_operator_promos_section(
             brand,
             operator_promos or [],
@@ -6320,7 +6320,7 @@ async def generate_draft_from_outline_streaming(
             bonus_code=str(offer.get("bonus_code") or ""),
             sport=sport,
             boosts=operator_boosts,
-            standing_promos=get_standing_promos(brand),
+            standing_promos=get_standing_promos(brand, sport),
         )
         if promos_section:
             html_output = _insert_section_before_terms(html_output, promos_section)

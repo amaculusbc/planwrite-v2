@@ -25,7 +25,7 @@ def test_promos_section_leads_with_boosts_and_standing_promos():
             "original_odds": "+725",
             "boosted_odds": "+850",
         }],
-        standing_promos=get_standing_promos("bet365"),
+        standing_promos=get_standing_promos("bet365", "soccer"),
     )
     # Tom's requested framing: for all players, not just new sign-ups, and named sport.
     assert "Aside from the bet365 bonus code GOALBET offer for new players" in html
@@ -33,6 +33,25 @@ def test_promos_section_leads_with_boosts_and_standing_promos():
     assert "Odds boost: Juan Soto: 1+ Home Runs + Kyle Schwarber: 1+ Home Runs - boosted from +725 to +850" in html
     assert "Early Payout" in html
     assert "First Bet Safety Net" in html
+
+
+def test_standing_promos_are_sport_scoped():
+    # bet365's Early Payout is a two-goals-ahead soccer rule; it must never
+    # appear on a baseball article.
+    soccer = get_standing_promos("bet365", "soccer")
+    mlb = get_standing_promos("bet365", "mlb")
+
+    assert any("2 Goals Ahead Early Payout" in p for p in soccer)
+    assert not any("Goals Ahead" in p for p in mlb)
+    assert not any("soccer" in p.lower() for p in mlb)
+    # The cross-sport claim still shows for both.
+    assert any("Bet Boost" in p for p in soccer)
+    assert any("Bet Boost" in p for p in mlb)
+
+
+def test_standing_promos_without_a_sport_return_cross_sport_claims_only():
+    promos = get_standing_promos("bet365")
+    assert promos == ["Bet Boost tokens on selected pre-match and in-play parlays"]
 
 
 def test_promos_section_names_the_sport_per_article():
