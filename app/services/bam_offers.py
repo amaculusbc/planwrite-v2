@@ -247,11 +247,37 @@ def _normalize_catalog_offer_states(offer: dict, market: str | None = None) -> d
     return enrich_offer_dict(normalized)
 
 
+# BAM serves some clearly foreign campaigns under US location overrides - the
+# Canadian brands (C$ amounts, GOALCA codes) and bet365's "UK:"/"Mexico:" feed
+# offers. They carry real source_locations, so only their own copy gives them
+# away.
+_FOREIGN_COPY_BY_MARKET: dict[str, re.Pattern[str]] = {
+    "US": re.compile(
+        r"C\$|£|€|\bGOALCA\b|\bUK:|\bMexico:|\bjusqu|\bobtenez|\bapuestas\b|\bgratis\b|[¡¿]",
+        re.IGNORECASE,
+    ),
+    "CA": re.compile(r"£|€|\bUK:|\bMexico:|\bapuestas\b|\bgratis\b|[¡¿]", re.IGNORECASE),
+}
+
+
+def _offer_is_foreign_campaign(offer: dict, market_code: str) -> bool:
+    pattern = _FOREIGN_COPY_BY_MARKET.get(market_code)
+    if not pattern:
+        return False
+    haystack = " ".join(
+        str(offer.get(field) or "")
+        for field in ("offer_text", "affiliate_offer", "bonus_code", "brand")
+    )
+    return bool(pattern.search(haystack))
+
+
 def _offer_matches_market(offer: dict, market: str | None = None) -> bool:
     """Return whether an offer belongs to the selected country market."""
     market_code = str(market or "").strip().upper()
     if market_code not in {"US", "CA"}:
         return True
+    if _offer_is_foreign_campaign(offer, market_code):
+        return False
     states = parse_states(offer.get("states") or offer.get("states_list") or [])
     if not states or states == ["ALL"]:
         source_locations = parse_states(offer.get("source_locations") or [])

@@ -45,6 +45,35 @@ def test_offer_matches_market_requires_canadian_province_for_ca_market():
     assert bam_offers._offer_matches_market({"states": ["NJ", "PA"]}, "US") is True
 
 
+def test_foreign_campaigns_never_match_the_us_market():
+    # BAM serves these under US location overrides, so only their copy gives them away.
+    us_states = ["NJ", "PA"]
+    for offer in (
+        {"states": us_states, "brand": "TonyBet", "bonus_code": "GOALCA",
+         "offer_text": "100% Deposit Match Up to C$350!"},
+        {"states": us_states, "brand": "bet365", "bonus_code": "365INT",
+         "offer_text": "UK: Bet £10 & Get £30 in Free Bets!"},
+        {"states": us_states, "brand": "bet365", "bonus_code": "365INT",
+         "offer_text": "Mexico: Consiga hasta $3,000 en apuestas gratis"},
+    ):
+        assert bam_offers._offer_matches_market(offer, "US") is False
+
+    # A plain US offer is untouched.
+    assert bam_offers._offer_matches_market(
+        {"states": us_states, "brand": "bet365", "offer_text": "Bet $10, Get $150 in Bonus Bets!"}, "US"
+    ) is True
+
+
+def test_canadian_market_keeps_c_dollar_offers_but_drops_uk_and_mexico():
+    ca = ["ON", "QC"]
+    assert bam_offers._offer_matches_market(
+        {"states": ca, "brand": "TonyBet", "offer_text": "100% Deposit Match Up to C$350!"}, "CA"
+    ) is True
+    assert bam_offers._offer_matches_market(
+        {"states": ca, "brand": "bet365", "offer_text": "UK: Bet £10 & Get £30 in Free Bets!"}, "CA"
+    ) is False
+
+
 def test_offer_with_no_availability_evidence_matches_no_market():
     # Base-feed Canadian offers arrive as states=["ALL"] with no source_locations
     # and used to default into the US catalog.
