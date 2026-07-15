@@ -147,21 +147,50 @@ def test_render_prediction_market_overview_section_deterministic_avoids_sportsbo
     assert "$50 in Novig Coins" in html
 
 
-def test_render_prediction_market_example_section_deterministic_uses_contract_math():
+_NOVIG_OFFER = {
+    "brand": "Novig",
+    "offer_text": "Spend $25, Get $50 in Novig Coins",
+    "bonus_code": "ACTION",
+    "qualifying_amount": "$25",
+    "bonus_amount": "$50",
+    "reward_label": "Novig Coins",
+}
+
+
+def test_render_prediction_market_example_section_omits_price_without_matched_market():
+    """Without a matched market there is no real contract price, so none may publish."""
     html = _render_prediction_market_example_section_deterministic(
-        offer={
-            "brand": "Novig",
-            "offer_text": "Spend $25, Get $50 in Novig Coins",
-            "bonus_code": "ACTION",
-            "qualifying_amount": "$25",
-            "bonus_amount": "$50",
-            "reward_label": "Novig Coins",
-        },
+        offer=_NOVIG_OFFER,
         bet_example_data=None,
         event_context="Featured event: NBA Finals MVP Market.",
     )
     assert html is not None
-    assert "contracts" in html.lower()
+    assert "per contract" not in html.lower()
+    assert "contracts" not in html.lower()
+    assert "$0.50" not in html
+    # The money still has to trace: the qualifying action triggers the reward that funds the position.
+    assert "$25 qualifying action" in html
+    assert "$50 in Novig Coins" in html
+
+
+def test_render_prediction_market_example_section_prices_from_matched_market():
+    html = _render_prediction_market_example_section_deterministic(
+        offer=_NOVIG_OFFER,
+        bet_example_data={
+            "qualifying_amount": 25,
+            "reward_amount": 50,
+            "position_amount": 50,
+            "entry_price": 0.40,
+            "settlement_price": 1.0,
+            "selection": "Yes",
+            "market_title": "Will Player X win MVP?",
+            "prediction_market": {"provider": "novig", "yes_price": 0.40},
+        },
+        event_context="Featured event: NBA Finals MVP Market.",
+    )
+    assert html is not None
+    assert "$0.40 per contract" in html
+    assert "125 contracts" in html  # $50 of credits / $0.40
     assert "$50 in Novig Coins" in html
 
 
@@ -237,7 +266,7 @@ async def test_generate_intro_section_uses_ai_prompt_for_prediction_market(monke
 
 
 @pytest.mark.asyncio
-async def test_generate_body_section_uses_ai_prompt_for_prediction_market_paths(monkeypatch):
+async def test_generate_body_section_publishes_deterministic_prediction_market_example(monkeypatch):
     prompts: list[str] = []
 
     async def _fake_query_articles(*args, **kwargs):
@@ -298,10 +327,12 @@ async def test_generate_body_section_uses_ai_prompt_for_prediction_market_paths(
         event_context="Featured event: NBA Finals MVP Market. Game time: Tuesday, May 5, 2026 at 8:30 PM ET.",
         prediction_market=True,
     )
-    assert len(prompts) == 2
-    assert all("VARIATION BRIEF:" in prompt for prompt in prompts)
-    assert "EXACT MECHANICS REFERENCE" in prompts[1]
-    assert "$25 qualifying action" in prompts[1]
-    assert "contracts" in prompts[1].lower()
+    # The overview is still model-written; the worked example is not. Handing the model the
+    # mechanics as a reference let it rewrite the amounts, so the claim section now publishes
+    # straight from offer data and never reaches the model.
+    assert len(prompts) == 1
+    assert "VARIATION BRIEF:" in prompts[0]
     assert "Novig Coins" in overview
-    assert "market math" in claim.lower()
+    # The claim traces the money: the $25 action triggers the reward, which funds the position.
+    assert "$25 qualifying action" in claim
+    assert "$50 in Novig Coins" in claim

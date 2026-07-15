@@ -4539,19 +4539,27 @@ def _build_fallback_prediction_market_example_data(
     offer: dict[str, Any],
     event_context: str,
 ) -> dict[str, Any] | None:
-    """Construct a deterministic prediction-market example keyed to the qualifying amount."""
+    """Construct a deterministic prediction-market example keyed to the qualifying amount.
+
+    Every figure comes from the offer: the reader must be able to trace the money from the
+    qualifying action to the reward to the position it funds. Returns None rather than
+    inventing an amount, and never carries a contract price - a made-up price reads as a real
+    quote. Pricing only comes from a matched market (see build_prediction_market_example).
+    """
     event_label = _extract_featured_label_from_event_context(event_context)
     if not event_label:
         return None
 
     qualifying_amount = _parse_money_value(
         offer.get("qualifying_amount") or extract_offer_amount_details(str(offer.get("offer_text") or "")).get("qualifying_amount")
-    ) or 25.0
-    reward_amount = _parse_money_value(offer.get("bonus_amount") or offer.get("reward_amount")) or 50.0
+    )
+    reward_amount = _parse_money_value(offer.get("bonus_amount") or offer.get("reward_amount"))
+    if not qualifying_amount or not reward_amount:
+        return None
     return {
         "qualifying_amount": qualifying_amount,
-        "position_amount": 10.0,
-        "entry_price": 0.50,
+        # The reward is what funds the position; that link is the whole point of the example.
+        "position_amount": reward_amount,
         "settlement_price": 1.0,
         "selection": event_label,
         "event_context": event_label,
@@ -4578,15 +4586,29 @@ def _render_prediction_market_example_section_deterministic(
     qualifying_amount = _parse_money_value(data.get("qualifying_amount"))
     if qualifying_amount is None:
         qualifying_amount = _parse_money_value(_offer_qualifying_amount_text(offer))
-    if qualifying_amount is None:
-        qualifying_amount = 25.0
-    position_amount = _parse_money_value(data.get("position_amount") or data.get("bet_amount")) or 10.0
-    entry_price = float(data.get("entry_price") or 0.50)
+    reward_amount = _parse_money_value(
+        data.get("reward_amount") or offer.get("bonus_amount") or offer.get("reward_amount")
+    )
+    if qualifying_amount is None or reward_amount is None:
+        return None
+    position_amount = (
+        _parse_money_value(data.get("position_amount") or data.get("bet_amount")) or reward_amount
+    )
     settlement_price = float(data.get("settlement_price") or 1.0)
     selection = str(data.get("selection") or "").strip()
     if not selection:
         return None
     prediction_market_data = data.get("prediction_market") if isinstance(data.get("prediction_market"), dict) else {}
+    # Only a matched market carries a real contract price. The UI builder hardcodes $0.50, so
+    # without a market the price is fiction and the contract math cannot publish.
+    entry_price = None
+    if prediction_market_data:
+        try:
+            entry_price = float(data.get("entry_price"))
+        except (TypeError, ValueError):
+            entry_price = None
+        if entry_price is not None and not 0.0 < entry_price < 1.0:
+            entry_price = None
     market_title = _humanize_market_title(
         str(data.get("market_title") or prediction_market_data.get("market_title") or "").strip()
     )
@@ -4598,23 +4620,57 @@ def _render_prediction_market_example_section_deterministic(
     elif market_title:
         selection_phrase = market_title
 
-    contracts = position_amount / entry_price if entry_price > 0 else 0.0
+    contracts = position_amount / entry_price if entry_price else 0.0
     gross_payout = contracts * settlement_price
     profit = gross_payout - position_amount
     reward_phrase = _offer_reward_phrase_visible(offer).replace("bonus bets", "promo credits")
     bonus_code = str(offer.get("bonus_code") or "").strip()
     code_sentence = f" after entering <strong>{bonus_code}</strong> at signup" if bonus_code else ""
 
+    # The qualifying amount and the position amount are different things, and a reader could not
+    # tell which one triggered the reward. Say it outright, and only price the position when a
+    # matched market gave us a real contract price.
+    funded_by_reward = abs(position_amount - reward_amount) < 0.01
+    # Without a matched market there is no side to name, only the fixture, so the money goes
+    # "into an eligible market on X" rather than "behind X" (which would back a whole match).
+    has_market = bool(prediction_market_data)
+    if funded_by_reward:
+        position_sentence = (
+            f"I put those {reward_phrase} behind {selection_phrase}."
+            if has_market
+            else f"I put those {reward_phrase} into an eligible market on {selection_phrase}."
+        )
+    else:
+        position_sentence = (
+            f"Separately, I open a ${position_amount:.0f} position on {selection_phrase}."
+            if has_market
+            else f"Separately, I put ${position_amount:.0f} into an eligible market on {selection_phrase}."
+        )
+    math_fragment = (
+        f" At ${entry_price:.2f} per contract, that buys about {contracts:.0f} contracts, and a "
+        f"${settlement_price:.2f} settlement pays about ${gross_payout:.2f}, or roughly "
+        f"${profit:.2f} in profit before fees."
+        if entry_price
+        else ""
+    )
+
     first_para_options = [
-        f"<p>I complete the ${qualifying_amount:.0f} qualifying action{code_sentence}. Then I open a separate ${position_amount:.0f} position on {selection_phrase}. At ${entry_price:.2f} per contract, that buys about {contracts:.0f} contracts. A ${settlement_price:.2f} settlement pays about ${gross_payout:.2f}, or roughly ${profit:.2f} in profit.</p>",
-        f"<p>The ${qualifying_amount:.0f} qualifying action comes first{code_sentence}. Then I use a separate ${position_amount:.0f} position on {selection_phrase}. At ${entry_price:.2f} per contract, that buys about {contracts:.0f} contracts. A close at ${settlement_price:.2f} returns about ${gross_payout:.2f}, or roughly ${profit:.2f} in profit.</p>",
-        f"<p>After the ${qualifying_amount:.0f} qualifying action{code_sentence}, I put ${position_amount:.0f} behind {selection_phrase}. At ${entry_price:.2f} per contract, that buys roughly {contracts:.0f} contracts. A ${settlement_price:.2f} settlement pays about ${gross_payout:.2f}, which means about ${profit:.2f} in profit.</p>",
+        f"<p>I complete the ${qualifying_amount:.0f} qualifying action{code_sentence}. That ${qualifying_amount:.0f} is what triggers the offer, and it returns {reward_phrase}. {position_sentence}{math_fragment}</p>",
+        f"<p>The ${qualifying_amount:.0f} qualifying action comes first{code_sentence}. It is the ${qualifying_amount:.0f} that unlocks the offer, not the size of the position, and {reward_phrase} lands once it settles. {position_sentence}{math_fragment}</p>",
+        f"<p>The offer returns {reward_phrase} once the ${qualifying_amount:.0f} qualifying action is complete{code_sentence}. The ${qualifying_amount:.0f} is the trigger on its own. {position_sentence}{math_fragment}</p>",
     ]
-    second_para_options = [
-        f"<p>The opposite settlement costs the ${position_amount:.0f} position amount, but the {reward_phrase} from the offer remains. That makes the reward better for several smaller positions instead of one large market view.</p>",
-        f"<p>A market move the other way puts the ${position_amount:.0f} position at risk, but the {reward_phrase} from the offer remains. Use that reward as extra flexibility across several positions, not as fuel for one oversized trade.</p>",
-        f"<p>An unfavorable settlement still risks the ${position_amount:.0f} amount in that market while the {reward_phrase} remains available. The cleaner use is several smaller follow-up positions instead of one doubled-down view.</p>",
-    ]
+    if funded_by_reward:
+        second_para_options = [
+            f"<p>If it settles the other way, the {reward_phrase} is what goes, and the ${qualifying_amount:.0f} qualifying action stays the only cash you ever put up. That is the argument for spending the reward here instead of your own money.</p>",
+            f"<p>An unfavorable settlement spends the {reward_phrase} rather than your balance, which leaves the ${qualifying_amount:.0f} qualifying action as your only real outlay. Splitting the reward across a few smaller positions works better than one large view.</p>",
+            f"<p>A move the other way costs the {reward_phrase} and nothing else, since the ${qualifying_amount:.0f} qualifying action was the only cash in play. Treat the reward as room for several smaller positions instead of one oversized trade.</p>",
+        ]
+    else:
+        second_para_options = [
+            f"<p>The opposite settlement costs the ${position_amount:.0f} position amount, and the {reward_phrase} from the offer is separate money you still hold. That makes the reward better for several smaller positions instead of one large market view.</p>",
+            f"<p>A market move the other way puts the ${position_amount:.0f} position at risk, while the {reward_phrase} from the offer stays untouched. Use that reward as extra flexibility across several positions, not as fuel for one oversized trade.</p>",
+            f"<p>An unfavorable settlement still risks the ${position_amount:.0f} amount in that market while the {reward_phrase} remains available. The cleaner use is several smaller follow-up positions instead of one doubled-down view.</p>",
+        ]
     first_para = _choose_variant(variation_key, "pm_claim_p1", first_para_options, selection_phrase, reward_phrase)
     second_para = _choose_variant(variation_key, "pm_claim_p2", second_para_options, selection_phrase, reward_phrase)
     return first_para + second_para
@@ -5781,7 +5837,10 @@ async def _generate_body_section(
                 variation_key=variation_key,
             )
         if deterministic_claim:
-            if not prediction_market and not dfs_mode:
+            # Prediction-market examples publish as-is, like sportsbook ones. Handing the model
+            # the example as a hint let it rewrite the amounts (a $10 qualifying trade became a
+            # "$50 position"), and the money has to be traceable end to end.
+            if not dfs_mode:
                 return deterministic_claim
             reference_mechanics = _html_to_plain_text(deterministic_claim)
         exact_qualifying_amount = str(
