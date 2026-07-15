@@ -105,15 +105,28 @@ def _request_sport(request) -> str:
     return str(getattr(gc, "sport", "") or "") if gc else ""
 
 
-async def _operator_boosts_for_draft(request: DraftRequest, offer: dict | None) -> list[dict]:
-    """Live BC Core odds boosts for the article's operator and sport."""
+async def _operator_boosts_for_draft(
+    request: DraftRequest,
+    offer: dict | None,
+    source_facts: dict | None = None,
+) -> list[dict]:
+    """Live BC Core odds boosts for the article's operator and sport.
+
+    Boosts on the previewed match rank first, so a busy slate does not surface a
+    boost for some other game.
+    """
     if not is_goal_property(request.offer_property) or not offer:
         return []
     brand = str(offer.get("brand") or "").strip()
     if not brand:
         return []
+    bc_event = ((source_facts or {}).get("bc_core") or {}).get("event") or {}
     try:
-        return await fetch_operator_boosts(sport=_request_sport(request), brand=brand)
+        return await fetch_operator_boosts(
+            sport=_request_sport(request),
+            brand=brand,
+            event_id=bc_event.get("event_id"),
+        )
     except Exception:
         return []
 
@@ -435,7 +448,7 @@ async def _stream_draft(request: DraftRequest, db: AsyncSession) -> AsyncGenerat
 
     try:
         operator_promos = await _operator_promos_for_draft(request, offer_dict)
-        operator_boosts = await _operator_boosts_for_draft(request, offer_dict)
+        operator_boosts = await _operator_boosts_for_draft(request, offer_dict, source_facts)
         async for update in generate_draft_from_outline_streaming(
             outline=outline,
             keyword=request.keyword,
@@ -669,7 +682,7 @@ async def generate_draft_sync(
     )
 
     operator_promos = await _operator_promos_for_draft(request, offer_dict)
-    operator_boosts = await _operator_boosts_for_draft(request, offer_dict)
+    operator_boosts = await _operator_boosts_for_draft(request, offer_dict, source_facts)
     draft = await generate_draft_from_outline(
         outline=outline,
         keyword=request.keyword,

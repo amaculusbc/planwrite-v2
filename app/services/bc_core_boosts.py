@@ -65,11 +65,25 @@ def _not_yet_cut_off(boost: dict, now: datetime) -> bool:
     return cut_off > now
 
 
-def summarize_boosts(boosts: list[dict], *, limit: int = 3, now: datetime | None = None) -> list[dict]:
-    """Reader-facing boost summaries, most-boosted first.
+def _is_for_event(boost: dict, event_id: Any) -> bool:
+    if event_id in (None, ""):
+        return False
+    return any(str(eid) == str(event_id) for eid in boost.get("eventIds") or [])
 
-    The same national promo is published under several state books, so boosts are
-    de-duplicated on their legs rather than their id.
+
+def summarize_boosts(
+    boosts: list[dict],
+    *,
+    limit: int = 3,
+    now: datetime | None = None,
+    event_id: Any = None,
+) -> list[dict]:
+    """Reader-facing boost summaries.
+
+    Boosts on the article's own match come first - a boost on the game being
+    previewed is worth more to the reader than one on another game in the slate -
+    then the biggest price gain. The same national promo is published under
+    several state books, so boosts are de-duplicated on their legs, not their id.
     """
     now = now or datetime.now(UTC)
     seen: set[str] = set()
@@ -96,12 +110,19 @@ def summarize_boosts(boosts: list[dict], *, limit: int = 3, now: datetime | None
             "boosted_odds": boosted,
             "gain": gain,
             "market_description": str(boost.get("marketDescription") or "").strip(),
+            "is_this_match": _is_for_event(boost, event_id),
         })
-    summaries.sort(key=lambda item: item["gain"], reverse=True)
+    summaries.sort(key=lambda item: (item["is_this_match"], item["gain"]), reverse=True)
     return summaries[:limit]
 
 
-async def fetch_operator_boosts(*, sport: str, brand: str, limit: int = 3) -> list[dict]:
+async def fetch_operator_boosts(
+    *,
+    sport: str,
+    brand: str,
+    limit: int = 3,
+    event_id: Any = None,
+) -> list[dict]:
     """Active, US-only boosts for an operator in a sport. Empty list when none."""
     path = BOOST_PATHS.get(str(sport or "").strip().lower())
     if not path or not bc_core_configured():
@@ -119,4 +140,4 @@ async def fetch_operator_boosts(*, sport: str, brand: str, limit: int = 3) -> li
         )
     except Exception:
         return []
-    return summarize_boosts(payload.get("results") or [], limit=limit)
+    return summarize_boosts(payload.get("results") or [], limit=limit, event_id=event_id)

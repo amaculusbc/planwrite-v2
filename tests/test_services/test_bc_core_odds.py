@@ -5,9 +5,13 @@ from app.services.goal_template import format_odds_talking_points
 
 AWAY_ID = 190058
 HOME_ID = 198398
+# Real ids: 3915 = bet365 IL, 255 = FanDuel PA, 4422 = bet365 KS.
+BOOKS = {3915: "bet365", 4422: "bet365", 255: "fanduel"}
 
 
 def _market(bet_type, line_type, outcomes, period="Game", is_live=False):
+    for outcome in outcomes:
+        outcome.setdefault("sportsbookId", 3915)
     return {
         "betType": {"name": bet_type},
         "lineType": {"name": line_type},
@@ -25,7 +29,7 @@ def test_maps_soccer_1x2_with_draw_price():
             {"teamId": None, "optionType": "Draw", "americanOdds": 210},
         ]),
     ]
-    odds = map_markets_to_odds(markets, away_team_id=AWAY_ID, home_team_id=HOME_ID, book_label="bet365")
+    odds = map_markets_to_odds(markets, away_team_id=AWAY_ID, home_team_id=HOME_ID, book_by_id=BOOKS)
     assert odds["moneylines"]["bet365"] == {"away_odds": 132, "home_odds": 185, "draw_odds": 210}
 
 
@@ -40,7 +44,7 @@ def test_maps_totals_and_spreads():
             {"teamId": HOME_ID, "americanOdds": 135, "line": -0.5},
         ]),
     ]
-    odds = map_markets_to_odds(markets, away_team_id=AWAY_ID, home_team_id=HOME_ID, book_label="bet365")
+    odds = map_markets_to_odds(markets, away_team_id=AWAY_ID, home_team_id=HOME_ID, book_by_id=BOOKS)
     assert odds["totals"]["bet365"] == {"over_odds": 115, "under_odds": -150, "total": 2.5}
     assert odds["spreads"]["bet365"]["away_line"] == "+0.5"
     assert odds["spreads"]["bet365"]["home_line"] == "-0.5"
@@ -58,7 +62,7 @@ def test_prefers_1x2_over_two_way_moneyline_so_the_draw_survives():
             {"teamId": None, "optionType": "Draw", "americanOdds": 210},
         ]),
     ]
-    odds = map_markets_to_odds(markets, away_team_id=AWAY_ID, home_team_id=HOME_ID, book_label="bet365")
+    odds = map_markets_to_odds(markets, away_team_id=AWAY_ID, home_team_id=HOME_ID, book_by_id=BOOKS)
     assert odds["moneylines"]["bet365"]["draw_odds"] == 210
     assert odds["moneylines"]["bet365"]["away_odds"] == 132
 
@@ -77,13 +81,46 @@ def test_ignores_live_and_non_game_period_markets():
     assert map_markets_to_odds(markets, away_team_id=AWAY_ID, home_team_id=HOME_ID, book_label="bet365") == {}
 
 
+def test_maps_every_book_not_just_one():
+    # Charlotte returned up to 6 books; the replacement must not collapse to one.
+    markets = [
+        _market("Matchup", "Moneyline", [
+            {"teamId": AWAY_ID, "americanOdds": 110, "sportsbookId": 3915},
+            {"teamId": HOME_ID, "americanOdds": -130, "sportsbookId": 3915},
+            {"teamId": AWAY_ID, "americanOdds": 113, "sportsbookId": 255},
+            {"teamId": HOME_ID, "americanOdds": -136, "sportsbookId": 255},
+        ]),
+    ]
+    odds = map_markets_to_odds(markets, away_team_id=AWAY_ID, home_team_id=HOME_ID, book_by_id=BOOKS)
+    assert odds["moneylines"]["bet365"] == {"away_odds": 110, "home_odds": -130}
+    assert odds["moneylines"]["fanduel"] == {"away_odds": 113, "home_odds": -136}
+
+
+def test_unknown_books_are_ignored():
+    markets = [
+        _market("Matchup", "Moneyline", [
+            {"teamId": AWAY_ID, "americanOdds": 999, "sportsbookId": 999999},
+            {"teamId": HOME_ID, "americanOdds": 999, "sportsbookId": 999999},
+        ]),
+    ]
+    assert map_markets_to_odds(markets, away_team_id=AWAY_ID, home_team_id=HOME_ID, book_by_id=BOOKS) == {}
+
+
 def test_us_book_filter_excludes_international_books():
     # A German book is what produced "Wetten-Konfigurator" copy.
     assert _is_us_book("bet365 NJ") is True
     assert _is_us_book("bet365 KY") is True
+    assert _is_us_book("HardRock FL") is True
+    assert _is_us_book("FanDuel VT") is True
     assert _is_us_book("bet365 DEU") is False
     assert _is_us_book("bet365 Canada") is False
     assert _is_us_book("bet365 GBR") is False
+    assert _is_us_book("bet365 ARG") is False
+    # "COL" is Colombia; Colorado is "CO".
+    assert _is_us_book("bet365 COL") is False
+    assert _is_us_book("bet365 CO") is True
+    # Canadian provinces are not US books.
+    assert _is_us_book("bet365 ON") is False
 
 
 def test_talking_points_render_the_soccer_draw_price():

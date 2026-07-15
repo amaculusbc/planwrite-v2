@@ -5,6 +5,7 @@ from fastapi import APIRouter, Query
 from pydantic import BaseModel
 from zoneinfo import ZoneInfo
 
+from app.services.bc_core_odds import fetch_odds_for_teams
 from app.services.odds_fetcher import (
     OddsFetcher,
     build_bet_options,
@@ -13,6 +14,22 @@ from app.services.odds_fetcher import (
 )
 
 router = APIRouter(prefix="/api/odds", tags=["odds"])
+
+
+async def _bc_core_odds(
+    *, sport: str, away_team: str, home_team: str, game_date: str | None, sportsbook: str
+) -> dict:
+    """BC Core prices for a game, or {} when it cannot resolve/priced."""
+    try:
+        return await fetch_odds_for_teams(
+            sport=sport,
+            away_team=away_team,
+            home_team=home_team,
+            game_date=game_date or "",
+            brand=sportsbook,
+        )
+    except Exception:
+        return {}
 
 
 @router.get("/game")
@@ -45,6 +62,23 @@ async def get_game_odds(
     )
 
     if not game:
+        # Charlotte covers no soccer at all and misses fixtures in other sports,
+        # so fall back to BC Core, which backs the rest of the event data.
+        bc_odds = await _bc_core_odds(
+            sport=sport, away_team=away_team, home_team=home_team,
+            game_date=game_date, sportsbook=sportsbook,
+        )
+        if bc_odds:
+            return {
+                "game": {"away_team": away_team, "home_team": home_team, "away_key": "", "home_key": ""},
+                "spreads": bc_odds.get("spreads") or {},
+                "moneylines": bc_odds.get("moneylines") or {},
+                "totals": bc_odds.get("totals") or {},
+                "available_sportsbooks": sorted(
+                    {book for market in bc_odds.values() for book in market}
+                ),
+                "source": "bc_core",
+            }
         return {"error": "Game not found", "spreads": None, "moneylines": None, "totals": None}
 
     # Get odds from multiple books - use raw data for structured response
@@ -89,6 +123,19 @@ async def get_game_odds(
                 "over_odds": total_raw.get("over_odds"),
                 "under_odds": total_raw.get("under_odds"),
             }
+
+    # Charlotte can find the game but carry no board for it (and no soccer at
+    # all). BC Core fills the gaps without overwriting a price Charlotte has.
+    if not (moneylines or spreads or totals):
+        bc_odds = await _bc_core_odds(
+            sport=sport, away_team=away_team, home_team=home_team,
+            game_date=game_date, sportsbook=sportsbook,
+        )
+        for key, target in (("moneylines", moneylines), ("spreads", spreads), ("totals", totals)):
+            for book, lines in (bc_odds.get(key) or {}).items():
+                target.setdefault(book, lines)
+        if bc_odds:
+            available_books = sorted(set(available_books) | set(moneylines) | set(totals))
 
     return {
         "game": {

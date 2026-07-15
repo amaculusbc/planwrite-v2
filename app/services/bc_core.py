@@ -457,7 +457,10 @@ async def build_event_context(source_facts: dict) -> tuple[dict, str]:
         }, f"No BC Core event endpoint mapping for sport '{sport or 'unknown'}'"
 
     try:
-        params = _date_range_params_for_event(source_facts) if sport == "soccer" else None
+        # Every /{sport}/events endpoint takes start/end and otherwise returns a
+        # narrow default window - MLB answers with just the All-Star game - so
+        # the article's own date is passed for all sports, not only soccer.
+        params = _date_range_params_for_event(source_facts) or None
         payload = await _get_json(path, params=params)
     except httpx.HTTPError as exc:
         message = f"BC Core events request failed: {_exc_text(exc)}"
