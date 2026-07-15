@@ -26,7 +26,9 @@ settings = get_settings()
 # BAM API configuration
 BAM_CONTEXT = "web-article-top-stories"
 CACHE_DURATION = timedelta(hours=6)
-BAM_CACHE_SCHEMA_VERSION = "v2"
+# v3: US catalog drops the base feed and availability merges source_locations,
+# so v2 caches hold Canadian offers and KY-only state lists. Discard them.
+BAM_CACHE_SCHEMA_VERSION = "v3"
 BAM_CATALOG_LOCATIONS = (
     "AZ", "CO", "CT", "DC", "IA", "IL", "IN", "KS", "KY",
     "LA", "MA", "MD", "MI", "NC", "NJ", "NY", "OH", "PA",
@@ -174,7 +176,11 @@ def _catalog_locations_for_market(state: str | None, market: str | None = None) 
     if market_code == "CA":
         return list(CANADA_CATALOG_LOCATIONS), False
     if market_code == "US":
-        return list(US_CATALOG_LOCATIONS), True
+        # The un-overridden base feed is BAM's default (Canada-leaning) catalog: it
+        # carries GOALCA codes, C$/£ amounts and French copy. Including it here put
+        # Canadian and international offers into US articles, so US sweeps the
+        # state overrides only - same as CA.
+        return list(US_CATALOG_LOCATIONS), False
     return list(BAM_CATALOG_LOCATIONS), True
 
 
@@ -205,8 +211,15 @@ def _merge_offer_variants(existing: dict, incoming: dict, *, source_location: st
     return merged
 
 
-def _normalize_catalog_offer_states(offer: dict) -> dict:
-    """Replace placeholder ALL state with known location-union states when available."""
+def _normalize_catalog_offer_states(offer: dict, market: str | None = None) -> dict:
+    """Resolve an offer's availability from both BAM signals.
+
+    BAM's `states` metadata is unreliable per offer (bet365's GOALBET reports
+    ["KY"] while BAM itself serves it for 20 US location overrides), so it is
+    merged with `source_locations` - the locations BAM actually returned the
+    offer for. The union is then constrained to the requested market, otherwise
+    a junk US state on a Canadian offer would leak "KY" into CA availability.
+    """
     normalized = dict(offer or {})
     source_locations = [
         str(loc).strip().upper()
@@ -214,7 +227,21 @@ def _normalize_catalog_offer_states(offer: dict) -> dict:
         if str(loc).strip()
     ]
     states = parse_states(normalized.get("states") or normalized.get("states_list") or [])
-    if source_locations and (not states or states == ["ALL"]):
+    if states == ["ALL"]:
+        states = []
+
+    merged = list(dict.fromkeys([*states, *source_locations]))
+    market_code = str(market or "").strip().upper()
+    if market_code == "US":
+        merged = [s for s in merged if s not in CANADA_PROVINCES]
+    elif market_code == "CA":
+        merged = [s for s in merged if s in CANADA_PROVINCES]
+
+    if merged:
+        resolved = sorted(merged)
+        normalized["states"] = resolved
+        normalized["states_list"] = resolved
+    elif not states and source_locations:
         normalized["states"] = source_locations
         normalized["states_list"] = source_locations
     return enrich_offer_dict(normalized)
@@ -230,7 +257,10 @@ def _offer_matches_market(offer: dict, market: str | None = None) -> bool:
         source_locations = parse_states(offer.get("source_locations") or [])
         states = source_locations
     if not states or states == ["ALL"]:
-        return market_code == "US"
+        # No evidence of availability anywhere: previously these defaulted to US,
+        # which is how base-feed Canadian offers ("ALL" states, no source
+        # locations) reached US articles. Claim nothing instead.
+        return False
     has_canada = any(state in CANADA_PROVINCES for state in states)
     has_us = any(state not in CANADA_PROVINCES for state in states)
     return has_canada if market_code == "CA" else has_us
@@ -731,7 +761,7 @@ async def get_offer_catalog_bam(
                     source_location=location,
                 )
 
-        offers = [_normalize_catalog_offer_states(offer) for offer in merged_by_id.values()]
+        offers = [_normalize_catalog_offer_states(offer, market) for offer in merged_by_id.values()]
         _last_fetch[scope_key] = datetime.utcnow()
         _cached_offers[scope_key] = offers
         _save_cache(scope_key, offers)

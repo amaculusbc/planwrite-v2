@@ -29,10 +29,65 @@ def test_catalog_locations_for_canada_market_exclude_us_states():
     assert "NJ" not in locations
 
 
+def test_catalog_locations_for_us_market_exclude_base_feed():
+    # The base feed is BAM's Canada-leaning default catalog; including it put
+    # GOALCA / C$ / French offers into US articles.
+    locations, include_base = bam_offers._catalog_locations_for_market("ALL", "US")
+
+    assert include_base is False
+    assert "NJ" in locations
+    assert "ON" not in locations
+
+
 def test_offer_matches_market_requires_canadian_province_for_ca_market():
     assert bam_offers._offer_matches_market({"states": ["ON", "QC"]}, "CA") is True
     assert bam_offers._offer_matches_market({"states": ["NJ", "PA"]}, "CA") is False
     assert bam_offers._offer_matches_market({"states": ["NJ", "PA"]}, "US") is True
+
+
+def test_offer_with_no_availability_evidence_matches_no_market():
+    # Base-feed Canadian offers arrive as states=["ALL"] with no source_locations
+    # and used to default into the US catalog.
+    for offer in ({"states": ["ALL"]}, {"states": []}, {"states": ["ALL"], "source_locations": []}):
+        assert bam_offers._offer_matches_market(offer, "US") is False
+        assert bam_offers._offer_matches_market(offer, "CA") is False
+
+
+def test_normalize_catalog_states_merges_source_locations():
+    # bet365 GOALBET: BAM metadata says KY, but BAM served it for 20 US states.
+    offer = bam_offers._normalize_catalog_offer_states(
+        {"states": ["KY"], "source_locations": ["AZ", "CO", "KY", "NY"]},
+        "US",
+    )
+    assert offer["states"] == ["AZ", "CO", "KY", "NY"]
+    assert offer["states_list"] == ["AZ", "CO", "KY", "NY"]
+
+
+def test_normalize_catalog_states_keeps_states_outside_the_sweep():
+    # Fanatics lists MO/VT, which are not in the location sweep; keep them.
+    offer = bam_offers._normalize_catalog_offer_states(
+        {"states": ["MO", "VT", "NJ"], "source_locations": ["NJ", "PA"]},
+        "US",
+    )
+    assert offer["states"] == ["MO", "NJ", "PA", "VT"]
+
+
+def test_normalize_catalog_states_never_leaks_us_state_into_ca_market():
+    # Same junk KY metadata on the Canadian variant must not reach CA copy.
+    offer = bam_offers._normalize_catalog_offer_states(
+        {"states": ["KY"], "source_locations": ["BC", "MB", "QC"]},
+        "CA",
+    )
+    assert offer["states"] == ["BC", "MB", "QC"]
+    assert "KY" not in offer["states"]
+
+
+def test_normalize_catalog_states_replaces_placeholder_all():
+    offer = bam_offers._normalize_catalog_offer_states(
+        {"states": ["ALL"], "source_locations": ["NJ", "PA"]},
+        "US",
+    )
+    assert offer["states"] == ["NJ", "PA"]
 
 
 def test_normalize_bam_affiliate_type_removes_spaces_for_shortcodes():

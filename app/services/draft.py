@@ -25,13 +25,14 @@ from app.services.compliance import get_disclaimer_for_state
 from app.services.bam_offers import PROPERTIES, build_bam_shortcode, normalize_bam_affiliate_type, render_bam_offer_block
 from app.services.goal_template import (
     is_goal_property,
+    render_goal_article_footer,
     render_goal_terms_table,
     render_operator_promos_section,
 )
 from app.services.content_guidelines import get_style_instructions, get_temperature_by_section
 from app.services.style import get_rag_usage_guidance
 from app.services.switchboard_links import inject_switchboard_links, build_switchboard_url
-from app.services.operator_facts import get_operator_facts
+from app.services.operator_facts import get_operator_facts, get_standing_promos
 from app.services.operator_profile import (
     CONTENT_MODE_DFS,
     CONTENT_MODE_PREDICTION_MARKET,
@@ -3416,6 +3417,17 @@ def _unwrap_generic_offer_strong(html: str, brand: str = "") -> str:
     return result
 
 
+def _append_goal_article_footer(content: str, offer: dict, *, market: str = "US") -> str:
+    """GOAL's sticky BAM unit (and, in the US, the compliance page blocker)."""
+    footer = render_goal_article_footer(offer or {}, market=market)
+    if not footer:
+        return content
+    cleaned = str(content or "").rstrip()
+    if "<bam-sticky-cta" in cleaned:
+        return cleaned
+    return f"{cleaned}\n{footer}" if cleaned else footer
+
+
 def _ensure_top_story_tracking_tag(content: str) -> str:
     """Append the canonical analytics event tag once to every generated article."""
     content = str(content or "")
@@ -4681,6 +4693,8 @@ async def generate_draft_from_outline(
     article_preferences: dict[str, Any] | None = None,
     bc_core_context: dict[str, Any] | None = None,
     operator_promos: list[dict[str, Any]] | None = None,
+    operator_boosts: list[dict[str, Any]] | None = None,
+    sport: str = "",
 ) -> str:
     """Generate full article draft from structured outline (Execute stage).
 
@@ -4899,11 +4913,16 @@ async def generate_draft_from_outline(
             content_mode=content_mode,
             bet_example_data=bet_example_data,
         )
-    if is_goal and operator_promos:
+    if is_goal and (operator_promos or operator_boosts or get_standing_promos(brand)):
         promos_section = render_operator_promos_section(
             brand,
-            operator_promos,
+            operator_promos or [],
             primary_offer_id=str(offer.get("id") or ""),
+            keyword=keyword,
+            bonus_code=str(offer.get("bonus_code") or ""),
+            sport=sport,
+            boosts=operator_boosts,
+            standing_promos=get_standing_promos(brand),
         )
         if promos_section:
             html_output = _insert_section_before_terms(html_output, promos_section)
@@ -4924,6 +4943,9 @@ async def generate_draft_from_outline(
         html_output,
         brand or (keyword.split()[0] if keyword.split() else ""),
     )
+
+    if is_goal:
+        html_output = _append_goal_article_footer(html_output, offer, market=prefs.get("market", "US"))
 
     if output_format == "markdown":
         # Convert back to markdown (basic)
@@ -6078,6 +6100,8 @@ async def generate_draft_from_outline_streaming(
     article_preferences: dict[str, Any] | None = None,
     bc_core_context: dict[str, Any] | None = None,
     operator_promos: list[dict[str, Any]] | None = None,
+    operator_boosts: list[dict[str, Any]] | None = None,
+    sport: str = "",
 ) -> AsyncGenerator[dict, None]:
     """Generate draft with streaming updates.
 
@@ -6287,11 +6311,16 @@ async def generate_draft_from_outline_streaming(
             content_mode=content_mode,
             bet_example_data=bet_example_data,
         )
-    if is_goal and operator_promos:
+    if is_goal and (operator_promos or operator_boosts or get_standing_promos(brand)):
         promos_section = render_operator_promos_section(
             brand,
-            operator_promos,
+            operator_promos or [],
             primary_offer_id=str(offer.get("id") or ""),
+            keyword=keyword,
+            bonus_code=str(offer.get("bonus_code") or ""),
+            sport=sport,
+            boosts=operator_boosts,
+            standing_promos=get_standing_promos(brand),
         )
         if promos_section:
             html_output = _insert_section_before_terms(html_output, promos_section)
@@ -6312,6 +6341,9 @@ async def generate_draft_from_outline_streaming(
         html_output,
         brand or (keyword.split()[0] if keyword.split() else ""),
     )
+
+    if is_goal:
+        html_output = _append_goal_article_footer(html_output, offer, market=prefs.get("market", "US"))
 
     if output_format == "markdown":
         html_output = _html_to_markdown(html_output)

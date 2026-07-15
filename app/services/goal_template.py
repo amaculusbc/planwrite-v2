@@ -57,9 +57,17 @@ def format_odds_talking_points(
     if moneyline:
         away_ml = _format_american(moneyline.get("away_odds"))
         home_ml = _format_american(moneyline.get("home_odds"))
+        draw_ml = _format_american(moneyline.get("draw_odds"))
         if away_ml and home_ml:
             book_label = book
-            points.append(f"Moneyline: {away_team} {away_ml} / {home_team} {home_ml}")
+            if draw_ml:
+                # Soccer's match result is three-way; omitting the draw invites
+                # the writer to treat it as a two-way market.
+                points.append(
+                    f"Match result (1X2): {away_team} {away_ml} / Draw {draw_ml} / {home_team} {home_ml}"
+                )
+            else:
+                points.append(f"Moneyline: {away_team} {away_ml} / {home_team} {home_ml}")
 
     book, spread = _first_book_lines(odds, "spreads", preferred_book)
     if spread:
@@ -149,15 +157,26 @@ def build_goal_outline(
             "level": "h2",
             "title": f"Today's Sports Betting with {display_brand}",
             "talking_points": [
-                "One short paragraph establishing sports-betting expertise for this sport and framing the wager ideas below",
+                "ONE short paragraph only: what is on today's card and why this match is the one to look at",
+                "Do NOT analyse the match here - the analysis belongs under the match heading below",
             ],
-            "avoid": ["Repeating the offer mechanics"],
+            "avoid": [
+                "Repeating the offer mechanics",
+                "Team news, tactics, form, prices or any pick - those belong in the match section",
+            ],
         },
         {
+            # GOAL's note: the analysis belongs under the match title, not spread
+            # across the H2 above it.
             "level": "h3",
             "title": match_heading,
             "talking_points": [
-                "Break down the match with betting options and a clear pick, quoting only the exact prices below",
+                "This is the article's analysis section: 2-3 paragraphs breaking the match down",
+                "Argue from the posted prices below, team news and tactics, then land a clear pick",
+                # GOAL's note: naming who is out is not insight on its own.
+                "An absence is only worth writing if you say what it changes - who covers that role, "
+                "and what it does to the team's shape, defence or attack. Name a replacement ONLY if "
+                "the notes below name one; never guess who comes in.",
                 *odds_points,
             ],
             "avoid": ["Generic odds like 'typically -110'", *avoid_cannibalism],
@@ -173,6 +192,37 @@ def build_goal_outline(
 
 def _brand_book_key(brand: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", str(brand or "").lower())
+
+
+# Requested by GOAL (Tom Fuller, 8 Jul). The page blocker is verbatim from his
+# note; the sticky unit follows the Ultimate SEO Guide's pattern, where a
+# property's sticky CTA reuses that property's own placement/property ids
+# (Action 2037/1, Raptors Republic 2315/385) - so Goal.com is 2066/326.
+GOAL_PAGE_BLOCKER = '<bam-page-blocker property-id="326" identifiers="goal-canada-compliance"></bam-page-blocker>'
+
+
+def render_goal_sticky_cta(offer: dict[str, Any]) -> str:
+    """Sticky BAM unit for the foot of every GOAL article (US and CA)."""
+    affiliate = str(offer.get("brand") or "").strip()
+    if not affiliate:
+        return ""
+    affiliate_type = str(offer.get("affiliate_type") or "sportsbook").strip() or "sportsbook"
+    internal_id = str(offer.get("internal_id") or "evergreen").strip() or "evergreen"
+    return (
+        '<bam-sticky-cta placement-id="2066" property-id="326" '
+        'context="web-article-top-stories" '
+        f'internal-id="{escape(internal_id, quote=True)}" '
+        f'affiliate-type="{escape(affiliate_type, quote=True)}" '
+        f'affiliate="{escape(affiliate, quote=True)}"></bam-sticky-cta>'
+    )
+
+
+def render_goal_article_footer(offer: dict[str, Any], *, market: str = "US") -> str:
+    """Sticky CTA on every article; the compliance page blocker on US articles."""
+    parts = [render_goal_sticky_cta(offer)]
+    if str(market or "US").strip().upper() != "CA":
+        parts.append(GOAL_PAGE_BLOCKER)
+    return "\n".join(part for part in parts if part)
 
 
 def render_goal_terms_table(offer: dict[str, Any]) -> str:
@@ -192,23 +242,74 @@ def render_goal_terms_table(offer: dict[str, Any]) -> str:
     )
 
 
+# GOAL's brief for this block: lead with the fact that these are for *all*
+# players, not just new sign-ups, and name the sport.
+_SPORT_WORDS: dict[str, str] = {
+    "soccer": "soccer",
+    "mlb": "MLB",
+    "nba": "NBA",
+    "nfl": "NFL",
+    "nhl": "NHL",
+    "ncaafb": "college football",
+    "ncaamb": "college basketball",
+    "wnba": "WNBA",
+}
+
+
+def _promos_intro(display_brand: str, bonus_code: str, keyword: str, sport: str) -> str:
+    code_part = f" {escape(bonus_code)}" if bonus_code else ""
+    sport_word = _SPORT_WORDS.get(str(sport or "").strip().lower(), "sports")
+    return (
+        f"<p>Aside from the {escape(keyword or display_brand)}{code_part} offer for new players, "
+        f"{escape(display_brand)} runs many other {escape(sport_word)} promos and bonuses available "
+        f"to all players, such as:</p>"
+    )
+
+
 def render_operator_promos_section(
     brand: str,
     promos: list[dict[str, Any]],
     primary_offer_id: str = "",
+    *,
+    keyword: str = "",
+    bonus_code: str = "",
+    sport: str = "",
+    boosts: list[dict[str, Any]] | None = None,
+    standing_promos: list[str] | None = None,
 ) -> str:
-    """Optional 'more promos today' block from the operator's other live BAM offers."""
+    """The operator's other live promotions - boosts and standing offers first.
+
+    GOAL's note: this block reads better as recurring promos any player can use
+    than as a second list of sign-up offers.
+    """
     display_brand = str(brand or "the operator").strip()
-    extra: list[str] = []
+    items: list[str] = []
+
+    for boost in (boosts or [])[:3]:
+        legs = " + ".join(str(leg) for leg in boost.get("legs") or [])
+        original = str(boost.get("original_odds") or "")
+        boosted = str(boost.get("boosted_odds") or "")
+        if not legs or not original or not boosted:
+            continue
+        items.append(
+            f"<li>Odds boost: {escape(legs)} - boosted from {escape(original)} to {escape(boosted)}</li>"
+        )
+
+    for promo_text in (standing_promos or [])[:3]:
+        if str(promo_text).strip():
+            items.append(f"<li>{escape(str(promo_text).strip())}</li>")
+
     seen_texts: set[str] = set()
     for promo in promos or []:
+        if len(items) >= 5:
+            break
         if str(promo.get("id") or "") == str(primary_offer_id or ""):
             continue
         text = str(promo.get("offer_text") or "").strip()
         if not text:
             continue
         # International/localized campaigns leak through brand-only filtering.
-        if re.search(r"[¡¿ñáéíóúü]|\bapuestas\b|\bgratis\b", text, flags=re.IGNORECASE):
+        if re.search(r"[¡¿ñáéíóúü]|\bapuestas\b|\bgratis\b|[£€]", text, flags=re.IGNORECASE):
             continue
         text_key = re.sub(r"\s+", " ", text.lower())
         if text_key in seen_texts:
@@ -216,13 +317,12 @@ def render_operator_promos_section(
         seen_texts.add(text_key)
         code = str(promo.get("bonus_code") or "").strip()
         code_part = f" (code {escape(code)})" if code else ""
-        extra.append(f"<li>{escape(text)}{code_part}</li>")
-        if len(extra) >= 4:
-            break
-    if not extra:
+        items.append(f"<li>{escape(text)}{code_part}</li>")
+
+    if not items:
         return ""
     return (
         f"<h2>More {escape(display_brand)} Promos Today</h2>\n"
-        f"<p>{escape(display_brand)} runs more than one live promotion. Current offers new users can weigh up:</p>\n"
-        "<ul>\n" + "\n".join(extra) + "\n</ul>"
+        + _promos_intro(display_brand, bonus_code, keyword, sport) + "\n"
+        "<ul>\n" + "\n".join(items) + "\n</ul>"
     )
