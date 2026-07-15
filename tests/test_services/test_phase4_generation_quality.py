@@ -38,6 +38,8 @@ from app.services.draft import (
     _offer_excluded_states_text,
     _offer_states_text,
     _adapt_disclaimer_for_dfs,
+    _adapt_disclaimer_for_prediction_market,
+    _operator_age_summary,
     _generate_body_section,
     _generate_intro_section,
     generate_draft_from_outline,
@@ -1224,6 +1226,51 @@ def test_strip_vacuous_qualifiers_removes_cta_hedges():
     assert _strip_vacuous_qualifiers(keep) == keep
 
 
+def test_strip_vacuous_qualifiers_keeps_space_after_inline_wrapped_code():
+    """A <strong>-wrapped code must not fuse to the next word ("ACTIONdeposit $20")."""
+    from app.services.draft import _strip_vacuous_qualifiers
+
+    html = (
+        "<p>Enter <strong>ACTION</strong> when relevant, deposit $20 to qualify.</p>"
+        "<p>Use the Polymarket Promo Code <strong>ACTION</strong> where applicable, and the offer works.</p>"
+        "<p>Enter <strong>ACTION</strong> when relevant, trade $10 on any market.</p>"
+    )
+    cleaned = _strip_vacuous_qualifiers(html)
+    assert "ACTIONdeposit" not in cleaned
+    assert "ACTIONand" not in cleaned
+    assert "ACTIONtrade" not in cleaned
+    assert "<strong>ACTION</strong>, deposit $20 to qualify." in cleaned
+    assert "<strong>ACTION</strong>, and the offer works." in cleaned
+    assert "<strong>ACTION</strong>, trade $10 on any market." in cleaned
+
+
+def test_normalize_clock_time_style_unifies_meridiem():
+    from app.services.draft import _normalize_clock_time_style
+
+    cleaned = _normalize_clock_time_style(
+        "<p>Coverage at 3:00 p.m. ET on FOX.</p><p>Kickoff 3:00 PM ET, doors 2:30 pm ET.</p>"
+    )
+    assert "p.m." not in cleaned
+    assert "pm ET" not in cleaned
+    assert "3:00 PM ET on FOX" in cleaned
+    assert "2:30 PM ET" in cleaned
+
+
+def test_normalize_clock_time_style_leaves_non_times_alone():
+    from app.services.draft import _normalize_clock_time_style
+
+    keep = "<p>Deposit $10 a month and get 125 contracts.</p>"
+    assert _normalize_clock_time_style(keep) == keep
+
+
+def test_strip_vacuous_qualifiers_still_drops_block_initial_comma():
+    """A real block start keeps the sentence-initial ', and ...' cleanup."""
+    from app.services.draft import _strip_vacuous_qualifiers
+
+    cleaned = _strip_vacuous_qualifiers("<p>When relevant, and the offer credits post later.</p>")
+    assert cleaned == "<p>and the offer credits post later.</p>"
+
+
 def test_projection_points_never_misclassified_by_substring():
     # "pitching outs" contains "out", which used to bucket projections as injury
     # and let them slip past the projection ban.
@@ -2241,6 +2288,33 @@ def test_adapt_disclaimer_for_dfs_removes_default_21_plus():
     cleaned = _adapt_disclaimer_for_dfs("21+. Gambling problem? Call 1-800-GAMBLER. Please bet responsibly.")
     assert cleaned.startswith("Need help?")
     assert "21+" not in cleaned
+
+
+def test_adapt_disclaimer_for_prediction_market_uses_sourced_age():
+    cleaned = _adapt_disclaimer_for_prediction_market(
+        "21+. Gambling problem? Call 1-800-GAMBLER. Please bet responsibly.",
+        "18+",
+    )
+    assert cleaned.startswith("18+.")
+    assert "21+" not in cleaned
+    assert "Please participate responsibly." in cleaned
+
+
+def test_adapt_disclaimer_for_prediction_market_drops_age_when_unsourced():
+    cleaned = _adapt_disclaimer_for_prediction_market(
+        "21+. Gambling problem? Call 1-800-GAMBLER. Please bet responsibly.",
+        "",
+    )
+    assert "21+" not in cleaned
+    assert cleaned.startswith("Gambling problem?")
+
+
+def test_operator_age_summary_falls_back_to_offer_terms():
+    offer = {
+        "brand": "Kalshi",
+        "terms": "Must be 18 years or older and have a legal, U.S. residential address.",
+    }
+    assert _operator_age_summary(offer, prediction_market=True) == "18+"
 
 
 @pytest.mark.asyncio

@@ -43,6 +43,7 @@ from app.services.offer_parsing import (
     extract_bonus_amount,
     extract_bonus_expiration_days,
     extract_excluded_states_from_terms,
+    extract_minimum_age,
     extract_minimum_odds,
     extract_offer_amount_details,
     extract_states_from_terms,
@@ -728,12 +729,25 @@ def _apply_content_mode_language_guardrails(html: str, content_mode: str) -> str
     return result
 
 
-def _adapt_disclaimer_for_prediction_market(disclaimer: str) -> str:
-    """Tone down sportsbook wording for prediction-market pages."""
+def _adapt_disclaimer_for_prediction_market(disclaimer: str, age_summary: str = "") -> str:
+    """Tone down sportsbook wording for prediction-market pages.
+
+    The default state disclaimer asserts 21+, but prediction-market operators state their
+    own minimum age in their terms (Kalshi/Polymarket say 18+). Never let the footer
+    contradict the age the article's own terms section carries.
+    """
     if not disclaimer:
         return disclaimer
     out = re.sub(r"please bet responsibly\.?", "Please participate responsibly.", disclaimer, flags=re.IGNORECASE)
+    out = _apply_sourced_age_to_disclaimer(out, age_summary)
     return out
+
+
+def _apply_sourced_age_to_disclaimer(disclaimer: str, age_summary: str) -> str:
+    """Swap the default 21+ assertion for the operator's sourced age, or drop it."""
+    match = re.match(r"\s*(\d{2}\+)", age_summary or "")
+    replacement = f"{match.group(1)}. " if match else ""
+    return re.sub(r"^\s*21\+\.\s*", replacement, disclaimer, flags=re.IGNORECASE)
 
 
 def _adapt_disclaimer_for_dfs(disclaimer: str) -> str:
@@ -1574,7 +1588,11 @@ def _operator_age_summary(
         else CONTENT_MODE_SPORTSBOOK
     )
     operator_facts = get_operator_facts(offer.get("brand"), content_mode=content_mode)
-    return str(operator_facts.get("age_summary_short") or "").strip()
+    curated = str(operator_facts.get("age_summary_short") or "").strip()
+    if curated:
+        return curated
+    # No curated fact: the offer's own terms are the next-best source ("Must be 18 years or older").
+    return str(offer.get("minimum_age") or extract_minimum_age(offer.get("terms"))).strip()
 
 
 def _render_daily_promos_placeholder(
@@ -2142,14 +2160,38 @@ def _strip_vacuous_qualifiers(html: str) -> str:
     if not html:
         return html
 
-    def _transform(text: str) -> str:
+    def _transform(text: str, at_block_start: bool) -> str:
         text = _VACUOUS_QUALIFIER.sub("", text)
-        # A leftover sentence-initial ", and ..." after removing a leading qualifier.
-        text = re.sub(r"(^|[.!?]\s+),\s*", r"\1", text)
+        # A leftover sentence-initial ", and ..." after removing a leading qualifier. Only a real
+        # block start can be sentence-initial: a node after <strong>CODE</strong> opens with the
+        # comma that separated the clauses, and dropping it fuses the code to the next word
+        # ("ACTIONdeposit $20").
+        leading_comma = r"(^|[.!?]\s+),\s*" if at_block_start else r"([.!?]\s+),\s*"
+        text = re.sub(leading_comma, r"\1", text)
         text = re.sub(r"\s+([.,!?])", r"\1", text)
         return text
 
-    return _normalize_visible_punctuation(_rewrite_html_text_nodes(html, _transform))
+    return _normalize_visible_punctuation(
+        _rewrite_html_text_nodes(html, _transform, with_block_context=True)
+    )
+
+
+# House clock style is "3:00 PM ET" (what event_fetcher emits); the model drifts to
+# "3:00 p.m. ET" and both end up in the same article.
+_CLOCK_MERIDIEM_DOTTED = re.compile(r"(\d{1,2}(?::\d{2})?)\s*([ap])\.\s*m\.", re.IGNORECASE)
+_CLOCK_MERIDIEM_BARE = re.compile(r"(\d{1,2}(?::\d{2})?)\s*([ap])m\b", re.IGNORECASE)
+
+
+def _normalize_clock_time_style(html: str) -> str:
+    """Normalize clock times to the house '3:00 PM ET' style."""
+    if not html:
+        return html
+
+    def _transform(text: str) -> str:
+        text = _CLOCK_MERIDIEM_DOTTED.sub(lambda m: f"{m.group(1)} {m.group(2).upper()}M", text)
+        return _CLOCK_MERIDIEM_BARE.sub(lambda m: f"{m.group(1)} {m.group(2).upper()}M", text)
+
+    return _rewrite_html_text_nodes(html, _transform)
 
 
 def _strip_quoted_stat_phrases(html: str) -> str:
@@ -2225,14 +2267,37 @@ def _ensure_intro_state_specificity(html: str, states_text: str) -> str:
     return f"<p>{html.strip()}{addition}</p>"
 
 
-def _rewrite_html_text_nodes(html: str, transform: callable) -> str:
-    """Apply a text transform to visible text nodes only, preserving tags/attributes."""
+# Inline tags split a sentence across text nodes without starting a new one; a node that
+# follows </strong> is mid-sentence, not at the start of a block.
+_INLINE_HTML_TAGS = {
+    "a", "abbr", "b", "br", "code", "em", "i", "small", "span", "strong", "sub", "sup", "u",
+}
+
+
+def _rewrite_html_text_nodes(html: str, transform: callable, *, with_block_context: bool = False) -> str:
+    """Apply a text transform to visible text nodes only, preserving tags/attributes.
+
+    With with_block_context, the transform is called as transform(text, at_block_start) so it
+    can tell a real block start from a node that merely follows an inline tag. Sentence-initial
+    rules that key off '^' need this: '<strong>ACTION</strong> when relevant, deposit $20' hands
+    the transform a node starting mid-sentence.
+    """
     if not html:
         return html
     tokens = re.findall(r"<[^>]+>|[^<]+", html, flags=re.DOTALL)
     out: list[str] = []
+    at_block_start = True
     for token in tokens:
-        out.append(token if token.startswith("<") else transform(token))
+        if token.startswith("<"):
+            tag_match = re.match(r"</?\s*([a-zA-Z0-9]+)", token)
+            tag = tag_match.group(1).lower() if tag_match else ""
+            if tag and tag not in _INLINE_HTML_TAGS:
+                at_block_start = True
+            out.append(token)
+            continue
+        out.append(transform(token, at_block_start) if with_block_context else transform(token))
+        if token.strip():
+            at_block_start = False
     return "".join(out)
 
 
@@ -3590,6 +3655,7 @@ def _apply_generation_quality_postprocess(html: str, keyword: str, market: str =
     html = _polish_worked_example_conditionals(html)
     html = _polish_conditional_user_openers(html)
     html = _normalize_matchup_vs_notation(html)
+    html = _normalize_clock_time_style(html)
     html = _trim_repeated_phrase_in_html(html, "see full terms", max_occurrences=2, replacement="see terms")
     html = _remove_inline_compliance_fragments(html)
     html = _strip_source_and_prompt_leaks(html)
@@ -4851,7 +4917,10 @@ async def generate_draft_from_outline(
     disclaimer_state = "CANADA" if prefs.get("market") == "CA" and str(state or "").upper() == "ALL" else state
     disclaimer = get_disclaimer_for_state(disclaimer_state)
     if is_prediction_market:
-        disclaimer = _adapt_disclaimer_for_prediction_market(disclaimer)
+        disclaimer = _adapt_disclaimer_for_prediction_market(
+            disclaimer,
+            _operator_age_summary(offer or {}, prediction_market=True),
+        )
     elif is_dfs_mode:
         disclaimer = _adapt_disclaimer_for_dfs(disclaimer)
     html_output = _ensure_single_disclaimer(html_output, disclaimer)
@@ -4936,6 +5005,8 @@ async def generate_draft_from_outline(
     if is_goal_property(offer_property):
         html_output = _strip_state_callouts_from_goal_body(html_output)
     html_output = _strip_vacuous_qualifiers(html_output)
+    # Sections appended after the main postprocess (analysis, promos) bypass its pass.
+    html_output = _normalize_clock_time_style(html_output)
     html_output = _cap_primary_keyword_density(html_output, keyword)
     html_output = _strip_search_query_openers(html_output)
     html_output = _title_case_headings(html_output)
@@ -6248,7 +6319,10 @@ async def generate_draft_from_outline_streaming(
     disclaimer_state = "CANADA" if prefs.get("market") == "CA" and str(state or "").upper() == "ALL" else state
     disclaimer = get_disclaimer_for_state(disclaimer_state)
     if is_prediction_market:
-        disclaimer = _adapt_disclaimer_for_prediction_market(disclaimer)
+        disclaimer = _adapt_disclaimer_for_prediction_market(
+            disclaimer,
+            _operator_age_summary(offer or {}, prediction_market=True),
+        )
     elif is_dfs_mode:
         disclaimer = _adapt_disclaimer_for_dfs(disclaimer)
     html_output = _ensure_single_disclaimer(html_output, disclaimer)
@@ -6334,6 +6408,8 @@ async def generate_draft_from_outline_streaming(
     if is_goal_property(offer_property):
         html_output = _strip_state_callouts_from_goal_body(html_output)
     html_output = _strip_vacuous_qualifiers(html_output)
+    # Sections appended after the main postprocess (analysis, promos) bypass its pass.
+    html_output = _normalize_clock_time_style(html_output)
     html_output = _cap_primary_keyword_density(html_output, keyword)
     html_output = _strip_search_query_openers(html_output)
     html_output = _title_case_headings(html_output)

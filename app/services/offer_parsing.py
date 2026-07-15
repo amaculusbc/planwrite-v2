@@ -246,6 +246,30 @@ def extract_minimum_odds(terms: str | None) -> str:
     return ""
 
 
+def extract_minimum_age(terms: str | None) -> str:
+    """Extract the minimum age stated in the offer terms, e.g. '18+'.
+
+    Prediction-market operators state 18+ in their own terms while the default
+    sportsbook disclaimer asserts 21+; the terms are the source of truth.
+    """
+    if not terms:
+        return ""
+    text = terms.lower()
+    patterns = [
+        r"must\s+be\s+(\d{2})\s+(?:years?\s+)?(?:of\s+age\s+)?or\s+older",
+        r"(\d{2})\s+years?\s+(?:of\s+age\s+)?or\s+older",
+        r"\b(\d{2})\+",
+        r"aged?\s+(\d{2})\s+(?:and|or)\s+(?:over|older|above)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            age = match.group(1)
+            if age in {"18", "19", "21"}:
+                return f"{age}+"
+    return ""
+
+
 def extract_wagering_requirement(terms: str | None) -> str:
     """Extract wagering requirement from terms."""
     if not terms:
@@ -272,15 +296,26 @@ def extract_bonus_amount(offer_text: str | None) -> str:
     if reward_amount:
         return reward_amount
     patterns = [
+        # Prefer an amount introduced by a reward verb. In an unrecognized paired promo
+        # ("Trade $10, Get $15") the first dollar figure is the qualifying amount, not the reward.
+        rf"(?:{_REWARD_ACTIONS})\s*(?:up to\s*)?\$(\d+(?:,\d+)?(?:\.\d+)?)",
         r"\$(\d+(?:,\d+)?(?:\.\d+)?)",
         r"(\d+(?:,\d+)?)\s+(?:dollars?|bucks)",
     ]
     for pattern in patterns:
-        match = re.search(pattern, offer_text)
+        match = re.search(pattern, offer_text, flags=re.IGNORECASE)
         if match:
             amount = match.group(1).replace(",", "")
             return f"${amount}"
     return ""
+
+
+# Verbs that introduce the qualifying amount. Prediction-market offers say "trade";
+# sportsbooks say "bet"/"wager". A verb missing here makes paired parsing fail silently,
+# which sends extract_bonus_amount to a positional fallback and reports the qualifying
+# amount as the reward.
+_QUALIFYING_ACTIONS = r"bet|wager|spend|play|deposit|purchase|buy|trade"
+_REWARD_ACTIONS = r"get|unlock|receive|earn|claim|snag|net|secure|use"
 
 
 def extract_offer_amount_details(offer_text: str | None) -> dict[str, str]:
@@ -297,17 +332,17 @@ def extract_offer_amount_details(offer_text: str | None) -> dict[str, str]:
 
     # Forward order: "Spend/Bet/Play $X ... Get/Unlock $Y ..."
     forward_patterns = [
-        r"(?P<action>bet|wager|spend|play|deposit|purchase|buy)\s*\$?(?P<qual>\d+(?:,\d+)?(?:\.\d+)?)\b"
+        rf"(?P<action>{_QUALIFYING_ACTIONS})\s*\$?(?P<qual>\d+(?:,\d+)?(?:\.\d+)?)\b"
         r".{0,100}?"
-        r"(?:get|unlock|receive|earn|claim|snag|net|secure|use)\s*\$?(?P<reward>\d+(?:,\d+)?(?:\.\d+)?)"
+        rf"(?:{_REWARD_ACTIONS})\s*\$?(?P<reward>\d+(?:,\d+)?(?:\.\d+)?)"
         r"(?:\s+in\s+(?P<label>[A-Za-z][A-Za-z ]{1,60}))?",
-        r"(?P<action>make(?:\s+a)?\s+purchase(?:\s+of)?)\s*\$?(?P<qual>\d+(?:,\d+)?(?:\.\d+)?)\b"
+        rf"(?P<action>make(?:\s+a)?\s+purchase(?:\s+of)?)\s*\$?(?P<qual>\d+(?:,\d+)?(?:\.\d+)?)\b"
         r".{0,100}?"
-        r"(?:get|unlock|receive|earn|claim|snag|net|secure|use)\s*\$?(?P<reward>\d+(?:,\d+)?(?:\.\d+)?)"
+        rf"(?:{_REWARD_ACTIONS})\s*\$?(?P<reward>\d+(?:,\d+)?(?:\.\d+)?)"
         r"(?:\s+in\s+(?P<label>[A-Za-z][A-Za-z ]{1,60}))?",
         r"make(?:\s+a)?\s+\$?(?P<qual>\d+(?:,\d+)?(?:\.\d+)?)\s+purchase\b"
         r".{0,100}?"
-        r"(?:get|unlock|receive|earn|claim|snag|net|secure|use)\s*\$?(?P<reward>\d+(?:,\d+)?(?:\.\d+)?)"
+        rf"(?:{_REWARD_ACTIONS})\s*\$?(?P<reward>\d+(?:,\d+)?(?:\.\d+)?)"
         r"(?:\s+in\s+(?P<label>[A-Za-z][A-Za-z ]{1,60}))?",
     ]
     for pattern in forward_patterns:
@@ -315,7 +350,8 @@ def extract_offer_amount_details(offer_text: str | None) -> dict[str, str]:
         if not forward:
             continue
         details = {
-            "qualifying_action": _normalize_qualifying_action(forward.groupdict().get("action")),
+            # Only the bare "make a $X purchase" pattern omits the action group.
+            "qualifying_action": _normalize_qualifying_action(forward.groupdict().get("action") or "purchase"),
             "qualifying_amount": _fmt_money(forward.group("qual")),
             "reward_amount": _fmt_money(forward.group("reward")),
         }
@@ -326,12 +362,12 @@ def extract_offer_amount_details(offer_text: str | None) -> dict[str, str]:
 
     # Reverse order: "Get $Y ... when you spend/bet $X"
     reverse_patterns = [
-        r"(?:get|unlock|receive|earn|claim|snag|net|secure|use)\s*\$?(?P<reward>\d+(?:,\d+)?(?:\.\d+)?)"
+        rf"(?:{_REWARD_ACTIONS})\s*\$?(?P<reward>\d+(?:,\d+)?(?:\.\d+)?)"
         r"(?:\s+in\s+(?P<label>[A-Za-z][A-Za-z ]{1,60}))?"
         r".{0,140}?"
         r"(?:when you|after you|if you)?\s*"
-        r"(?P<action>bet|wager|spend|play|deposit|purchase|buy)\s*\$?(?P<qual>\d+(?:,\d+)?(?:\.\d+)?)",
-        r"(?:get|unlock|receive|earn|claim|snag|net|secure|use)\s*\$?(?P<reward>\d+(?:,\d+)?(?:\.\d+)?)"
+        rf"(?P<action>{_QUALIFYING_ACTIONS})\s*\$?(?P<qual>\d+(?:,\d+)?(?:\.\d+)?)",
+        rf"(?:{_REWARD_ACTIONS})\s*\$?(?P<reward>\d+(?:,\d+)?(?:\.\d+)?)"
         r"(?:\s+in\s+(?P<label>[A-Za-z][A-Za-z ]{1,60}))?"
         r".{0,140}?"
         r"(?:when you|after you|if you)?\s*"
@@ -435,6 +471,7 @@ def enrich_offer_dict(offer: dict) -> dict:
     enriched["states_list"] = terms_states or parse_states(states)
     enriched["bonus_expiration_days"] = offer.get("bonus_expiration_days") or extract_bonus_expiration_days(terms)
     enriched["minimum_odds"] = offer.get("minimum_odds") or extract_minimum_odds(terms)
+    enriched["minimum_age"] = offer.get("minimum_age") or extract_minimum_age(terms)
     enriched["wagering_requirement"] = offer.get("wagering_requirement") or extract_wagering_requirement(terms)
     amount_details = extract_offer_amount_details(offer_text)
     if amount_details:

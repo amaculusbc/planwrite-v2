@@ -4,6 +4,7 @@ from app.services.offer_parsing import (
     enrich_offer_dict,
     extract_bonus_amount,
     extract_excluded_states_from_terms,
+    extract_minimum_age,
     extract_offer_amount_details,
     extract_states_from_terms,
     parse_states,
@@ -79,3 +80,49 @@ def test_enrich_offer_dict_keeps_reward_and_qualifying_amounts_separate():
     assert enriched["qualifying_amount"] == "$25"
     assert enriched["reward_amount"] == "$50"
     assert enriched["reward_label"] == "Novig Coins"
+
+
+def test_extract_offer_amount_details_parses_prediction_market_trade_pattern():
+    details = extract_offer_amount_details("Trade $10, Get $15")
+    assert details["qualifying_action"] == "trade"
+    assert details["qualifying_amount"] == "$10"
+    assert details["reward_amount"] == "$15"
+
+
+def test_enrich_offer_dict_reports_kalshi_reward_not_qualifying_trade():
+    enriched = enrich_offer_dict(
+        {
+            "brand": "Kalshi",
+            "offer_text": "Kalshi promo code ACTION: Trade $10, Get $15",
+            "terms": "",
+        }
+    )
+    assert enriched["bonus_amount"] == "$15"
+    assert enriched["qualifying_amount"] == "$10"
+
+
+def test_extract_minimum_age_reads_prediction_market_terms():
+    terms = "Must be 18 years or older and have a legal, U.S. residential address within the applicable state."
+    assert extract_minimum_age(terms) == "18+"
+
+
+def test_extract_minimum_age_returns_empty_when_terms_are_silent():
+    assert extract_minimum_age("New customers only. Bonus expires in 7 days.") == ""
+    assert extract_minimum_age("") == ""
+
+
+def test_enrich_offer_dict_carries_minimum_age_from_terms():
+    enriched = enrich_offer_dict(
+        {
+            "brand": "Kalshi",
+            "offer_text": "Trade $10, Get $15",
+            "terms": "Must be 18 years or older. Not available in AZ, IL, MA.",
+        }
+    )
+    assert enriched["minimum_age"] == "18+"
+
+
+def test_extract_bonus_amount_prefers_reward_verb_over_leading_amount():
+    # An unrecognized qualifying verb must not make the fallback report the qualifying
+    # amount as the reward.
+    assert extract_bonus_amount("Stake $10, get $15 in credits") == "$15"
