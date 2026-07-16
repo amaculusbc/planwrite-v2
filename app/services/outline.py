@@ -285,16 +285,19 @@ def _contextual_section_titles(
 
     if title_matchup:
         if is_prediction_market:
+            # Question-mapped headings with a liftable answer beneath: the questions a reader
+            # or an LLM actually asks. Not every one ends in the fixture - three headings all
+            # trailing "...Argentina vs. England" reads mechanical.
             overview_options = [
-                f"Why {topic} fits {title_matchup}",
-                f"Best Market Angle for {title_matchup}",
-                f"What Stands Out for {title_matchup}",
-                f"Where {topic} fits on {title_matchup}",
+                f"What is the {topic} offer?",
+                f"How much is the {topic} bonus?",
+                f"What does the {topic} get you?",
+                f"Why does the {topic} fit {title_matchup}?",
             ]
             claim_options = [
-                f"How to Use the Offer for {title_matchup}",
-                f"How to Use the Offer on {title_matchup}",
-                f"How to Use the Offer Around {title_matchup}",
+                f"How do you use the promo credits on {title_matchup}?",
+                "How do you use the promo credits?",
+                f"How does the bonus work on {title_matchup}?",
             ]
         elif is_dfs:
             overview_options = [
@@ -326,7 +329,13 @@ def _contextual_section_titles(
                 f"Example: Turning the Offer Into Extra Bets for {title_matchup}",
                 f"What the Welcome Offer Looks Like on {title_matchup}",
             ]
-        if not is_dfs:
+        if is_prediction_market:
+            signup_options = [
+                "How do you sign up?",
+                f"How do you sign up before {title_matchup}?",
+                "How do you get started?",
+            ]
+        elif not is_dfs:
             signup_options = [
                 f"How to Sign Up Before {title_matchup}",
                 f"Sign-Up Steps Before {title_matchup}",
@@ -335,15 +344,15 @@ def _contextual_section_titles(
     else:
         if is_prediction_market:
             overview_options = [
-                f"Why {topic} is worth a look today",
-                f"{topic}: Best Market Angle Today",
-                f"What to Know About {topic} right now",
-                f"Where {topic} fits today",
+                f"What is the {topic} offer?",
+                f"How much is the {topic} bonus?",
+                f"What does the {topic} get you?",
+                f"What is the {topic} worth today?",
             ]
             claim_options = [
-                "How to Use the Offer for Any Market",
-                "How to Use the Offer Today",
-                "How to Use the Offer Across Top Markets",
+                "How do you use the promo credits?",
+                "How does the bonus work?",
+                "How do you use the promo credits on any market?",
             ]
         elif is_dfs:
             overview_options = [
@@ -375,7 +384,13 @@ def _contextual_section_titles(
                 "Example: Turning the Offer Into Extra Bets",
                 "What the Welcome Offer Looks Like Today",
             ]
-        if not is_dfs:
+        if is_prediction_market:
+            signup_options = [
+                "How do you sign up?",
+                f"How do you sign up for {topic}?",
+                "How do you get started?",
+            ]
+        elif not is_dfs:
             signup_options = [
                 f"How to Sign Up for {topic}",
                 f"Sign-Up Steps for {topic}",
@@ -404,10 +419,13 @@ def _contextual_section_titles(
             "Other Sportsbook Promos Worth Watching",
         ]
     if is_prediction_market:
+        # These headings promised settlement mechanics and delivered eligibility rules. We do
+        # not hold real settlement data (resolution source, extra time, fees), so the heading
+        # must not promise it. "terms" keeps the section routing to the terms renderer.
         terms_options = [
-            "Market Terms & Settlement",
-            "Market Rules & Settlement",
-            "Offer Terms & Market Rules",
+            "Who is eligible, and what are the terms?",
+            "What are the offer terms?",
+            "What are the market terms?",
         ]
     elif is_dfs:
         terms_options = [

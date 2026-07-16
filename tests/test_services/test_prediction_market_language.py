@@ -6,6 +6,8 @@ import app.services.draft as draft_mod
 from app.services.draft import (
     _build_signup_list,
     _generate_body_section,
+    _is_claim_heading,
+    _is_signup_heading,
     _generate_intro_section,
     _render_prediction_market_example_section_deterministic,
     _render_prediction_market_intro_deterministic,
@@ -75,14 +77,37 @@ def test_strip_placeholder_hash_links_removes_dummy_anchors():
     assert '<a href="https://example.com">real link</a>' in cleaned
 
 
-def test_prediction_market_outline_titles_use_how_to_use():
+def test_prediction_market_outline_titles_are_question_mapped():
+    """Nick's AIO ask: headings are the questions a reader or an LLM actually asks."""
     titles = _contextual_section_titles(
         keyword="kalshi promo code",
         brand="Kalshi",
         event_context="",
         is_prediction_market=True,
     )
-    assert titles["claim"].startswith("How to Use")
+    for slot in ("overview", "claim", "signup", "terms"):
+        assert titles[slot].endswith("?"), f"{slot} heading is not a question: {titles[slot]}"
+
+
+def test_prediction_market_question_headings_still_route_to_their_sections():
+    """Section routing keys off heading text, so questions must match the same matchers."""
+    for variation_key in [str(index) for index in range(8)]:
+        for event_context in ("Featured event: Spain vs. France. Game time: 3:00 PM ET.", ""):
+            titles = _contextual_section_titles(
+                keyword="Kalshi promo code",
+                brand="Kalshi",
+                event_context=event_context,
+                is_prediction_market=True,
+                variation_key=variation_key,
+            )
+            signup = titles["signup"].lower()
+            claim = titles["claim"].lower()
+            assert _is_signup_heading(signup), f"signup heading stopped routing: {signup}"
+            assert _is_claim_heading(claim, _is_signup_heading(claim)), (
+                f"claim heading stopped routing: {claim}"
+            )
+            # Both orchestrators gate the terms renderer on this substring.
+            assert "terms" in titles["terms"].lower()
 
 
 def test_render_prediction_market_intro_deterministic_uses_offer_facts():

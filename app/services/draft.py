@@ -609,7 +609,9 @@ def _is_claim_heading(title_lower: str, is_signup: bool) -> bool:
         return False
     return bool(re.search(
         r"\b(how to claim|claim|worked example|bet example|example|how to use)\b|"
-        r"(bonus bets play out|welcome offer looks like|offer in action)",
+        r"(bonus bets play out|welcome offer looks like|offer in action)|"
+        # Question-mapped headings route the same way as the statement forms they replaced.
+        r"(how do you use|how does the (?:bonus|offer|promo) work)",
         title_lower,
     ))
 

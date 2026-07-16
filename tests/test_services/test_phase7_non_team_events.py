@@ -225,9 +225,11 @@ def test_editorial_rules_treat_market_rules_heading_as_terms():
     terms_like_titles = [
         section["title"]
         for section in cleaned
-        if section.get("level") == "h2" and "settlement" in section.get("title", "").lower()
+        if section.get("level") == "h2" and "terms" in section.get("title", "").lower()
     ]
     assert len(terms_like_titles) == 1
+    # The heading must not promise settlement mechanics the section does not carry.
+    assert "settlement" not in terms_like_titles[0].lower()
 
 
 def test_editorial_rules_treat_bonus_bets_play_out_heading_as_claim():
