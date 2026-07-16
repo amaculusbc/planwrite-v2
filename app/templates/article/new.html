@@ -1876,26 +1876,23 @@ function articleWizard() {
         },
 
         generatePredictionMarketExampleLocally() {
+            // No matched market means no real contract price. The server drops the contract math
+            // in this case; the preview must match, or the editor sees a $0.50-per-contract line
+            // the article will never print. Pick a market in the bet builder for real math.
             const amounts = this.parseOfferAmounts();
-            const positionAmount = parseInt(this.betBuilder.amount) || 10;
-            const entryPrice = 0.50;
-            const settlementPrice = 1.00;
-            const contracts = positionAmount / entryPrice;
-            const payout = contracts * settlementPrice;
-            const profit = payout - positionAmount;
+            const rewardAmount = amounts.rewardAmount;
             const eventLabel = this.buildExampleEventLabel();
             const sideLabel = this.betBuilder.type === 'no' ? 'No' : 'Yes';
             const selection = `${sideLabel} on ${eventLabel}`;
             this.betExampleData = {
                 qualifying_amount: amounts.qualifyingAmount,
-                position_amount: positionAmount,
-                entry_price: entryPrice,
-                settlement_price: settlementPrice,
+                position_amount: rewardAmount,
+                settlement_price: 1.00,
                 selection,
                 event_context: eventLabel,
-                reward_amount: amounts.rewardAmount
+                reward_amount: rewardAmount
             };
-            this.betExample = `I complete the $${amounts.qualifyingAmount} qualifying action first. Then I open a separate $${positionAmount} ${sideLabel} position on ${eventLabel}. At $${entryPrice.toFixed(2)} per contract, that buys about ${contracts.toFixed(0)} contracts. A $${settlementPrice.toFixed(2)} settlement pays about $${payout.toFixed(2)}, or roughly $${profit.toFixed(2)} in profit.`;
+            this.betExample = `I complete the $${amounts.qualifyingAmount} qualifying action. That $${amounts.qualifyingAmount} is what triggers the offer, and it returns $${rewardAmount} in promo credits. I put those $${rewardAmount} in promo credits behind ${selection}.`;
         },
 
         async generatePredictionMarketExampleFromSelection() {
