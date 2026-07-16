@@ -4631,19 +4631,20 @@ def _render_prediction_market_example_section_deterministic(
     # tell which one triggered the reward. Say it outright, and only price the position when a
     # matched market gave us a real contract price.
     funded_by_reward = abs(position_amount - reward_amount) < 0.01
-    # Without a matched market there is no side to name, only the fixture, so the money goes
-    # "into an eligible market on X" rather than "behind X" (which would back a whole match).
-    has_market = bool(prediction_market_data)
+    # A real price and a named side are separate questions. When the selection is only the
+    # fixture, the money goes "into an eligible market on X" - you cannot back a whole match.
+    event_label = _extract_featured_label_from_event_context(event_context)
+    names_a_side = selection_phrase.casefold().strip() != (event_label or "").casefold().strip()
     if funded_by_reward:
         position_sentence = (
             f"I put those {reward_phrase} behind {selection_phrase}."
-            if has_market
+            if names_a_side
             else f"I put those {reward_phrase} into an eligible market on {selection_phrase}."
         )
     else:
         position_sentence = (
             f"Separately, I open a ${position_amount:.0f} position on {selection_phrase}."
-            if has_market
+            if names_a_side
             else f"Separately, I put ${position_amount:.0f} into an eligible market on {selection_phrase}."
         )
     math_fragment = (
