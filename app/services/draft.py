@@ -29,6 +29,7 @@ from app.services.goal_template import (
     render_goal_terms_table,
     render_operator_promos_section,
 )
+from app.services.quick_facts import eligible_states_text, is_nationwide_offer, render_quick_facts_table
 from app.services.content_guidelines import get_style_instructions, get_temperature_by_section
 from app.services.style import get_rag_usage_guidance
 from app.services.switchboard_links import inject_switchboard_links, build_switchboard_url
@@ -727,6 +728,64 @@ def _apply_content_mode_language_guardrails(html: str, content_mode: str) -> str
     for key, shortcode in protected_shortcodes.items():
         result = result.replace(key, shortcode)
     return result
+
+
+# A run of five or more state codes in prose. The model recites eligible states alphabetically
+# by state name and stops partway (Nick's list died at MO, right before Montana), because the
+# offer feed says "ALL" and gives it nothing to copy.
+_STATE_CODE_RUN = re.compile(r"(?:\b[A-Z]{2}\b(?:,\s*|,?\s+and\s+)){4,}\b[A-Z]{2}\b")
+# Marks a list as the exclusion list, which is real data and must survive untouched.
+_EXCLUSION_CONTEXT = re.compile(
+    r"(?:not available|unavailable|except|exclud\w*|restricted|ineligible|outside)\b[^.]{0,40}$",
+    re.IGNORECASE,
+)
+
+
+def _collapse_state_enumerations(html: str, offer: dict[str, Any] | None) -> str:
+    """Replace a recited eligible-state list with the offer's complete availability statement.
+
+    Only for nationwide offers: when the offer names a real state set, an enumeration is
+    correct. The exclusion list is left alone.
+    """
+    offer = offer or {}
+    if not is_nationwide_offer(offer):
+        return html
+    eligible = eligible_states_text(offer)
+    if not html or not eligible:
+        return html
+    replacement = eligible[0].lower() + eligible[1:]
+
+    def _transform(text: str) -> str:
+        def _repl(match: re.Match[str]) -> str:
+            if _EXCLUSION_CONTEXT.search(text[: match.start()]):
+                return match.group(0)
+            return replacement
+
+        return _STATE_CODE_RUN.sub(_repl, text)
+
+    return _rewrite_html_text_nodes(html, _transform)
+
+
+def _maybe_quick_facts_block(
+    *,
+    offer: dict[str, Any] | None,
+    offer_property: str,
+    prediction_market: bool,
+    event_context: str = "",
+) -> str:
+    """Quick-facts block for prediction-market articles, directly under the lede.
+
+    It is the most citable unit on the page and the only place the state list renders
+    complete. GOAL has its own brief (and its own terms table), so it is excluded.
+    """
+    if not prediction_market or is_goal_property(offer_property):
+        return ""
+    table = render_quick_facts_table(offer or {}, event_context=event_context)
+    if not table:
+        return ""
+    brand = str((offer or {}).get("brand") or "").strip()
+    heading = f"{brand} promo code: the quick facts".strip() if brand else "The quick facts"
+    return f"<h2>{escape(heading)}</h2>\n{table}"
 
 
 def _adapt_disclaimer_for_prediction_market(disclaimer: str, age_summary: str = "") -> str:
@@ -1447,12 +1506,16 @@ def _format_offer_for_prompt(
     )
 
     if prediction_market:
+        # "eligible states listed by the operator" gives the model nothing to copy, so it
+        # recites the states from memory and truncates. Hand it the complete statement.
+        pm_states_text = eligible_states_text(offer) or states_text
         return (
             f"- Brand: {brand}\n"
             f"  Offer: {offer_text}\n"
             f"  Bonus Amount: {bonus_amount_display}\n"
             f"  Bonus Code: {code}\n"
-            f"  Available in: {states_text}\n"
+            f"  Available in: {pm_states_text}\n"
+            f"  Never list eligible states one by one; use the line above verbatim.\n"
             f"  Credit Expiration: {expiration_text}\n"
             f"  Qualifying Action: {qualifying_action_line}"
         )
@@ -4904,6 +4967,15 @@ async def generate_draft_from_outline(
             parts.append(content)
             previous_content += content
             keyword_count += _count_keyword(content, keyword)
+            quick_facts = _maybe_quick_facts_block(
+                offer=offer,
+                offer_property=offer_property,
+                prediction_market=is_prediction_market,
+                event_context=event_context,
+            )
+            if quick_facts:
+                parts.append(quick_facts)
+                previous_content += quick_facts
 
         elif level.startswith("shortcode"):
             current_offer = select_offer_for_shortcode(level)
@@ -5064,6 +5136,7 @@ async def generate_draft_from_outline(
     html_output = _strip_vacuous_qualifiers(html_output)
     # Sections appended after the main postprocess (analysis, promos) bypass its pass.
     html_output = _normalize_clock_time_style(html_output)
+    html_output = _collapse_state_enumerations(html_output, offer)
     html_output = _cap_primary_keyword_density(html_output, keyword)
     html_output = _strip_search_query_openers(html_output)
     html_output = _title_case_headings(html_output)
@@ -6308,6 +6381,16 @@ async def generate_draft_from_outline_streaming(
             previous_content += content
             keyword_count += _count_keyword(content, keyword)
             yield {"type": "content", "section": "intro", "content": content}
+            quick_facts = _maybe_quick_facts_block(
+                offer=offer,
+                offer_property=offer_property,
+                prediction_market=is_prediction_market,
+                event_context=event_context,
+            )
+            if quick_facts:
+                parts.append(quick_facts)
+                previous_content += quick_facts
+                yield {"type": "content", "section": "quick_facts", "content": quick_facts}
 
         elif level.startswith("shortcode"):
             current_offer = select_offer_for_shortcode(level)
@@ -6470,6 +6553,7 @@ async def generate_draft_from_outline_streaming(
     html_output = _strip_vacuous_qualifiers(html_output)
     # Sections appended after the main postprocess (analysis, promos) bypass its pass.
     html_output = _normalize_clock_time_style(html_output)
+    html_output = _collapse_state_enumerations(html_output, offer)
     html_output = _cap_primary_keyword_density(html_output, keyword)
     html_output = _strip_search_query_openers(html_output)
     html_output = _title_case_headings(html_output)
