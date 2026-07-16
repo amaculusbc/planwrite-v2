@@ -573,6 +573,92 @@ def check_editorial_regressions(
     return issues
 
 
+# A dollar amount bound directly to the reward: "$15 in promo credits", "$15 bonus", "$15 in
+# bonus bets". Whatever fills this slot must be the true reward, even when the same number
+# happens to be the qualifying amount elsewhere in the sentence.
+_REWARD_BOUND_AMOUNT = re.compile(
+    r"\$\s?(\d{1,3}(?:,\d{3})*(?:\.\d+)?)\s+"
+    r"(?:in\s+)?(?:bonus\b|reward\b|promo\s+credits?\b|bonus\s+bets?\b|bonus\s+entries\b|"
+    r"in\s+(?:promo\s+credits?|bonus\s+bets?|bonus\s+entries|free\s+bets?))",
+    re.IGNORECASE,
+)
+_AGE_TOKEN = re.compile(r"\b(\d{2})\+")
+
+
+def _money_key(value: str) -> str:
+    """Normalize '$10', '$10.00', '10' to a comparable key."""
+    digits = re.sub(r"[^\d.]", "", str(value or ""))
+    if not digits:
+        return ""
+    try:
+        return f"{float(digits):.2f}"
+    except ValueError:
+        return ""
+
+
+def check_offer_consistency(
+    content: str,
+    *,
+    offer: dict[str, Any] | None = None,
+) -> list[ComplianceIssue]:
+    """Flag article-wide contradictions in the offer's headline facts.
+
+    Nick's audit named these as the single biggest defect: an H1 promising a $15 bonus while
+    every mechanic below says $10, and a body that says 18+ while the footer says 21+. This is
+    the net over the root-cause fixes - it compares visible copy against the offer's own
+    values and never invents one: an absent fact yields no check, not a false positive.
+    """
+    issues: list[ComplianceIssue] = []
+    offer = offer or {}
+    if not content:
+        return issues
+
+    text = _strip_html_tags(content)
+
+    # Bonus amount: an amount bound to the reward noun ("$10 in promo credits") must be the true
+    # reward. This catches the "$10 in promo credits" bug even though $10 is also the qualifying
+    # amount, because here it is the reward that is being named.
+    true_reward = _money_key(offer.get("bonus_amount") or offer.get("reward_amount"))
+    if true_reward:
+        conflicting = {
+            key
+            for raw in _REWARD_BOUND_AMOUNT.findall(text)
+            if (key := _money_key(raw)) and key != true_reward
+        }
+        for key in sorted(conflicting):
+            issues.append(ComplianceIssue(
+                type="bonus_amount_mismatch",
+                message=(
+                    f"Reward is stated as ${key.rstrip('0').rstrip('.')} but the offer reward is "
+                    f"${true_reward.rstrip('0').rstrip('.')}"
+                ),
+                severity=IssueSeverity.ERROR,
+                suggestion="Make the H1, lede, fit section, table, and worked example use the one reward figure",
+            ))
+
+    # Minimum age: any NN+ token that is not the sourced age is a contradiction (the 21+ footer
+    # pasted onto an 18+ prediction-market article).
+    true_age = ""
+    age_match = _AGE_TOKEN.search(str(offer.get("minimum_age") or ""))
+    if age_match:
+        true_age = age_match.group(1)
+    if true_age:
+        conflicting_ages = {
+            match.group(1)
+            for match in _AGE_TOKEN.finditer(text)
+            if match.group(1) != true_age and match.group(1) in {"18", "19", "21"}
+        }
+        for age in sorted(conflicting_ages):
+            issues.append(ComplianceIssue(
+                type="age_requirement_mismatch",
+                message=f"Copy states {age}+ but the offer minimum age is {true_age}+",
+                severity=IssueSeverity.ERROR,
+                suggestion=f"Use {true_age}+ everywhere, including the responsible-gaming footer",
+            ))
+
+    return issues
+
+
 def check_active_voice(content: str) -> list[ComplianceIssue]:
     """Warn when passive constructions dominate visible copy."""
     if not content:
@@ -674,6 +760,7 @@ def validate_content(
     issues.extend(check_seo(content))
     issues.extend(check_offer_facts(content, offer=offer, keyword=keyword))
     issues.extend(check_editorial_regressions(content, keyword=keyword, offer=offer))
+    issues.extend(check_offer_consistency(content, offer=offer))
     issues.extend(check_active_voice(content))
 
     if check_links:

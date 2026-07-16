@@ -5,6 +5,7 @@ from app.services.compliance import (
     check_cta_links,
     check_editorial_regressions,
     check_link_quality,
+    check_offer_consistency,
     check_offer_facts,
     validate_content,
 )
@@ -130,3 +131,57 @@ def test_check_active_voice_flags_passive_heavy_copy():
     content = "<p>The offer is highlighted here. It was structured for new users. The bonus is delivered after signup.</p>"
     issues = check_active_voice(content)
     assert "passive_voice_heavy" in _issue_types(issues)
+
+
+_KALSHI_OFFER = {
+    "brand": "Kalshi",
+    "offer_text": "Trade $10, Get $15",
+    "bonus_amount": "$15",
+    "reward_amount": "$15",
+    "qualifying_amount": "$10",
+    "minimum_age": "18+",
+}
+
+
+def test_offer_consistency_flags_bonus_amount_contradiction():
+    """Nick's single biggest defect: H1 promises $15, mechanics say $10 in promo credits."""
+    content = (
+        "<h1>Trade $10, Get $15 Bonus</h1>"
+        "<p>Sign up and get $15 in promo credits.</p>"
+        "<p>A $10 first trade can unlock $10 in promo credits.</p>"
+    )
+    types = _issue_types(check_offer_consistency(content, offer=_KALSHI_OFFER))
+    assert "bonus_amount_mismatch" in types
+
+
+def test_offer_consistency_flags_age_contradiction():
+    content = "<p>Get $15 in promo credits. You must be 21+ to participate.</p>"
+    types = _issue_types(check_offer_consistency(content, offer=_KALSHI_OFFER))
+    assert "age_requirement_mismatch" in types
+
+
+def test_offer_consistency_passes_a_consistent_article():
+    """The qualifying $10 appears freely; only a reward-bound $10 would be a mismatch."""
+    content = (
+        "<h1>Trade $10, Get $15 Bonus</h1>"
+        "<p>Complete a $10 qualifying trade and get $15 in promo credits.</p>"
+        "<p>The $15 reward posts once the $10 trade settles. You must be 18+.</p>"
+    )
+    assert check_offer_consistency(content, offer=_KALSHI_OFFER) == []
+
+
+def test_offer_consistency_silent_without_source_values():
+    """No offer values means no check - the validator never invents a fact to test against."""
+    content = "<p>Get $15 in promo credits. You must be 21+.</p>"
+    assert check_offer_consistency(content, offer={"brand": "Kalshi"}) == []
+
+
+def test_validate_content_runs_offer_consistency():
+    content = (
+        "<h1>Trade $10, Get $15 Bonus</h1>"
+        "<p>Get $10 in promo credits after signup. You must be 21+.</p>"
+    )
+    result = validate_content(content, offer=_KALSHI_OFFER, check_links=False)
+    types = _issue_types(result.issues)
+    assert "bonus_amount_mismatch" in types
+    assert "age_requirement_mismatch" in types
