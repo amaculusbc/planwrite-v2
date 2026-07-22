@@ -200,13 +200,15 @@ def _weather_editorial_point(summary: dict) -> str:
     wind_speed = summary.get("wind_speed")
     precip = summary.get("precipitation_probability")
     condition = summary.get("condition")
+    # BC Core reports decimals ("72.4°", "8.7 mph"); nobody writes weather like that in an
+    # article (Nick, 2026-07-21). Round to human values - still the sourced numbers.
     if temperature is not None:
-        phrases.append(f"{temperature}° conditions")
+        phrases.append(f"{round(temperature)}° conditions")
     if wind_speed is not None:
         direction = f" {summary.get('wind_direction')}" if summary.get("wind_direction") else ""
-        phrases.append(f"{wind_speed} mph{direction} wind".replace("  ", " ").strip())
+        phrases.append(f"{round(wind_speed)} mph{direction} wind".replace("  ", " ").strip())
     if precip is not None:
-        phrases.append(f"{precip}% precipitation chances")
+        phrases.append(f"{5 * round(precip / 5)}% precipitation chances")
     if condition:
         phrases.append(condition.lower())
     if not phrases:

@@ -251,8 +251,8 @@ async def test_build_event_context_maps_soccer_with_selected_date(monkeypatch):
         (
             "/soccer/events",
             {
-                "start": "2026-06-11T00:00:00Z",
-                "end": "2026-06-12T00:00:00Z",
+                "start": "2026-06-11T04:00:00Z",  # the requested ET game day, expressed in UTC
+                "end": "2026-06-12T04:00:00Z",
             },
         )
     ]

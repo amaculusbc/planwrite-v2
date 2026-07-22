@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 import atexit
 import re
 from typing import Any
@@ -420,19 +421,25 @@ def _date_range_params_for_event(source_facts: dict) -> dict[str, str]:
     if not raw:
         return {}
 
+    # The window is the requested game's ET day, not its UTC day. A US game day is an ET
+    # concept: an 8:10 PM ET Monday game is already Tuesday in UTC, so a UTC-day window for
+    # "Tuesday" contains Monday night's game - in an MLB series the same team names match and
+    # the previous game's facts land in the next day's article (Nick, 2026-07-21).
+    eastern = ZoneInfo("America/New_York")
     dt: datetime
     try:
         if len(raw) == 10 and raw[4] == "-" and raw[7] == "-":
-            dt = datetime.fromisoformat(raw).replace(tzinfo=UTC)
+            # A bare date from the UI means that ET calendar day.
+            dt = datetime.fromisoformat(raw).replace(tzinfo=eastern)
         else:
             dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
             if dt.tzinfo is None:
                 dt = dt.replace(tzinfo=UTC)
-            dt = dt.astimezone(UTC)
+            dt = dt.astimezone(eastern)
     except ValueError:
         return {}
 
-    day_start = datetime(dt.year, dt.month, dt.day, tzinfo=UTC)
+    day_start = datetime(dt.year, dt.month, dt.day, tzinfo=eastern).astimezone(UTC)
     day_end = day_start + timedelta(days=1)
     return {
         "start": day_start.isoformat().replace("+00:00", "Z"),

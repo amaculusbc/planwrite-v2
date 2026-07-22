@@ -2247,6 +2247,19 @@ _CLOCK_MERIDIEM_DOTTED = re.compile(r"(\d{1,2}(?::\d{2})?)\s*([ap])\.\s*m\.", re
 _CLOCK_MERIDIEM_BARE = re.compile(r"(\d{1,2}(?::\d{2})?)\s*([ap])m\b", re.IGNORECASE)
 
 
+# BC Core market-percents are ticket/handle splits; the model paraphrases both into "bets",
+# which blurs which one ("80% of bets" - Nick couldn't verify it and deleted true data).
+# "Tickets" is the count-of-wagers reading and matches the dominant source phrasing.
+_BET_PERCENT_NOUN = re.compile(r"(\d{1,3}%\s+of\s+(?:the\s+)?)bets\b", re.IGNORECASE)
+
+
+def _normalize_market_percent_nouns(html: str) -> str:
+    """Keep the precise noun on market-percent stats: tickets, not "bets"."""
+    if not html:
+        return html
+    return _rewrite_html_text_nodes(html, lambda text: _BET_PERCENT_NOUN.sub(r"\1tickets", text))
+
+
 def _normalize_clock_time_style(html: str) -> str:
     """Normalize clock times to the house '3:00 PM ET' style."""
     if not html:
@@ -5138,6 +5151,7 @@ async def generate_draft_from_outline(
     html_output = _strip_vacuous_qualifiers(html_output)
     # Sections appended after the main postprocess (analysis, promos) bypass its pass.
     html_output = _normalize_clock_time_style(html_output)
+    html_output = _normalize_market_percent_nouns(html_output)
     html_output = _collapse_state_enumerations(html_output, offer)
     html_output = _cap_primary_keyword_density(html_output, keyword)
     html_output = _strip_search_query_openers(html_output)
@@ -6555,6 +6569,7 @@ async def generate_draft_from_outline_streaming(
     html_output = _strip_vacuous_qualifiers(html_output)
     # Sections appended after the main postprocess (analysis, promos) bypass its pass.
     html_output = _normalize_clock_time_style(html_output)
+    html_output = _normalize_market_percent_nouns(html_output)
     html_output = _collapse_state_enumerations(html_output, offer)
     html_output = _cap_primary_keyword_density(html_output, keyword)
     html_output = _strip_search_query_openers(html_output)
