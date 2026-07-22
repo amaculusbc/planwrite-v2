@@ -129,3 +129,16 @@ def test_outline_puts_analysis_under_the_match_title():
     assert "Do NOT analyse the match here" in " ".join(h2["talking_points"])
     assert "analysis section" in " ".join(h3["talking_points"])
     assert "never guess who comes in" in " ".join(h3["talking_points"])
+
+
+def test_boost_paths_resolve_app_sport_codes():
+    """The app says ncaaf/ncaab; BC Core paths say ncaafb/ncaamb. The alias bridges them."""
+    from app.services.bc_core_boosts import BOOST_PATHS, _SPORT_ALIASES
+
+    for app_code, expected_path in (
+        ("ncaaf", "/ncaafb/oddsboost"),
+        ("ncaab", "/ncaamb/oddsboost"),
+        ("mlb", "/mlb/oddsboost"),
+    ):
+        resolved = BOOST_PATHS.get(_SPORT_ALIASES.get(app_code, app_code))
+        assert resolved == expected_path, f"{app_code} resolved to {resolved}"

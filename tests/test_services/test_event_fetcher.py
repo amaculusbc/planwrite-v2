@@ -14,7 +14,7 @@ def test_get_available_sports_includes_soccer():
 
 
 @pytest.mark.asyncio
-async def test_get_games_for_date_uses_world_cup_soccer_scoreboard(monkeypatch):
+async def test_get_games_for_date_sweeps_soccer_league_scoreboards(monkeypatch):
     calls: list[str] = []
 
     async def fake_get_json(url, **kwargs):
@@ -56,8 +56,13 @@ async def test_get_games_for_date_uses_world_cup_soccer_scoreboard(monkeypatch):
 
     games = await event_fetcher.get_games_for_date("soccer", datetime(2026, 6, 11))
 
-    assert calls
-    assert "/sports/soccer/fifa.world/scoreboard?dates=20260611" in calls[0]
+    # Soccer must survive the calendar: every league in the sweep gets queried, and the
+    # World Cup feed is one of them rather than the only one.
+    assert len(calls) == len(event_fetcher.SOCCER_LEAGUE_PATHS)
+    assert any("/sports/soccer/usa.1/scoreboard?dates=20260611" in url for url in calls)
+    assert any("/sports/soccer/fifa.world/scoreboard?dates=20260611" in url for url in calls)
+    # The same event id served by several league feeds collapses to one game.
+    assert len(games) == 1
     assert games[0]["away_team"] == "South Africa"
     assert games[0]["home_team"] == "Mexico"
     assert games[0]["away_abbrev"] == "RSA"

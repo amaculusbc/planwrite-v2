@@ -3,6 +3,7 @@
 Fetches games from ESPN API for various sports.
 """
 
+import asyncio
 from datetime import datetime, timedelta
 from typing import Optional
 from zoneinfo import ZoneInfo
@@ -16,9 +17,23 @@ SPORT_PATHS = {
     "nhl": "hockey/nhl",
     "ncaaf": "football/college-football",
     "ncaab": "basketball/mens-college-basketball",
-    # ESPN's FIFA World Cup scoreboard is the team-game source editors need for soccer examples.
-    "soccer": "soccer/fifa.world",
 }
+
+# Soccer sweeps several ESPN league scoreboards and merges. The old single source was
+# "soccer/fifa.world", which went dark the day the World Cup ended - the picker must
+# survive the calendar. Off-season leagues just return no events, which is harmless.
+SOCCER_LEAGUE_PATHS = [
+    "soccer/usa.1",           # MLS
+    "soccer/mex.1",           # Liga MX
+    "soccer/eng.1",           # Premier League
+    "soccer/esp.1",           # La Liga
+    "soccer/ita.1",           # Serie A
+    "soccer/ger.1",           # Bundesliga
+    "soccer/fra.1",           # Ligue 1
+    "soccer/uefa.champions",  # Champions League
+    "soccer/uefa.europa",     # Europa League
+    "soccer/fifa.world",      # World Cup (dormant between tournaments)
+]
 
 SPORT_LABELS = {
     "nfl": "NFL",
@@ -41,15 +56,43 @@ async def get_games_for_date(sport: str = "nfl", target_date: datetime | None = 
     Returns:
         List of game dicts with home_team, away_team, start_time, etc.
     """
+    if target_date is None:
+        target_date = datetime.now(ZoneInfo("America/New_York"))
+    date_str = target_date.strftime("%Y%m%d")
+
+    if sport.lower() == "soccer":
+        return await _get_soccer_games_for_date(date_str)
+
     sport_path = SPORT_PATHS.get(sport.lower())
     if not sport_path:
         return []
+    games = await _fetch_scoreboard_games(sport_path, date_str, sport_label=sport.upper())
+    games.sort(key=lambda g: g.get("start_time_et") or datetime.min.replace(tzinfo=ZoneInfo("UTC")))
+    return games
 
-    if target_date is None:
-        target_date = datetime.now(ZoneInfo("America/New_York"))
 
-    date_str = target_date.strftime("%Y%m%d")
-    url = f"http://site.api.espn.com/apis/site/v2/sports/{sport_path}/scoreboard?dates={date_str}"
+async def _get_soccer_games_for_date(date_str: str) -> list[dict]:
+    """Merge the day's fixtures across the swept soccer leagues, deduped by event id."""
+    results = await asyncio.gather(
+        *(_fetch_scoreboard_games(path, date_str, sport_label="SOCCER") for path in SOCCER_LEAGUE_PATHS)
+    )
+    seen: set[str] = set()
+    games: list[dict] = []
+    for league_games in results:
+        for game in league_games:
+            game_id = str(game.get("id") or "")
+            if game_id and game_id in seen:
+                continue
+            if game_id:
+                seen.add(game_id)
+            games.append(game)
+    games.sort(key=lambda g: g.get("start_time_et") or datetime.min.replace(tzinfo=ZoneInfo("UTC")))
+    return games
+
+
+async def _fetch_scoreboard_games(sport_path: str, date_str: str, *, sport_label: str) -> list[dict]:
+    """Fetch and parse one ESPN scoreboard; returns [] on any failure."""
+    url = f"https://site.api.espn.com/apis/site/v2/sports/{sport_path}/scoreboard?dates={date_str}"
 
     try:
         data = await get_json(url, timeout=10.0, retries=3)
@@ -113,18 +156,16 @@ async def get_games_for_date(sport: str = "nfl", target_date: datetime | None = 
                 "network": network,
                 "headline": game.get("name", ""),
                 "short_name": game.get("shortName", ""),
-                "sport": sport.upper(),
+                "sport": sport_label,
                 "week": week_num,
                 "season_type": season_type,
                 "season_year": season_year,
             })
 
-        # Sort by start time
-        games.sort(key=lambda g: g.get("start_time_et") or datetime.min.replace(tzinfo=ZoneInfo("UTC")))
         return games
 
     except Exception as e:
-        print(f"Failed to fetch {sport} games: {e}")
+        print(f"Failed to fetch {sport_path} games: {e}")
         return []
 
 

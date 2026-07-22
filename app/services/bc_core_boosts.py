@@ -30,6 +30,15 @@ BOOST_PATHS: dict[str, str] = {
     "wnba": "/wnba/oddsboost",
 }
 
+# The app's sport codes (event picker, game context) say ncaaf/ncaab; BC Core's paths say
+# ncaafb/ncaamb. Without this, a college boost lookup silently returns nothing.
+_SPORT_ALIASES: dict[str, str] = {
+    "ncaaf": "ncaafb",
+    "ncaab": "ncaamb",
+    "cfb": "ncaafb",
+    "cbb": "ncaamb",
+}
+
 
 def _american(value: Any) -> str:
     try:
@@ -124,7 +133,8 @@ async def fetch_operator_boosts(
     event_id: Any = None,
 ) -> list[dict]:
     """Active, US-only boosts for an operator in a sport. Empty list when none."""
-    path = BOOST_PATHS.get(str(sport or "").strip().lower())
+    sport_key = str(sport or "").strip().lower()
+    path = BOOST_PATHS.get(_SPORT_ALIASES.get(sport_key, sport_key))
     if not path or not bc_core_configured():
         return []
     book_ids = await get_us_book_ids(brand)
