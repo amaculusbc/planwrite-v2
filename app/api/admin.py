@@ -13,6 +13,7 @@ from app.database import get_db
 from app.services.bam_offers import DEFAULT_PROPERTY, PROPERTIES
 from app.services.internal_links import get_links_store
 from app.services.rag_builder import build_rag_index
+from app.services.generation_artifacts import generation_run_stats
 from app.services.usage_tracking import list_usage_events, usage_events_csv, usage_summary
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -309,6 +310,14 @@ async def get_usage_summary(
     """Return aggregated persisted usage metrics."""
     summary = await usage_summary(days=days)
     return {"status": "success", **summary}
+
+
+@router.get("/usage/generation-stats")
+async def get_generation_stats(
+    db: AsyncSession = Depends(get_db),  # noqa: ARG001
+):
+    """Per-property, monthly, and per-state generation counts from the run manifests."""
+    return {"status": "success", **generation_run_stats()}
 
 
 @router.get("/usage/export")

@@ -279,6 +279,55 @@ def create_generation_run(
     return recorder
 
 
+def generation_run_stats() -> dict[str, Any]:
+    """Aggregate every persisted run manifest by property, month, and state.
+
+    The articles table only holds saved articles (writers rarely save), and usage events
+    record the request path but not the offer property. The run manifests on the storage
+    volume are the one place per-generation property/keyword/date is captured, so this walks
+    them for real per-property and monthly generation counts.
+    """
+    base = _storage_root()
+    total = 0
+    by_property: dict[str, int] = {}
+    by_month: dict[str, int] = {}
+    by_state: dict[str, int] = {}
+    property_by_month: dict[str, dict[str, int]] = {}
+    keyword_counts: dict[str, int] = {}
+    if not base.exists():
+        return {"total_runs": 0, "by_property": {}, "by_month": {}, "by_state": {},
+                "property_by_month": {}, "top_keywords": []}
+
+    for manifest_path in base.glob("*/*/manifest.json"):
+        try:
+            m = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        total += 1
+        prop = str(m.get("offer_property") or "unknown")
+        created = str(m.get("created_at") or "")
+        month = created[:7] if len(created) >= 7 else "unknown"
+        state = str(m.get("state") or "unknown")
+        keyword = str(m.get("keyword") or "").strip().lower()
+
+        by_property[prop] = by_property.get(prop, 0) + 1
+        by_month[month] = by_month.get(month, 0) + 1
+        by_state[state] = by_state.get(state, 0) + 1
+        property_by_month.setdefault(month, {})[prop] = property_by_month.setdefault(month, {}).get(prop, 0) + 1
+        if keyword:
+            keyword_counts[keyword] = keyword_counts.get(keyword, 0) + 1
+
+    top_keywords = sorted(keyword_counts.items(), key=lambda kv: -kv[1])[:20]
+    return {
+        "total_runs": total,
+        "by_property": dict(sorted(by_property.items(), key=lambda kv: -kv[1])),
+        "by_month": dict(sorted(by_month.items())),
+        "by_state": dict(sorted(by_state.items(), key=lambda kv: -kv[1])),
+        "property_by_month": {mo: property_by_month[mo] for mo in sorted(property_by_month)},
+        "top_keywords": [{"keyword": k, "count": c} for k, c in top_keywords],
+    }
+
+
 def load_generation_run(run_id: str) -> dict[str, Any] | None:
     """Load an existing run manifest by run id."""
     base = _storage_root()
