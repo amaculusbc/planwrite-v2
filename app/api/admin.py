@@ -314,7 +314,7 @@ async def get_usage_summary(
 @router.get("/usage/export")
 async def export_usage_events(
     days: int = Query(30, ge=1, le=3650),
-    limit: int = Query(5000, ge=1, le=20000),
+    limit: int = Query(100000, ge=1, le=100000),
     username: str | None = Query(None),
     event_type: str | None = Query(None),
     db: AsyncSession = Depends(get_db),  # noqa: ARG001

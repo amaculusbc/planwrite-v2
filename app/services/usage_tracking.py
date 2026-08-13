@@ -73,7 +73,7 @@ async def list_usage_events(
 ) -> list[dict]:
     """Return recent usage events."""
     cutoff = datetime.utcnow() - timedelta(days=max(1, min(days, 3650)))
-    cap = max(1, min(limit, 5000))
+    cap = max(1, min(limit, 100000))
 
     stmt = (
         select(UsageEvent)
@@ -164,7 +164,7 @@ async def usage_summary(*, days: int = 30) -> dict:
 async def usage_events_csv(
     *,
     days: int = 30,
-    limit: int = 5000,
+    limit: int = 100000,
     username: str | None = None,
     event_type: str | None = None,
 ) -> str:
