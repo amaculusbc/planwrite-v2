@@ -27,13 +27,20 @@ if [[ -n "${TS_AUTHKEY:-}" ]]; then
     sleep 0.5
   done
 
-  /usr/bin/tailscale up \
+  # A failed/expired auth key must NOT take the whole app down. Before this guard, `set -e`
+  # made a rejected key fatal: the script exited before `exec "$@"`, uvicorn never started,
+  # and the container crashlooped (502). BC Core is only reachable through this tunnel, so
+  # without it odds fall back to Charlotte and expertise/boosts go quiet — degraded, not dead.
+  if /usr/bin/tailscale up \
       --authkey="$TS_AUTHKEY" \
       --hostname="${TS_HOSTNAME:-planwrite-railway}" \
-      --ssh=false
-
-  echo "Tailscale up:"
-  /usr/bin/tailscale status 2>/dev/null | head -5 || true
+      --ssh=false; then
+    echo "Tailscale up:"
+    /usr/bin/tailscale status 2>/dev/null | head -5 || true
+  else
+    echo "WARNING: Tailscale failed to come up (likely an invalid/expired TS_AUTHKEY)."
+    echo "Continuing WITHOUT the tunnel — BC Core will be unreachable until the key is fixed."
+  fi
 else
   echo "TS_AUTHKEY not set - skipping Tailscale tunnel bootstrap."
 fi
