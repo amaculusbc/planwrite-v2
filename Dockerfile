@@ -8,20 +8,13 @@ ENV PYTHONUNBUFFERED=1
 # Create app directory
 WORKDIR /app
 
-# Install system dependencies and Tailscale for the BC Core tunnel.
+# Install system dependencies. BC Core is reached directly over its external HTTPS API
+# (BC_CORE_BASE_URL), so no VPN/tunnel is needed.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash \
     build-essential \
     ca-certificates \
     curl \
-    gnupg \
-    && mkdir -p /usr/share/keyrings \
-    && curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.noarmor.gpg \
-        -o /usr/share/keyrings/tailscale-archive-keyring.gpg \
-    && curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.tailscale-keyring.list \
-        -o /etc/apt/sources.list.d/tailscale.list \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends tailscale \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy project files
