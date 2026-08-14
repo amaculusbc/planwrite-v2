@@ -23,6 +23,62 @@ settings = get_settings()
 # Initialize async OpenAI client
 client = AsyncOpenAI(api_key=settings.openai_api_key)
 
+# --- token usage + cost accounting (per request) ---
+# A ContextVar scopes accounting to one request so concurrent generations never cross-count.
+# reset_token_usage() installs a fresh dict at the top of a handler; the pipeline's gather'd
+# section calls inherit the same dict object and mutate it in place, so their tokens roll up.
+from contextvars import ContextVar  # noqa: E402
+
+
+def _empty_usage() -> dict:
+    return {"calls": 0, "prompt_tokens": 0, "cached_input_tokens": 0,
+            "completion_tokens": 0, "total_tokens": 0, "by_op": {}}
+
+
+_TOKEN_USAGE: ContextVar[dict] = ContextVar("_TOKEN_USAGE", default=None)
+
+
+def reset_token_usage() -> None:
+    _TOKEN_USAGE.set(_empty_usage())
+
+
+def usage_cost_usd(usage: dict) -> float:
+    """USD cost of a usage dict at the configured rates (cached input billed at the cheap rate)."""
+    cached = int(usage.get("cached_input_tokens", 0) or 0)
+    uncached_input = max(0, int(usage.get("prompt_tokens", 0) or 0) - cached)
+    out = int(usage.get("completion_tokens", 0) or 0)
+    return round(
+        uncached_input / 1_000_000 * settings.llm_price_input_per_m
+        + cached / 1_000_000 * settings.llm_price_cached_input_per_m
+        + out / 1_000_000 * settings.llm_price_output_per_m,
+        6,
+    )
+
+
+def get_token_usage() -> dict:
+    acc = _TOKEN_USAGE.get()
+    acc = dict(acc) if acc else _empty_usage()
+    acc["cost_usd"] = usage_cost_usd(acc)
+    return acc
+
+
+def _record_usage(op: str, model: str, usage: Any) -> None:
+    acc = _TOKEN_USAGE.get()
+    pt = int(getattr(usage, "prompt_tokens", 0) or 0)
+    ct = int(getattr(usage, "completion_tokens", 0) or 0)
+    tt = int(getattr(usage, "total_tokens", 0) or (pt + ct))
+    details = getattr(usage, "prompt_tokens_details", None)
+    cached = int(getattr(details, "cached_tokens", 0) or 0) if details else 0
+    if acc is not None:
+        acc["calls"] += 1
+        acc["prompt_tokens"] += pt
+        acc["cached_input_tokens"] += cached
+        acc["completion_tokens"] += ct
+        acc["total_tokens"] += tt
+        acc["by_op"][op] = acc["by_op"].get(op, 0) + tt
+    logger.info("llm_usage", op=op, model=model, prompt_tokens=pt,
+                cached_tokens=cached, completion_tokens=ct, total_tokens=tt)
+
 RETRYABLE_ERRORS = (RateLimitError, APITimeoutError, APIError, APIConnectionError)
 MAX_RETRIES = 3
 BASE_BACKOFF = 0.5
@@ -97,6 +153,7 @@ async def generate_completion(
         )
 
     response = await _with_openai_retries("chat.completions.create", _call)
+    _record_usage("completion", model, getattr(response, "usage", None))
 
     return response.choices[0].message.content or ""
 
@@ -139,6 +196,7 @@ async def generate_completion_structured(
         )
 
     resp = await _with_openai_retries("chat.completions.create.structured", _call)
+    _record_usage("structured", model, getattr(resp, "usage", None))
     content = resp.choices[0].message.content or ""
     try:
         return json.loads(content)
@@ -167,12 +225,16 @@ async def generate_completion_streaming(
             **_sampling_params(model, temperature),
             **_token_param(model, max_tokens),
             stream=True,
+            stream_options={"include_usage": True},
         )
 
     stream = await _with_openai_retries("chat.completions.stream", _call_stream)
 
     async for chunk in stream:
-        if chunk.choices[0].delta.content:
+        # The final include_usage chunk carries usage and an empty choices list.
+        if getattr(chunk, "usage", None) is not None:
+            _record_usage("streaming", model, chunk.usage)
+        if chunk.choices and chunk.choices[0].delta.content:
             yield chunk.choices[0].delta.content
 
 

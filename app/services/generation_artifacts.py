@@ -166,6 +166,26 @@ class GenerationArtifactRun:
         self.manifest.update(_json_safe(kwargs))
         self._flush_manifest()
 
+    def record_token_usage(self, usage: dict[str, Any]) -> None:
+        """Accumulate LLM token usage + cost into the manifest.
+
+        Outline and draft are separate calls that may share a run_id; adding (not replacing)
+        keeps the run's total honest across both.
+        """
+        if not usage:
+            return
+        existing = self.manifest.get("token_usage") or {}
+        merged = {
+            "calls": int(existing.get("calls", 0)) + int(usage.get("calls", 0) or 0),
+            "prompt_tokens": int(existing.get("prompt_tokens", 0)) + int(usage.get("prompt_tokens", 0) or 0),
+            "cached_input_tokens": int(existing.get("cached_input_tokens", 0)) + int(usage.get("cached_input_tokens", 0) or 0),
+            "completion_tokens": int(existing.get("completion_tokens", 0)) + int(usage.get("completion_tokens", 0) or 0),
+            "total_tokens": int(existing.get("total_tokens", 0)) + int(usage.get("total_tokens", 0) or 0),
+            "cost_usd": round(float(existing.get("cost_usd", 0.0)) + float(usage.get("cost_usd", 0.0) or 0.0), 6),
+        }
+        self.manifest["token_usage"] = merged
+        self._flush_manifest()
+
     def _flush_manifest(self) -> None:
         self.manifest_path.write_text(json.dumps(_json_safe(self.manifest), indent=2, ensure_ascii=False), encoding="utf-8")
 
@@ -294,9 +314,18 @@ def generation_run_stats() -> dict[str, Any]:
     by_state: dict[str, int] = {}
     property_by_month: dict[str, dict[str, int]] = {}
     keyword_counts: dict[str, int] = {}
+    # Token/cost accumulators (only runs that carry token_usage — i.e. generated after tracking
+    # was added — contribute; runs_with_cost reports how many that is).
+    runs_with_cost = 0
+    tok_total = 0
+    tok_prompt = 0
+    tok_completion = 0
+    cost_total = 0.0
+    cost_by_property: dict[str, float] = {}
+    cost_by_month: dict[str, float] = {}
     if not base.exists():
         return {"total_runs": 0, "by_property": {}, "by_month": {}, "by_state": {},
-                "property_by_month": {}, "top_keywords": []}
+                "property_by_month": {}, "top_keywords": [], "cost": {"runs_with_cost": 0}}
 
     for manifest_path in base.glob("*/*/manifest.json"):
         try:
@@ -317,7 +346,20 @@ def generation_run_stats() -> dict[str, Any]:
         if keyword:
             keyword_counts[keyword] = keyword_counts.get(keyword, 0) + 1
 
+        tu = m.get("token_usage") or {}
+        if tu:
+            runs_with_cost += 1
+            tok_total += int(tu.get("total_tokens", 0) or 0)
+            tok_prompt += int(tu.get("prompt_tokens", 0) or 0)
+            tok_completion += int(tu.get("completion_tokens", 0) or 0)
+            c = float(tu.get("cost_usd", 0.0) or 0.0)
+            cost_total += c
+            cost_by_property[prop] = round(cost_by_property.get(prop, 0.0) + c, 6)
+            cost_by_month[month] = round(cost_by_month.get(month, 0.0) + c, 6)
+
     top_keywords = sorted(keyword_counts.items(), key=lambda kv: -kv[1])[:20]
+    avg_cost = round(cost_total / runs_with_cost, 6) if runs_with_cost else 0.0
+    avg_tokens = round(tok_total / runs_with_cost) if runs_with_cost else 0
     return {
         "total_runs": total,
         "by_property": dict(sorted(by_property.items(), key=lambda kv: -kv[1])),
@@ -325,6 +367,17 @@ def generation_run_stats() -> dict[str, Any]:
         "by_state": dict(sorted(by_state.items(), key=lambda kv: -kv[1])),
         "property_by_month": {mo: property_by_month[mo] for mo in sorted(property_by_month)},
         "top_keywords": [{"keyword": k, "count": c} for k, c in top_keywords],
+        "cost": {
+            "runs_with_cost": runs_with_cost,
+            "total_cost_usd": round(cost_total, 4),
+            "avg_cost_per_article_usd": avg_cost,
+            "total_tokens": tok_total,
+            "avg_tokens_per_article": avg_tokens,
+            "avg_input_tokens": round(tok_prompt / runs_with_cost) if runs_with_cost else 0,
+            "avg_output_tokens": round(tok_completion / runs_with_cost) if runs_with_cost else 0,
+            "cost_by_property_usd": dict(sorted(cost_by_property.items(), key=lambda kv: -kv[1])),
+            "cost_by_month_usd": dict(sorted(cost_by_month.items())),
+        },
     }
 
 

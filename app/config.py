@@ -34,6 +34,12 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     embed_model: str = "text-embedding-3-small"
     llm_model: str = "gpt-5.5-2026-04-23"
+    # Token pricing in USD per 1M tokens, for per-article cost tracking. Defaults are the
+    # gpt-5.5 list rates (input $5, output $30, cached input $0.50); override via env when the
+    # model or its pricing changes so cost accounting stays honest.
+    llm_price_input_per_m: float = 5.0
+    llm_price_output_per_m: float = 30.0
+    llm_price_cached_input_per_m: float = 0.5
 
     # Offers (BAM)
     offers_property: str = "action_network"

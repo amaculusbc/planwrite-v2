@@ -24,6 +24,7 @@ from app.services.draft import (
     generate_draft_from_outline_streaming,
 )
 from app.services.compliance import validate_content as validate_content_svc
+from app.services.llm import get_token_usage, reset_token_usage
 from app.services.competitor_scraper import scrape_competitors
 from app.services.bam_offers import get_offer_by_id_bam, get_offer_catalog_bam
 from app.services.bc_core_boosts import fetch_operator_boosts
@@ -496,6 +497,7 @@ async def generate_outline_sync(
     db: AsyncSession = Depends(get_db),
 ):
     """Generate outline synchronously (non-streaming)."""
+    reset_token_usage()
     offer = None
     alt_offers: list[dict] = []
     if request.offer_id:
@@ -579,6 +581,7 @@ async def generate_outline_sync(
         },
         file_name="20_outline.json",
     )
+    artifact_run.record_token_usage(get_token_usage())
 
     return {
         "outline": tokens,
@@ -612,6 +615,7 @@ async def generate_draft_sync(
     db: AsyncSession = Depends(get_db),
 ):
     """Generate draft synchronously (non-streaming)."""
+    reset_token_usage()
     offer_dict = None
     alt_offers: list[dict] = []
     if request.offer_id:
@@ -707,10 +711,12 @@ async def generate_draft_sync(
         {"draft": draft, "word_count": len(draft.split())},
         file_name="30_draft.json",
     )
+    artifact_run.record_token_usage(get_token_usage())
 
     return {
         "draft": draft,
         "word_count": len(draft.split()),
+        "token_usage": artifact_run.manifest.get("token_usage"),
         "source_facts": source_facts,
         **artifact_run.response_meta(),
     }
