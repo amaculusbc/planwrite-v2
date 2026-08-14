@@ -25,6 +25,7 @@ from app.services.draft import (
 )
 from app.services.compliance import validate_content as validate_content_svc
 from app.services.llm import get_token_usage, reset_token_usage
+from app.services.operator_profile import get_content_mode_offer
 from app.services.competitor_scraper import scrape_competitors
 from app.services.bam_offers import get_offer_by_id_bam, get_offer_catalog_bam
 from app.services.bc_core_boosts import fetch_operator_boosts
@@ -712,6 +713,14 @@ async def generate_draft_sync(
         file_name="30_draft.json",
     )
     artifact_run.record_token_usage(get_token_usage())
+    # Production tracking: record brand/content-mode/sport/length the pipeline already knows
+    # so generation-stats can break down volume by them, not just by property.
+    artifact_run.set_meta(
+        brand=str((offer_dict or {}).get("brand") or "").strip() or "unknown",
+        content_mode=get_content_mode_offer(offer_dict or {}, keyword=request.keyword, title=request.title),
+        sport=(_request_sport(request) or "unknown"),
+        word_count=len(draft.split()),
+    )
 
     return {
         "draft": draft,

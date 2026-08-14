@@ -314,6 +314,11 @@ def generation_run_stats() -> dict[str, Any]:
     by_state: dict[str, int] = {}
     property_by_month: dict[str, dict[str, int]] = {}
     keyword_counts: dict[str, int] = {}
+    by_brand: dict[str, int] = {}
+    by_content_mode: dict[str, int] = {}
+    by_sport: dict[str, int] = {}
+    words_total = 0
+    runs_with_words = 0
     # Token/cost accumulators (only runs that carry token_usage — i.e. generated after tracking
     # was added — contribute; runs_with_cost reports how many that is).
     runs_with_cost = 0
@@ -346,6 +351,21 @@ def generation_run_stats() -> dict[str, Any]:
         if keyword:
             keyword_counts[keyword] = keyword_counts.get(keyword, 0) + 1
 
+        # Tier-1 production fields (present only on runs generated after tracking was added).
+        brand = str(m.get("brand") or "").strip()
+        if brand:
+            by_brand[brand] = by_brand.get(brand, 0) + 1
+        cmode = str(m.get("content_mode") or "").strip()
+        if cmode:
+            by_content_mode[cmode] = by_content_mode.get(cmode, 0) + 1
+        msport = str(m.get("sport") or "").strip()
+        if msport:
+            by_sport[msport] = by_sport.get(msport, 0) + 1
+        wc = m.get("word_count")
+        if isinstance(wc, (int, float)) and wc > 0:
+            words_total += int(wc)
+            runs_with_words += 1
+
         tu = m.get("token_usage") or {}
         if tu:
             runs_with_cost += 1
@@ -367,6 +387,11 @@ def generation_run_stats() -> dict[str, Any]:
         "by_state": dict(sorted(by_state.items(), key=lambda kv: -kv[1])),
         "property_by_month": {mo: property_by_month[mo] for mo in sorted(property_by_month)},
         "top_keywords": [{"keyword": k, "count": c} for k, c in top_keywords],
+        "by_brand": dict(sorted(by_brand.items(), key=lambda kv: -kv[1])),
+        "by_content_mode": dict(sorted(by_content_mode.items(), key=lambda kv: -kv[1])),
+        "by_sport": dict(sorted(by_sport.items(), key=lambda kv: -kv[1])),
+        "avg_word_count": round(words_total / runs_with_words) if runs_with_words else 0,
+        "runs_with_tracking": runs_with_words,
         "cost": {
             "runs_with_cost": runs_with_cost,
             "total_cost_usd": round(cost_total, 4),
