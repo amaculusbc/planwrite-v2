@@ -3500,9 +3500,33 @@ def _enforce_secondary_keyword_mentions(html: str, secondary_keywords: list[str]
                 lambda text, pattern=pattern: re.sub(pattern, "", text, flags=re.IGNORECASE),
             )
 
-    # Coverage comes from the prompts alone: deterministic keyword filler is
-    # never injected. This function only strips forced-filler artifacts.
+    # The prompt asks the model to use each secondary keyword, but the model often drops them
+    # (the affiliate team reported the box "does nothing"). A single deterministic mention is
+    # the SEO floor, added ONLY when a phrase is truly absent - so a phrase the model already
+    # used gets nothing (no stuffing). Each sentence names only the secondary keyword, never
+    # the primary, and the block sits near the end, not stacked in the intro.
+    missing = [p for p in phrases if _secondary_keyword_count(result, p) == 0]
+    if missing:
+        sentences = [_secondary_keyword_sentence(p) for p in missing]
+        block = "<p>" + " ".join(sentences) + "</p>"
+        result = _insert_section_before_terms(result, block)
+
     return _normalize_visible_punctuation(result)
+
+
+# Standalone, secondary-only notes: a reader who searched a variant term lands on this same
+# offer. One phrase per sentence, chosen by a stable hash so wording varies across articles.
+_SECONDARY_KEYWORD_TEMPLATES = [
+    "If you searched for the {p}, this is the same offer and the terms below still apply.",
+    "The {p} points to this same promotion, so the steps and terms here apply.",
+    "Anyone comparing the {p} will find the same offer details covered above.",
+    "This is also the offer that turns up when you look for the {p}.",
+]
+
+
+def _secondary_keyword_sentence(phrase: str) -> str:
+    idx = int(hashlib.sha1(phrase.strip().lower().encode("utf-8")).hexdigest()[:8], 16) % len(_SECONDARY_KEYWORD_TEMPLATES)
+    return _SECONDARY_KEYWORD_TEMPLATES[idx].format(p=phrase.strip())
 
 
 def _strip_formatting_from_headings(html: str) -> str:
@@ -5564,7 +5588,7 @@ Output clean HTML only - use <p>, <a>, <strong> tags. No markdown. No exclamatio
 {f"INTERNAL MATCHUP NOTES (use at least {bc_core_required_count} naturally if available, but never cite the source):{chr(10)}" + chr(10).join(f"- {point}" for point in bc_core_points) + chr(10) if bc_core_points else ""}
 
 KEYWORD: {keyword}
-{f"SECONDARY KEYWORDS (use these naturally across the article and aim for repeated coverage, not stuffing). Never place a secondary keyword in the same sentence as the primary keyword - especially when one contains the other:{chr(10)}{secondary_keywords_md}" if secondary_keywords_md else ""}
+{f"SECONDARY KEYWORDS (use each of these at least once in the body; once is enough, do not stuff). Never place a secondary keyword in the same sentence as the primary keyword - especially when one contains the other:{chr(10)}{secondary_keywords_md}" if secondary_keywords_md else ""}
 
 {points_md if points_md else ""}
 {f"WRITER NOTES:{chr(10)}{structure_notes_md}{chr(10)}" if structure_notes_md else ""}
@@ -6137,7 +6161,7 @@ OFFER CONTEXT:
 
 {"TALKING POINTS:" + chr(10) + points_md + chr(10) if points_md else ""}
 {"DO NOT COVER (handled elsewhere):" + chr(10) + avoid_md + chr(10) if avoid_md else ""}
-{f"SECONDARY KEYWORDS (use these naturally across the article and aim for repeated coverage, not stuffing). Never place a secondary keyword in the same sentence as the primary keyword - especially when one contains the other:{chr(10)}{secondary_keywords_md}{chr(10)}" if secondary_keywords_md else ""}
+{f"SECONDARY KEYWORDS (use each of these at least once in the body; once is enough, do not stuff). Never place a secondary keyword in the same sentence as the primary keyword - especially when one contains the other:{chr(10)}{secondary_keywords_md}{chr(10)}" if secondary_keywords_md else ""}
 {f"WRITER NOTES:{chr(10)}{structure_notes_md}{chr(10)}" if structure_notes_md else ""}
 
 OPTIONAL INTERNAL LINK SUPPORT:

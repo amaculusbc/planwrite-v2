@@ -377,7 +377,9 @@ def test_get_picker_candidates_exposes_broader_property_link_catalog():
     assert "https://www.fantasylabs.com/articles/underdog-promo-code" in urls
 
 
-def test_enforce_secondary_keyword_mentions_removes_forced_backfill_without_inserting():
+def test_enforce_secondary_keyword_replaces_canned_backfill_with_one_natural_mention():
+    # The old robotic "It also ties into X" wording is stripped, but the phrase must still
+    # end up in the article once (the affiliate team needs the secondary keyword present).
     html = (
         "<p>Main intro for the article.</p>"
         "<p>Second intro paragraph about the offer.</p>"
@@ -386,24 +388,42 @@ def test_enforce_secondary_keyword_mentions_removes_forced_backfill_without_inse
         "<h2>Terms</h2><p>States Available: NJ, PA.</p>"
     )
     cleaned = _enforce_secondary_keyword_mentions(html, ["best dfs apps"])
-    assert cleaned.lower().count("best dfs apps") == 0
-    assert "States Available: NJ, PA." in cleaned
+    assert cleaned.lower().count("best dfs apps") == 1
     assert "it also ties into" not in cleaned.lower()
+    assert "States Available: NJ, PA." in cleaned
+    # The one mention sits before the Terms block, not stacked in the intro.
+    assert "best dfs apps" in cleaned.split("<h2>Terms")[0]
     assert "<p>Main intro for the article.</p>" in cleaned
-    assert "<p>Second intro paragraph about the offer.</p>" in cleaned
 
 
-def test_enforce_secondary_keyword_mentions_never_injects_deterministic_filler():
+def test_enforce_secondary_keyword_inserts_one_mention_when_absent():
     html = (
-        "<p>The intro explains the promo code, offer amount, featured event, and state availability for readers.</p>"
-        "<p>The next paragraph gives practical account setup details before moving into the matchup angle.</p>"
+        "<p>The intro explains the promo code, offer amount, featured event, and state availability.</p>"
+        "<p>The next paragraph gives practical account setup details before the matchup angle.</p>"
         "<h2>Terms & Conditions</h2><p>Terms language should not receive secondary keyword wording.</p>"
     )
-    cleaned = _enforce_secondary_keyword_mentions(html, ["best dfs apps"])
-    # Coverage is the prompt's job now - no canned sentences are ever inserted.
-    assert "best dfs apps" not in cleaned.lower()
-    assert "The same checks matter" not in cleaned
-    assert "<p>The intro explains the promo code, offer amount, featured event, and state availability for readers.</p>" in cleaned
+    cleaned = _enforce_secondary_keyword_mentions(html, ["kalshi referral code"])
+    # The model dropped it, so the deterministic floor adds exactly one standalone mention.
+    assert cleaned.lower().count("kalshi referral code") == 1
+    terms_body = cleaned.split("<h2>Terms")[1]
+    assert "kalshi referral code" not in terms_body  # never inside the terms block
+
+
+def test_enforce_secondary_keyword_does_not_stuff_when_already_present():
+    html = (
+        "<p>The kalshi referral code already appears naturally in this sentence.</p>"
+        "<h2>Terms</h2><p>21+.</p>"
+    )
+    cleaned = _enforce_secondary_keyword_mentions(html, ["kalshi referral code"])
+    assert cleaned.lower().count("kalshi referral code") == 1  # no extra mention added
+
+
+def test_enforce_secondary_keyword_never_pairs_secondary_with_primary_in_one_sentence():
+    # The inserted sentence must name only the secondary keyword.
+    from app.services.draft import _secondary_keyword_sentence
+    sentence = _secondary_keyword_sentence("kalshi referral code")
+    assert "kalshi referral code" in sentence
+    assert "promo code" not in sentence.lower()
 
 
 def test_unwrap_generic_offer_strong_removes_bold_brand_offer_without_touching_code():
