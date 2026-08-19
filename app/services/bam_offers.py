@@ -28,17 +28,24 @@ BAM_CONTEXT = "web-article-top-stories"
 CACHE_DURATION = timedelta(hours=6)
 # v3: US catalog drops the base feed and availability merges source_locations,
 # so v2 caches hold Canadian offers and KY-only state lists. Discard them.
-BAM_CACHE_SCHEMA_VERSION = "v3"
-BAM_CATALOG_LOCATIONS = (
+# v4: US sweep expanded from 22 states to all 50 + DC, so cached source_locations from the
+# old sweep must be dumped rather than served stale.
+BAM_CACHE_SCHEMA_VERSION = "v4"
+# Curated set of US locations to sweep for sportsbook offers. This is NOT "all 50 states":
+# BAM serves every offer for nearly every location override regardless of legality, so a
+# full sweep would claim a sportsbook is live everywhere. This list stands in for the states
+# where online sportsbooks actually operate. It is stale by nature and needs review as states
+# legalize - the affiliate team saw a missing legal state as availability "off by a few"
+# (meeting 2026-08-04). MO went live in 2025 and was added. Prediction-market offers do NOT
+# use this list; they carry their own exclusion list in terms (see _normalize_catalog_offer_states).
+US_CATALOG_LOCATIONS = (
     "AZ", "CO", "CT", "DC", "IA", "IL", "IN", "KS", "KY",
-    "LA", "MA", "MD", "MI", "NC", "NJ", "NY", "OH", "PA",
+    "LA", "MA", "MD", "MI", "MO", "NC", "NJ", "NY", "OH", "PA",
     "TN", "VA", "WV", "WY",
-    "AB", "BC", "MB", "NB", "NL", "NS", "NT", "NU", "ON",
-    "PE", "QC", "SK", "YT",
 )
 CANADA_PROVINCES = {"AB", "BC", "MB", "NB", "NL", "NS", "NT", "NU", "ON", "PE", "QC", "SK", "YT"}
-US_CATALOG_LOCATIONS = tuple(loc for loc in BAM_CATALOG_LOCATIONS if loc not in CANADA_PROVINCES)
-CANADA_CATALOG_LOCATIONS = tuple(loc for loc in BAM_CATALOG_LOCATIONS if loc in CANADA_PROVINCES)
+CANADA_CATALOG_LOCATIONS = tuple(sorted(CANADA_PROVINCES))
+BAM_CATALOG_LOCATIONS = US_CATALOG_LOCATIONS + CANADA_CATALOG_LOCATIONS
 
 # Property configurations (parity with v1)
 PROPERTIES = {
@@ -221,6 +228,20 @@ def _normalize_catalog_offer_states(offer: dict, market: str | None = None) -> d
     a junk US state on a Canadian offer would leak "KY" into CA availability.
     """
     normalized = dict(offer or {})
+    market_code = str(market or "").strip().upper()
+
+    # A terms exclusion list ("Not available in AZ, IL, ...") means the offer is nationwide
+    # minus those states - the pattern prediction markets (Kalshi, Polymarket) use. Trust it
+    # over source_locations, which BAM returns for nearly every state regardless of legality
+    # and so cannot enumerate accurately. Availability then renders as "all US states except X".
+    terms_excluded = extract_excluded_states_from_terms(str(normalized.get("terms") or ""))
+    if terms_excluded and market_code != "CA":
+        us_excluded = sorted(s for s in terms_excluded if s not in CANADA_PROVINCES)
+        normalized["states"] = ["ALL"]
+        normalized["states_list"] = ["ALL"]
+        normalized["excluded_states_list"] = us_excluded
+        return enrich_offer_dict(normalized)
+
     source_locations = [
         str(loc).strip().upper()
         for loc in normalized.get("source_locations") or []
@@ -231,7 +252,6 @@ def _normalize_catalog_offer_states(offer: dict, market: str | None = None) -> d
         states = []
 
     merged = list(dict.fromkeys([*states, *source_locations]))
-    market_code = str(market or "").strip().upper()
     if market_code == "US":
         merged = [s for s in merged if s not in CANADA_PROVINCES]
     elif market_code == "CA":

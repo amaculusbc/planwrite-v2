@@ -92,6 +92,21 @@ def test_normalize_catalog_states_merges_source_locations():
     assert offer["states_list"] == ["AZ", "CO", "KY", "NY"]
 
 
+def test_normalize_catalog_states_uses_terms_exclusions_for_nationwide_offers():
+    # A prediction-market offer names its excluded states in terms. That is nationwide minus
+    # those, not an enumeration of source_locations (which BAM returns for nearly every state).
+    offer = bam_offers._normalize_catalog_offer_states(
+        {
+            "brand": "Kalshi",
+            "source_locations": ["AZ", "CA", "NY", "TX", "IL"],  # BAM over-reports; ignore it
+            "terms": "18+ only. Not available in AZ, IL, MA, MD, MI, MT, NV, and OH.",
+        },
+        "US",
+    )
+    assert offer["states_list"] == ["ALL"]
+    assert offer["excluded_states_list"] == ["AZ", "IL", "MA", "MD", "MI", "MT", "NV", "OH"]
+
+
 def test_normalize_catalog_states_keeps_states_outside_the_sweep():
     # Fanatics lists MO/VT, which are not in the location sweep; keep them.
     offer = bam_offers._normalize_catalog_offer_states(
