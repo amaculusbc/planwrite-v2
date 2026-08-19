@@ -275,9 +275,12 @@ def _select_bc_core_editorial_points(
         if normalized and normalized not in seen:
             seen.add(normalized)
             deduped.append(point)
-    # Raw model projections ("X projects for 68.45 passes") never publish in any
-    # article - posted market lines and real historical stats only.
-    deduped = [point for point in deduped if _bc_core_point_category(point) != "projection"]
+    # Raw model projections ("X projects for 68.45 passes") never publish in any article -
+    # posted market lines and real historical stats only. Bet-split percentages ("80% of
+    # tickets on the over") join the ban: they change through the day, so they are volatile
+    # and often wrong by publish time (affiliate team, 2026-08-04). Historical records (trend)
+    # stay - the team judged those fine.
+    deduped = [point for point in deduped if _bc_core_point_category(point) not in ("projection", "market_percent")]
     deduped = _filter_bc_core_points_for_mode(
         deduped,
         prediction_market=prediction_market,
@@ -2059,6 +2062,36 @@ def _strip_projection_sentences(html: str) -> str:
     return _normalize_visible_punctuation(_rewrite_html_text_nodes(html, _transform))
 
 
+# A bet-split claim is a percentage tied to betting volume ("80% of tickets on the over",
+# "the handle is 62% on the favorite"). The model paraphrases the source point, so match the
+# construction, not one phrase. Requiring "% of <volume noun>" or "<volume noun> ... %" avoids
+# hitting offer copy like "100% profit boost".
+_BET_SPLIT_SENTENCE = re.compile(
+    r"[^.!?<>]*?(?:"
+    r"\d{1,3}%\s+of\s+(?:the\s+)?(?:tickets?|bets?|wagers?|bettors?|handle|money|public)"
+    r"|(?:tickets?|wagers?|bettors?|handle|betting\s+splits?|public\s+(?:money|backing))\b[^.!?<>]{0,60}?\d{1,3}%"
+    r")[^.!?<>]*[.!?]\s*",
+    flags=re.IGNORECASE,
+)
+
+
+def _strip_bet_split_sentences(html: str) -> str:
+    """Drop volatile bet-split percentages; the team asked to dial them down (2026-08-04).
+
+    Also removes any paragraph left empty by a sentence strip (this one or the projection
+    strip that runs just before it), so no blank <p></p> reaches the article.
+    """
+    if not html:
+        return html
+
+    def _transform(text: str) -> str:
+        return _BET_SPLIT_SENTENCE.sub("", text)
+
+    cleaned = _rewrite_html_text_nodes(html, _transform)
+    cleaned = re.sub(r"<p>(?:\s|&nbsp;)*</p>", "", cleaned, flags=re.IGNORECASE)
+    return _normalize_visible_punctuation(cleaned)
+
+
 _FORMATION_PATTERN = re.compile(r"\b\d-\d-\d(?:-\d)?\b")
 
 
@@ -3765,6 +3798,7 @@ def _apply_generation_quality_postprocess(html: str, keyword: str, market: str =
     html = _decapitalize_inline_reward_mentions(html)
     html = _strip_quoted_stat_phrases(html)
     html = _strip_projection_sentences(html)
+    html = _strip_bet_split_sentences(html)
     html = _strip_market_mismatch_phrasing(html, market)
     html = _trim_dangling_paragraph_endings(html)
     html = _normalize_visible_punctuation(html)
@@ -5166,6 +5200,7 @@ async def generate_draft_from_outline(
     # Late pass: sections appended after the main postprocess (analysis, promos)
     # must also honor the no-model-projections rule.
     html_output = _strip_projection_sentences(html_output)
+    html_output = _strip_bet_split_sentences(html_output)
     html_output = _strip_priceless_market_picks(html_output)
     html_output = _strip_starter_count_phrases(html_output)
     html_output = _dedupe_formation_mentions(html_output)
@@ -6584,6 +6619,7 @@ async def generate_draft_from_outline_streaming(
     # Late pass: sections appended after the main postprocess (analysis, promos)
     # must also honor the no-model-projections rule.
     html_output = _strip_projection_sentences(html_output)
+    html_output = _strip_bet_split_sentences(html_output)
     html_output = _strip_priceless_market_picks(html_output)
     html_output = _strip_starter_count_phrases(html_output)
     html_output = _dedupe_formation_mentions(html_output)

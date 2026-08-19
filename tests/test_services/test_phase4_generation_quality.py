@@ -1051,10 +1051,11 @@ def test_select_bc_core_editorial_points_prioritizes_market_intelligence():
     )
 
     joined = " ".join(points)
-    # Model projections never publish; posted lines and market data do.
+    # Model projections and volatile bet-split percentages never publish; posted lines do.
     assert "projects for" not in joined
     assert "DFS lines list" in joined
-    assert "Ticket data shows 64%" in joined
+    assert "Ticket data shows" not in joined
+    assert "64%" not in joined
 
 
 def test_select_bc_core_editorial_points_filters_by_content_mode():
@@ -1087,7 +1088,8 @@ def test_select_bc_core_editorial_points_filters_by_content_mode():
     assert not any("projects for" in point for point in prediction_points)
     assert not any("DFS lines list" in point for point in prediction_points)
     assert not any("covered three" in point for point in prediction_points)
-    assert any("Ticket data shows" in point for point in prediction_points)
+    # Bet-split percentages are banned for every article now, prediction market included.
+    assert not any("Ticket data shows" in point for point in prediction_points)
     assert any("DFS lines list" in point for point in dfs_points)
     assert not any("projects for" in point for point in dfs_points)
     assert not any("Market percents show" in point for point in dfs_points)
@@ -1472,6 +1474,35 @@ def test_strip_projection_sentences_removes_model_numbers():
     assert "projects for" not in cleaned
     assert "68.45" not in cleaned
     assert "Croatia have kept two clean sheets in this tournament." in cleaned
+
+
+def test_strip_bet_split_sentences_removes_volatile_splits():
+    from app.services.draft import _strip_bet_split_sentences
+
+    # Bet-split percentages (volatile through the day) go; offers and records stay.
+    strip = [
+        "<p>Ticket data shows 80% of tickets on the over. The offer is strong.</p>",
+        "<p>About 62% of bets are on the favorite tonight.</p>",
+        "<p>Public money is 70% behind the Yankees.</p>",
+    ]
+    for html in strip:
+        out = _strip_bet_split_sentences(html)
+        assert "%" not in out or "tickets" not in out.lower()
+
+    keep = [
+        "<p>Bet $5 and get a 100% profit boost.</p>",
+        "<p>The team is 5 and 5 against the spread in the last 10 games.</p>",
+        "<p>Get $150 in bonus bets after a $10 wager.</p>",
+    ]
+    for html in keep:
+        assert _strip_bet_split_sentences(html) == html
+
+
+def test_strip_bet_split_removes_paragraph_left_empty():
+    from app.services.draft import _strip_bet_split_sentences
+
+    out = _strip_bet_split_sentences("<p>62% of bets are on the favorite.</p><p>Real body copy.</p>")
+    assert out == "<p>Real body copy.</p>"
 
 
 @pytest.mark.asyncio
