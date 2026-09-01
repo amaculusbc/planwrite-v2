@@ -24,6 +24,7 @@ from app.services.internal_links import (
 from app.services.compliance import get_disclaimer_for_state
 from app.services.bam_offers import PROPERTIES, build_bam_shortcode, normalize_bam_affiliate_type, render_bam_offer_block
 from app.services.goal_template import (
+    format_odds_talking_points,
     is_goal_property,
     render_goal_article_footer,
     render_goal_terms_table,
@@ -3453,6 +3454,35 @@ async def _ensure_matchup_analysis_section(
     return _insert_section_before_terms(html, section)
 
 
+def _render_odds_and_prediction_block(odds: dict[str, Any] | None, event_context: str) -> str:
+    """Deterministic odds + writer pick-placeholder block for the preview-first template.
+
+    Non-GOAL articles now lead with the game preview (affiliate team, 2026-08-19). This adds the
+    posted odds board (moneyline, spread, total) and a labeled slot for the writer's own pick -
+    the tool never invents a pick, the writer fills it in. Nothing renders without a matched game.
+    """
+    # Only a real two-team game gets this block. A futures or award market ("NBA MVP Market")
+    # has no home/away and no single pick, so it renders nothing.
+    matchup = _extract_matchup_from_event_context_text(event_context)
+    split = re.split(r"\s+vs\.?\s+", matchup, maxsplit=1, flags=re.IGNORECASE) if matchup else []
+    if len(split) != 2:
+        return ""
+    away, home = split[0].strip(), split[1].strip()
+    if not away or not home:
+        return ""
+    odds_lines = [
+        line for line in format_odds_talking_points(odds, away, home)
+        if not line.lower().startswith("quote these")
+    ]
+    parts: list[str] = []
+    if odds_lines:
+        parts.append(f"<h2>{escape(matchup)} Odds</h2>")
+        parts.append("<ul>" + "".join(f"<li>{escape(line)}</li>" for line in odds_lines) + "</ul>")
+    parts.append(f"<h2>Our {escape(matchup)} Prediction</h2>")
+    parts.append("<p>[Writer: add your pick and a short line on the reasoning here.]</p>")
+    return "\n".join(parts)
+
+
 async def _ensure_editorial_body_length(
     html: str,
     *,
@@ -4954,6 +4984,7 @@ async def generate_draft_from_outline(
     operator_promos: list[dict[str, Any]] | None = None,
     operator_boosts: list[dict[str, Any]] | None = None,
     sport: str = "",
+    odds: dict[str, Any] | None = None,
 ) -> str:
     """Generate full article draft from structured outline (Execute stage).
 
@@ -5184,6 +5215,9 @@ async def generate_draft_from_outline(
             content_mode=content_mode,
             bet_example_data=bet_example_data,
         )
+        preview_block = _render_odds_and_prediction_block(odds, event_context)
+        if preview_block:
+            html_output = _insert_section_before_terms(html_output, preview_block)
     if is_goal and (operator_promos or operator_boosts or get_standing_promos(brand, sport)):
         promos_section = render_operator_promos_section(
             brand,
@@ -6381,6 +6415,7 @@ async def generate_draft_from_outline_streaming(
     operator_promos: list[dict[str, Any]] | None = None,
     operator_boosts: list[dict[str, Any]] | None = None,
     sport: str = "",
+    odds: dict[str, Any] | None = None,
 ) -> AsyncGenerator[dict, None]:
     """Generate draft with streaming updates.
 
@@ -6603,6 +6638,9 @@ async def generate_draft_from_outline_streaming(
             content_mode=content_mode,
             bet_example_data=bet_example_data,
         )
+        preview_block = _render_odds_and_prediction_block(odds, event_context)
+        if preview_block:
+            html_output = _insert_section_before_terms(html_output, preview_block)
     if is_goal and (operator_promos or operator_boosts or get_standing_promos(brand, sport)):
         promos_section = render_operator_promos_section(
             brand,

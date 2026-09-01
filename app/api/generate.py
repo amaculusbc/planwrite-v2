@@ -75,6 +75,15 @@ async def _bc_core_odds_for_event(source_facts: dict | None, offer: dict | None)
     return odds or None
 
 
+async def _odds_board_for_draft(request, source_facts: dict | None, offer: dict | None) -> dict | None:
+    """Odds board (moneyline/spread/total) for the preview section: UI odds first, else BC Core."""
+    gc = getattr(request, "game_context", None)
+    odds = getattr(gc, "odds", None) if gc else None
+    if isinstance(odds, dict) and odds:
+        return odds
+    return await _bc_core_odds_for_event(source_facts, offer)
+
+
 async def _maybe_goal_outline(
     request: OutlineRequest,
     offer: dict | None,
@@ -451,6 +460,7 @@ async def _stream_draft(request: DraftRequest, db: AsyncSession) -> AsyncGenerat
     try:
         operator_promos = await _operator_promos_for_draft(request, offer_dict)
         operator_boosts = await _operator_boosts_for_draft(request, offer_dict, source_facts)
+        odds = await _odds_board_for_draft(request, source_facts, offer_dict)
         async for update in generate_draft_from_outline_streaming(
             outline=outline,
             keyword=request.keyword,
@@ -469,6 +479,7 @@ async def _stream_draft(request: DraftRequest, db: AsyncSession) -> AsyncGenerat
             operator_promos=operator_promos,
             operator_boosts=operator_boosts,
             sport=_request_sport(request),
+            odds=odds,
         ):
             yield f"data: {json.dumps(update)}\n\n"
     except Exception as e:
@@ -688,6 +699,7 @@ async def generate_draft_sync(
 
     operator_promos = await _operator_promos_for_draft(request, offer_dict)
     operator_boosts = await _operator_boosts_for_draft(request, offer_dict, source_facts)
+    odds = await _odds_board_for_draft(request, source_facts, offer_dict)
     draft = await generate_draft_from_outline(
         outline=outline,
         keyword=request.keyword,
@@ -706,6 +718,7 @@ async def generate_draft_sync(
         operator_promos=operator_promos,
         operator_boosts=operator_boosts,
         sport=_request_sport(request),
+        odds=odds,
     )
     artifact_run.write_stage(
         "draft",

@@ -2489,3 +2489,24 @@ async def test_humanize_article_html_reverts_section_when_facts_drift(monkeypatc
 
     assert "$150 in bonus bets" in cleaned
     assert "$200 in bonus bets" not in cleaned
+
+
+def test_render_odds_and_prediction_block_for_games_only():
+    from app.services.draft import _render_odds_and_prediction_block
+
+    odds = {
+        "moneylines": {"bet365": {"away_odds": 120, "home_odds": -140}},
+        "totals": {"bet365": {"total": 8.5, "over_odds": -110, "under_odds": -110}},
+    }
+    ctx = "Featured game: Houston Astros vs. New York Yankees. Game time: 7:05 PM ET."
+    block = _render_odds_and_prediction_block(odds, ctx)
+    assert "Houston Astros vs. New York Yankees Odds" in block
+    assert "Moneyline: Houston Astros +120 / New York Yankees -140" in block
+    assert "Our Houston Astros vs. New York Yankees Prediction" in block
+    assert "[Writer:" in block  # the pick is a placeholder, never auto-written
+
+    # No odds: the pick placeholder still renders for a real game.
+    assert "Prediction" in _render_odds_and_prediction_block(None, ctx)
+    # Futures / award markets and no-event render nothing (no two teams, no single pick).
+    assert _render_odds_and_prediction_block(odds, "Featured event: NBA MVP Market.") == ""
+    assert _render_odds_and_prediction_block(odds, "") == ""
