@@ -2225,6 +2225,21 @@ _PRICELESS_PICK_MARKETS = re.compile(
 _POSTED_PRICE_TOKEN = re.compile(r"[+-]\d{2,4}\b|\d+\s*¢|\$\d")
 
 
+def _strip_auto_play_picks(html: str) -> str:
+    """Remove any auto-generated "The play:" recommendation.
+
+    The preview-first template gives the writer a pick placeholder, so the tool must not also
+    recommend a side. The LLM analyzer is told not to write a play (suppress_auto_pick); this
+    is the deterministic backstop for the fallback expansion section, which builds one itself.
+    """
+    if not html or "the play:" not in html.lower():
+        return html
+    cleaned = re.sub(r"<p>\s*The play:.*?</p>\s*", "", html, flags=re.IGNORECASE | re.DOTALL)
+    # A play line that closes an existing paragraph rather than standing alone.
+    cleaned = re.sub(r"(?:\s|<br\s*/?>)*The play:[^<]*", "", cleaned, flags=re.IGNORECASE)
+    return _normalize_visible_punctuation(cleaned)
+
+
 def _strip_priceless_market_picks(html: str) -> str:
     """A named pick without a posted price never publishes."""
     if not html:
@@ -3251,6 +3266,7 @@ async def _compose_numbers_narrative_section(
     bc_core_context: dict[str, Any] | None = None,
     bet_example_data: dict[str, Any] | None = None,
     prediction_market: bool = False,
+    suppress_auto_pick: bool = False,
 ) -> str | None:
     """Compose the matchup-analysis section in the expert-pick house register.
 
@@ -3314,6 +3330,9 @@ async def _compose_numbers_narrative_section(
         else f"{brand_possessive} current offer is live for new users, and this is the kind of spot to use it."
     )
     min_odds_note = f" The qualifying bet must meet {min_odds} minimum odds." if min_odds and not prediction_market else ""
+    # The preview-first template gives the writer a pick placeholder, so the analyzer must not
+    # also recommend a side - two picks would contradict. suppress_auto_pick drops "The play:".
+    pick = "" if suppress_auto_pick else selection
     if prediction_market:
         market_label = _humanize_market_title(market_title)
         if selection.lower() == "yes" and market_label:
@@ -3324,17 +3343,17 @@ async def _compose_numbers_narrative_section(
             play_target = selection
         play_block = (
             f"THE PLAY (final paragraph on its own, must start exactly with \"The play:\"):\n- Take {play_target}{odds_text}, then keep {short_reward} for later eligible markets.\n\n"
-            if selection
+            if pick
             else ""
         )
     else:
         play_block = (
             f"THE PLAY (final paragraph on its own, must start exactly with \"The play:\"):\n- Back {selection}{odds_text} with the qualifying bet, then keep {short_reward} for later eligible markets.\n\n"
-            if selection
+            if pick
             else ""
         )
 
-    close_clause = "then a clear play" if selection else "closing on the sharpest takeaway for one side"
+    close_clause = "then a clear play" if pick else "closing on the sharpest takeaway for one side"
     system_prompt = (
         (
             "You are a senior prediction-market editor for Action Network's Top Stories. "
@@ -3362,7 +3381,7 @@ OFFER TIE-IN: one short sentence at the end of the second-to-last paragraph, mod
 - Build the facts into an argument for one side instead of listing them. Connect them with editorial reasoning, e.g. "that is the profile of a team that...", "which is exactly the matchup where...".
 - Do not invent injuries, crowd, venue, weather, or history that is not listed. Never mention data sources, feeds, models, or anything internal.
 - 120 to 220 words total. No exclamation points.
-- Use the primary keyword "{keyword}" at most once, as a natural phrase such as "the {keyword} offer" - or not at all.{'' if selection else chr(10) + '- Do not include a "The play:" line or recommend a specific position; close on the strongest takeaway instead.'}"""
+- Use the primary keyword "{keyword}" at most once, as a natural phrase such as "the {keyword} offer" - or not at all.{'' if pick else chr(10) + '- Do not include a "The play:" line or recommend a specific position; close on the strongest takeaway instead.'}"""
 
     allowed_numbers = _extract_fact_numbers(
         bc_points
@@ -3388,7 +3407,7 @@ OFFER TIE-IN: one short sentence at the end of the second-to-last paragraph, mod
             cleaned,
             allowed_numbers=allowed_numbers,
             fact_numbers=fact_numbers,
-            play_required=bool(selection),
+            play_required=bool(pick),
             prediction_market=prediction_market,
         ):
             return f"<h2>What the Numbers Say About {event_label}</h2>\n{cleaned}"
@@ -5235,6 +5254,8 @@ async def generate_draft_from_outline(
     # must also honor the no-model-projections rule.
     html_output = _strip_projection_sentences(html_output)
     html_output = _strip_bet_split_sentences(html_output)
+    if not is_goal_property(offer_property):
+        html_output = _strip_auto_play_picks(html_output)
     html_output = _strip_priceless_market_picks(html_output)
     html_output = _strip_starter_count_phrases(html_output)
     html_output = _dedupe_formation_mentions(html_output)
@@ -6658,6 +6679,8 @@ async def generate_draft_from_outline_streaming(
     # must also honor the no-model-projections rule.
     html_output = _strip_projection_sentences(html_output)
     html_output = _strip_bet_split_sentences(html_output)
+    if not is_goal_property(offer_property):
+        html_output = _strip_auto_play_picks(html_output)
     html_output = _strip_priceless_market_picks(html_output)
     html_output = _strip_starter_count_phrases(html_output)
     html_output = _dedupe_formation_mentions(html_output)
