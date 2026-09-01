@@ -2510,3 +2510,19 @@ def test_render_odds_and_prediction_block_for_games_only():
     # Futures / award markets and no-event render nothing (no two teams, no single pick).
     assert _render_odds_and_prediction_block(odds, "Featured event: NBA MVP Market.") == ""
     assert _render_odds_and_prediction_block(odds, "") == ""
+
+
+def test_insert_section_after_intro_leads_with_preview():
+    from app.services.draft import _insert_section_after_intro
+
+    # Stage 2: the preview block must sit after the lede and ahead of every promo section.
+    html = (
+        "<h1>Title</h1>\n<p>Lede one.</p>\n<p>Lede two.</p>\n"
+        "<h2>How to Claim</h2>\n<p>promo</p>\n<h2>Terms</h2>"
+    )
+    block = "<h2>A vs B Odds</h2>\n<h2>Our A vs B Prediction</h2>\n<p>[Writer: add your pick here.]</p>"
+    out = _insert_section_after_intro(html, block)
+    assert out.index("Lede two") < out.index("A vs B Odds") < out.index("How to Claim") < out.index("Terms")
+
+    # No H2 in the body: fall back to the pre-terms slot rather than drop the block.
+    assert "A vs B Odds" in _insert_section_after_intro("<h1>T</h1><p>lede only</p>", block)

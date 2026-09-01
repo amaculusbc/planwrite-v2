@@ -3442,6 +3442,20 @@ def _insert_section_before_terms(html: str, section: str) -> str:
     return f"{html}\n{section}"
 
 
+def _insert_section_after_intro(html: str, section: str) -> str:
+    """Insert a section at the lead position, ahead of the first body H2.
+
+    Stage 2 of the preview-first template (affiliate team, 2026-08-19): a non-GOAL article must lead
+    with the game preview and keep the promo content secondary. The intro lede sits between the H1 and
+    the first H2, so the first H2 marks the start of the promo body. This places the section right
+    after the lede and above every promo section. If no H2 exists, fall back to the pre-terms slot.
+    """
+    first_h2 = re.search(r"<h2\b", html, flags=re.IGNORECASE)
+    if first_h2:
+        return html[: first_h2.start()] + section + "\n" + html[first_h2.start():]
+    return _insert_section_before_terms(html, section)
+
+
 _ANALYSIS_SECTION_HEADING_RE = r"<h[1-6]\b[^>]*>\s*(?:What to Watch Before Using|What the Numbers Say About)\b"
 
 
@@ -5236,7 +5250,7 @@ async def generate_draft_from_outline(
         )
         preview_block = _render_odds_and_prediction_block(odds, event_context)
         if preview_block:
-            html_output = _insert_section_before_terms(html_output, preview_block)
+            html_output = _insert_section_after_intro(html_output, preview_block)
     if is_goal and (operator_promos or operator_boosts or get_standing_promos(brand, sport)):
         promos_section = render_operator_promos_section(
             brand,
@@ -6661,7 +6675,7 @@ async def generate_draft_from_outline_streaming(
         )
         preview_block = _render_odds_and_prediction_block(odds, event_context)
         if preview_block:
-            html_output = _insert_section_before_terms(html_output, preview_block)
+            html_output = _insert_section_after_intro(html_output, preview_block)
     if is_goal and (operator_promos or operator_boosts or get_standing_promos(brand, sport)):
         promos_section = render_operator_promos_section(
             brand,
