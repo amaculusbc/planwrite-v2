@@ -27,6 +27,24 @@ MAX_PROVIDER_CANDIDATES = 80
 KALSHI_MAX_PAGES = 3
 KALSHI_DISCOVERY_PAGES = 1
 KALSHI_PAGE_LIMIT = 1000
+KALSHI_GAME_SERIES_PAGES = 2
+
+# Kalshi groups full-game winner markets under one series per sport (each event is one game,
+# with a clean "Team wins" market per side). Querying the sport's series and matching by team
+# returns the real moneyline directly, instead of scanning all open markets and missing the
+# winner - it is often on a later page, or only inside an unusable multi-team bundle. Series
+# confirmed live 2026-08-28. Soccer keeps its own event-ticker path (multi-league).
+_KALSHI_GAME_SERIES: dict[str, str] = {
+    "mlb": "KXMLBGAME",
+    "nfl": "KXNFLGAME",
+    "nba": "KXNBAGAME",
+    "nhl": "KXNHLGAME",
+    "wnba": "KXWNBAGAME",
+    "ncaaf": "KXNCAAFGAME",
+    "ncaafb": "KXNCAAFGAME",
+    "ncaab": "KXNCAAMBGAME",
+    "ncaamb": "KXNCAAMBGAME",
+}
 
 TEAM_CODE_ALIASES = {
     "argentina": {"arg"},
@@ -516,6 +534,63 @@ def _normalize_kalshi_market(market: dict[str, Any]) -> list[PredictionMarketCan
     ]
 
 
+def _kalshi_ticker_game_date(event_ticker: str) -> str:
+    """Parse the YYYY-MM-DD game date out of a Kalshi game ticker (KXMLBGAME-26SEP032210...)."""
+    match = re.search(r"-(\d{2})([A-Z]{3})(\d{2})\d{4}", str(event_ticker or "").upper())
+    if not match:
+        return ""
+    months = {m: i for i, m in enumerate(
+        ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"], 1)}
+    month = months.get(match.group(2))
+    if not month:
+        return ""
+    return f"20{match.group(1)}-{month:02d}-{match.group(3)}"
+
+
+async def _fetch_kalshi_game_markets(
+    search: PredictionMarketSearch, client: httpx.AsyncClient, base_params: dict[str, Any]
+) -> list[PredictionMarketCandidate]:
+    """Query the sport's Kalshi game-winner series and keep markets matching the searched teams."""
+    series = _KALSHI_GAME_SERIES.get(str(search.sport or "").strip().lower())
+    if not series or not (search.away_team and search.home_team):
+        return []
+    search_date = str(search.event_date or "").strip()[:10]
+    kept: list[PredictionMarketCandidate] = []
+    seen: set[str] = set()
+    cursor = ""
+    for _ in range(KALSHI_GAME_SERIES_PAGES):
+        params = {**base_params, "series_ticker": series, "limit": KALSHI_PAGE_LIMIT}
+        if cursor:
+            params["cursor"] = cursor
+        try:
+            response = await client.get(f"{KALSHI_BASE_URL}/markets", params=params)
+            if response.status_code != 200:
+                break
+            payload = response.json()
+        except Exception:
+            break
+        for market in (payload.get("markets") if isinstance(payload, dict) else []) or []:
+            if not isinstance(market, dict):
+                continue
+            # A team plays a multi-game series; keep only the searched game's date.
+            if search_date:
+                ticker_date = _kalshi_ticker_game_date(market.get("event_ticker") or "")
+                if ticker_date and ticker_date != search_date:
+                    continue
+            for candidate in _normalize_kalshi_market(market):
+                unique = f"{candidate.provider}:{candidate.provider_market_id}:{candidate.side}"
+                if unique in seen:
+                    continue
+                scored = _score_candidate(candidate, search)
+                if scored.score >= 35 and _should_keep_candidate(scored, search):
+                    kept.append(candidate)
+                    seen.add(unique)
+        cursor = str(payload.get("cursor") or "").strip() if isinstance(payload, dict) else ""
+        if not cursor:
+            break
+    return kept
+
+
 async def _fetch_kalshi(search: PredictionMarketSearch, client: httpx.AsyncClient) -> list[PredictionMarketCandidate]:
     base_params: dict[str, Any] = {
         "status": "open",
@@ -565,6 +640,16 @@ async def _fetch_kalshi(search: PredictionMarketSearch, client: httpx.AsyncClien
     # unauthenticated Kalshi market scan here because it is frequently rate-limited
     # on hosted infrastructure and can hide valid targeted results.
     if target_event_tickers:
+        return candidates[:MAX_PROVIDER_CANDIDATES]
+
+    # Targeted moneyline: query the sport's game-winner series and match the teams. This
+    # surfaces the clean full-game winner market, which the broad scan below often misses.
+    for candidate in await _fetch_kalshi_game_markets(search, client, base_params):
+        unique = f"{candidate.provider}:{candidate.provider_market_id}:{candidate.side}"
+        if unique not in seen:
+            candidates.append(candidate)
+            seen.add(unique)
+    if len(candidates) >= MAX_PROVIDER_CANDIDATES:
         return candidates[:MAX_PROVIDER_CANDIDATES]
 
     for params, page_count in param_sets:

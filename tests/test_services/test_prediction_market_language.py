@@ -361,3 +361,15 @@ async def test_generate_body_section_publishes_deterministic_prediction_market_e
     # The claim traces the money: the $25 action triggers the reward, which funds the position.
     assert "$25 qualifying action" in claim
     assert "$50 in Novig Coins" in claim
+
+
+def test_kalshi_ticker_game_date_parses_and_maps_series():
+    from app.services.prediction_markets import _kalshi_ticker_game_date, _KALSHI_GAME_SERIES
+
+    assert _kalshi_ticker_game_date("KXMLBGAME-26SEP032210STLLAD-STL") == "2026-09-03"
+    assert _kalshi_ticker_game_date("KXNFLGAME-26AUG261905HOUNYY") == "2026-08-26"
+    assert _kalshi_ticker_game_date("no-date-here") == ""
+    # Every mapped sport points at a Kalshi game-winner series ticker.
+    assert _KALSHI_GAME_SERIES["mlb"] == "KXMLBGAME"
+    assert _KALSHI_GAME_SERIES["nfl"] == "KXNFLGAME"
+    assert _KALSHI_GAME_SERIES["nba"] == "KXNBAGAME"
