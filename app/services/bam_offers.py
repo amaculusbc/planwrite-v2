@@ -101,6 +101,18 @@ PROPERTIES = {
         # shortcode (source: Ultimate SEO Guide -> Top Stories Hub, Goal.com row).
         "shortcode_style": "element",
     },
+    "csb": {
+        "property_id": "21",
+        "placement_id": "2314",
+        "switchboard_domain": "switchboard.actionnetwork.com",
+        "name": "Canada Sports Betting",
+        "default_context": "web-article-top-stories",
+        # CSB (canadasportsbetting.ca) uses the bam-bonus-promotion div block
+        # with a reveal-code button, not the [bam-inline-promotion] shortcode
+        # (source: Ultimate SEO Guide -> Top Stories Hub, CSB row: property 21,
+        # placement 2314). CSB is a Canadian property; generate with market=CA.
+        "shortcode_style": "bonus_block",
+    },
 }
 
 DEFAULT_PROPERTY = "action_network"
@@ -117,6 +129,16 @@ def build_bam_shortcode(
     """Render the BAM promo unit in the CMS syntax the property expects."""
     placement_id = property_config.get("placement_id", "2037")
     property_id = property_config.get("property_id", "1")
+    if property_config.get("shortcode_style") == "bonus_block":
+        # CSB's CMS: the bam-bonus-promotion div block with a reveal-code
+        # button (source: Ultimate SEO Guide -> Top Stories Hub, CSB row).
+        return (
+            f'<div class="bam-bonus-promotion" data-placement-id="{placement_id}" '
+            f'data-property-id="{property_id}" data-context="{context}" '
+            f'internal-id="{internal_id}" affiliate-type="{affiliate_type}" '
+            f'affiliate="{affiliate}" data-reveal="animated" '
+            f'data-reveal-text="REVEAL REFERRAL CODE"></div>'
+        )
     if property_config.get("shortcode_style") == "element":
         return (
             f'<p><bam-inline-promotion placement-id="{placement_id}" '

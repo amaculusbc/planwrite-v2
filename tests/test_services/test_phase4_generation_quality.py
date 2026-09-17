@@ -1742,6 +1742,26 @@ def test_goal_com_offer_block_renders_cms_element_format():
     assert 'property-id="1"' in an_block
 
 
+def test_csb_offer_block_renders_bonus_promotion_div_format():
+    from app.services.draft import _render_html_offer_block, _is_property_correct_bam_shortcode
+
+    offer = {
+        "brand": "ComeOn!",
+        "affiliate_type": "sportsbook",
+        "internal_id": "evergreen",
+        "shortcode": '[bam-inline-promotion placement-id="2314" property-id="21" context="web-article-top-stories" internal-id="evergreen" affiliate-type="sportsbook" affiliate="ComeOn!"]',
+    }
+    # CSB's CMS uses the bam-bonus-promotion div block, not [bam-inline-promotion].
+    block = _render_html_offer_block(offer, "https://switchboard.actionnetwork.com/offers?propertyId=21", property_key="csb")
+    assert block.startswith('<div class="bam-bonus-promotion" ')
+    assert block.endswith('data-reveal-text="REVEAL REFERRAL CODE"></div>')
+    assert 'data-placement-id="2314"' in block
+    assert 'data-property-id="21"' in block
+    assert 'data-context="web-article-top-stories"' in block
+    assert "[bam-inline-promotion" not in block and "<bam-inline-promotion" not in block
+    assert _is_property_correct_bam_shortcode(block, "csb") is True
+
+
 def test_body_word_count_excludes_signup_terms_shortcodes_and_disclaimers():
     html = (
         "<h1>Title</h1>"

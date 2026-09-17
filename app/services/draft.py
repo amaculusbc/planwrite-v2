@@ -719,7 +719,7 @@ def _apply_content_mode_language_guardrails(html: str, content_mode: str) -> str
         return key
 
     protected_html = re.sub(
-        r"\[bam-inline-promotion[^\]]+\]|<bam-inline-promotion\b[^>]*>\s*</bam-inline-promotion>",
+        r"\[bam-inline-promotion[^\]]+\]|<bam-inline-promotion\b[^>]*>\s*</bam-inline-promotion>|<div\b[^>]*bam-bonus-promotion[^>]*>\s*</div>",
         _protect_shortcode,
         html,
         flags=re.IGNORECASE,
@@ -924,7 +924,17 @@ def _is_property_correct_bam_shortcode(shortcode: str, property_key: str) -> boo
     if not prop:
         return False
     lowered = shortcode.lower()
-    expected_element = prop.get("shortcode_style") == "element"
+    style = prop.get("shortcode_style")
+    if style == "bonus_block":
+        # CSB's bam-bonus-promotion div carries the ids under data- attributes.
+        if 'class="bam-bonus-promotion"' not in lowered:
+            return False
+        return (
+            _shortcode_attr(shortcode, "data-property-id") == str(prop.get("property_id"))
+            and _shortcode_attr(shortcode, "data-placement-id") == str(prop.get("placement_id"))
+            and _shortcode_attr(shortcode, "affiliate-type") == normalize_bam_affiliate_type(_shortcode_attr(shortcode, "affiliate-type"))
+        )
+    expected_element = style == "element"
     has_expected_syntax = (
         "<bam-inline-promotion" in lowered if expected_element else "[bam-inline-promotion" in lowered
     )
