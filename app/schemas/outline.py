@@ -2,7 +2,11 @@
 
 from typing import Optional, Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
+
+# Properties that only run in the Canadian market. Generation for these coerces
+# market to CA, so the batch/API path is correct even when the caller omits it.
+CA_ONLY_PROPERTIES = {"csb"}
 
 
 class GameContext(BaseModel):
@@ -51,6 +55,12 @@ class OutlineRequest(BaseModel):
     game_context: Optional[GameContext] = None
     article_preferences: Optional[ArticlePreferences] = None
 
+    @model_validator(mode="after")
+    def _default_ca_market(self):
+        if (self.offer_property or "").strip().lower() in CA_ONLY_PROPERTIES:
+            self.market = "CA"
+        return self
+
 
 class DraftRequest(BaseModel):
     """Request schema for draft generation."""
@@ -69,6 +79,12 @@ class DraftRequest(BaseModel):
     style_profile_id: Optional[int] = None
     game_context: Optional[GameContext] = None
     article_preferences: Optional[ArticlePreferences] = None
+
+    @model_validator(mode="after")
+    def _default_ca_market(self):
+        if (self.offer_property or "").strip().lower() in CA_ONLY_PROPERTIES:
+            self.market = "CA"
+        return self
 
 
 class ValidationResult(BaseModel):

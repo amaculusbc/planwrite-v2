@@ -77,7 +77,7 @@
                 <div>
                     <label for="offer_property" class="block text-sm font-medium text-gray-700">Property</label>
                     <select x-model="form.offer_property" id="offer_property" name="offer_property"
-                            @change="loadOffers()"
+                            @change="onOfferPropertyChange()"
                             class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm">
                         <template x-for="prop in properties" :key="prop.key">
                             <option :value="prop.key" x-text="prop.label"></option>
@@ -1386,6 +1386,16 @@ function articleWizard() {
             this.form.alt_offer_ids = [];
             this.loadOffers();
             this.loadLinkOptions();
+        },
+        onOfferPropertyChange() {
+            // CSB (Canada Sports Betting) is a Canadian property; default its
+            // market to CA on selection. onMarketChange reloads offers and links.
+            if (this.form.offer_property === 'csb' && this.form.market !== 'CA') {
+                this.form.market = 'CA';
+                this.onMarketChange();
+                return;
+            }
+            this.loadOffers();
         },
         async loadLinkOptions() {
             const property = (this.form.offer_property || '').trim();
