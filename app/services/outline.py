@@ -667,15 +667,18 @@ def _apply_editorial_section_rules(
 # ============================================================================
 
 
-def _normalize_article_preferences(article_preferences: dict[str, Any] | None = None) -> dict[str, Any]:
+def _normalize_article_preferences(article_preferences: dict[str, Any] | None = None, offer_property: str = "") -> dict[str, Any]:
     """Normalize optional writer preferences used by outline/draft generation."""
     prefs = dict(article_preferences or {})
+    # CSB commercial articles run long (the DailyFaceoff template is ~1200-1400 words),
+    # so default the csb property to more sections; the outline gives each a distinct topic.
+    default_count = 7 if str(offer_property or "").strip().lower() == "csb" else 5
     section_count = prefs.get("section_count")
     try:
-        section_count = int(section_count) if section_count not in (None, "") else 5
+        section_count = int(section_count) if section_count not in (None, "") else default_count
     except (TypeError, ValueError):
-        section_count = 5
-    section_count = max(3, min(section_count, 6))
+        section_count = default_count
+    section_count = max(3, min(section_count, 8))
     return {
         "secondary_keywords": [str(x).strip() for x in (prefs.get("secondary_keywords") or []) if str(x).strip()][:6],
         "preferred_internal_urls": [str(x).strip() for x in (prefs.get("preferred_internal_urls") or []) if str(x).strip()][:5],
@@ -789,6 +792,7 @@ async def generate_structured_outline(
     competitor_context: str = "",
     variation_key: str = "",
     article_preferences: dict[str, Any] | None = None,
+    offer_property: str = "",
 ) -> list[dict]:
     """Generate a structured outline with unique talking points per section.
 
@@ -819,7 +823,7 @@ async def generate_structured_outline(
     is_dfs = content_mode == CONTENT_MODE_DFS
     style_guide = get_style_instructions()
     variation_key = variation_key or uuid4().hex
-    prefs = _normalize_article_preferences(article_preferences)
+    prefs = _normalize_article_preferences(article_preferences, offer_property=offer_property)
     market = prefs["market"]
     title_focus_terms = _title_focus_terms(title, keyword, brand, event_context)
     section_titles = _contextual_section_titles(

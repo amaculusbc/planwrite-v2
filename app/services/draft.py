@@ -357,7 +357,7 @@ def _normalize_article_preferences(article_preferences: dict[str, Any] | None = 
         section_count = int(section_count) if section_count not in (None, "") else 5
     except (TypeError, ValueError):
         section_count = 5
-    section_count = max(3, min(section_count, 6))
+    section_count = max(3, min(section_count, 8))
     return {
         "market": str(prefs.get("market") or "US").strip().upper() or "US",
         "secondary_keywords": [str(x).strip() for x in (prefs.get("secondary_keywords") or []) if str(x).strip()][:6],

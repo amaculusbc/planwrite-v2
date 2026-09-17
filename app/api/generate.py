@@ -400,6 +400,7 @@ async def _stream_outline(request: OutlineRequest, db: AsyncSession) -> AsyncGen
             bet_example=bet_example_str,
             competitor_context=competitor_context,
             article_preferences=prefs,
+            offer_property=request.offer_property,
         )
         tokens = structured_to_tokens(outline_structured)
         outline_text = outline_to_text(outline_structured)
@@ -581,6 +582,7 @@ async def generate_outline_sync(
         bet_example=bet_example_str,
         competitor_context=competitor_context,
         article_preferences=prefs,
+        offer_property=request.offer_property,
     )
     tokens = structured_to_tokens(outline_structured)
     outline_text = outline_to_text(outline_structured)
