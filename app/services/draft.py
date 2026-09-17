@@ -5257,6 +5257,7 @@ async def generate_draft_from_outline(
             bc_core_context=bc_core_context,
             content_mode=content_mode,
             bet_example_data=bet_example_data,
+            target_words=1200 if str(offer_property or "").strip().lower() == "csb" else 500,
         )
         preview_block = _render_odds_and_prediction_block(odds, event_context)
         if preview_block:
@@ -6227,8 +6228,13 @@ Do NOT repeat information from previous sections."""
         )
     else:
         language_guardrail = ""
+    is_csb_property = str(offer_property or "").strip().lower() == "csb"
     format_guardrails = [
-        "- Default to 2 short HTML paragraphs unless the section objective clearly calls for a list or table.",
+        (
+            "- Write 3 to 4 full HTML paragraphs, a substantial section of about 180 to 220 words. Go deep on the matchup analysis, stats, odds and reasoning. Do not pad with filler or repeat earlier sections."
+            if is_csb_property else
+            "- Default to 2 short HTML paragraphs unless the section objective clearly calls for a list or table."
+        ),
     ]
     if prefs["include_bullets"]:
         format_guardrails.append("- You may use a compact <ul><li> list if it helps clarity. Keep it short and editorial, not templated.")
@@ -6705,6 +6711,7 @@ async def generate_draft_from_outline_streaming(
             bc_core_context=bc_core_context,
             content_mode=content_mode,
             bet_example_data=bet_example_data,
+            target_words=1200 if str(offer_property or "").strip().lower() == "csb" else 500,
         )
         preview_block = _render_odds_and_prediction_block(odds, event_context)
         if preview_block:
