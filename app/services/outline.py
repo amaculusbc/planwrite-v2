@@ -672,7 +672,7 @@ def _normalize_article_preferences(article_preferences: dict[str, Any] | None = 
     prefs = dict(article_preferences or {})
     # CSB commercial articles run long (the DailyFaceoff template is ~1200-1400 words),
     # so default the csb property to more sections; the outline gives each a distinct topic.
-    default_count = 7 if str(offer_property or "").strip().lower() == "csb" else 5
+    default_count = 8 if str(offer_property or "").strip().lower() == "csb" else 5
     section_count = prefs.get("section_count")
     try:
         section_count = int(section_count) if section_count not in (None, "") else default_count
