@@ -5614,6 +5614,15 @@ Output clean HTML only - use <p>, <a>, <strong> tags. No markdown. No exclamatio
             "This is a Canada-market article. Never say U.S. residents, US users, US states, eligible states, or nationwide.",
             "Use legal-age users in listed Canadian provinces where permitted; do not assert 21+ unless the source explicitly says it.",
         ])
+    if str(offer_property or "").strip().lower() == "csb":
+        requirements.extend([
+            "CANADIAN PRESS STYLE: use Canadian spelling (favour, colour, centre, defence, licence as a noun, cheque).",
+            "Numbers: spell out one to nine; use figures for 10 and up. Use figures for money, odds and ages (C$25, +180, 19+).",
+            "Money is Canadian: write C$ amounts, never US$.",
+            "Do not open with the full calendar date. If a date appears, abbreviate long months Canadian-Press style with a figure day (Jan., Feb., Aug., Sept., Oct., Nov., Dec.; spell out March, April, May, June and July), for example 'Sept. 21'. Never write a month name followed by a four-digit year in the lede.",
+            "Write 'per cent' as two words, not 'percent'.",
+            "Do not use the serial (Oxford) comma.",
+        ])
     if prediction_market:
         requirements.append(
             "Use prediction-market terms only (market, position, contract, trade). "
