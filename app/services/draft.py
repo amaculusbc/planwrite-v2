@@ -6245,6 +6245,19 @@ Do NOT repeat information from previous sections."""
 - Never address readers by state or single out a state in body copy ("Kentucky bettors", "For eligible Kentucky users 21+", "In Kentucky") - GOAL is a national site. Legal states appear only in the how-to steps.
 """
 
+    csb_style_md = ""
+    if str(offer_property or "").strip().lower() == "csb":
+        csb_style_md = """CANADIAN PRESS STYLE (Canada Sports Betting - write in Canadian Press style):
+- Canadian spelling throughout: favour, colour, honour, centre, defence, offence, licence (noun), cheque, travelled, cancelled.
+- Numbers: spell out one to nine; use figures for 10 and up. Always use figures for money, odds, ages and betting lines (C$25, +180, 19+).
+- Money is Canadian: write C$25, never US$ or a bare $ for large amounts.
+- Dates: abbreviate long months with a figure date (Jan., Feb., Aug., Sept., Oct., Nov., Dec.); spell out March, April, May, June and July. Example: Sept. 17.
+- Write "per cent" as two words in body prose, not "percent".
+- Do not use the serial (Oxford) comma. Example: "hockey, football and basketball".
+- Provinces, not states. State the legal age only from the offer terms; do not guess, because the age varies by province.
+- Use Canadian sports usage where natural: goaltender or goalie, and puck line for hockey.
+"""
+
     user_prompt = f"""Write the content for this section:
 
 SECTION TITLE: {section_title}
@@ -6313,6 +6326,7 @@ PREVIOUSLY WRITTEN (do NOT repeat this content):
 {language_guardrail}
 {format_guardrails_md}
 {goal_voice_md}
+{csb_style_md}
 SECTION-SPECIFIC GUARDRAILS:
 - Do not repeat the H1 wording or simply restate the heading.
 - Do not call the offer nationwide.
