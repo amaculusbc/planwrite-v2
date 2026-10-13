@@ -30,16 +30,20 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "sqlite+aiosqlite:///./storage/planwrite.db"
 
-    # OpenAI
+    # LLM (Anthropic Claude for generation)
+    anthropic_api_key: str = ""
+    llm_model: str = "claude-opus-5-5"
+    # OpenAI is used ONLY for embeddings (RAG); Anthropic has no embeddings API.
+    # A missing/invalid openai key degrades RAG style-reference but does not break
+    # generation (callers wrap embedding use in try/except).
     openai_api_key: str = ""
     embed_model: str = "text-embedding-3-small"
-    llm_model: str = "gpt-5.5-2026-04-23"
     # Token pricing in USD per 1M tokens, for per-article cost tracking. Defaults are the
-    # gpt-5.5 list rates (input $5, output $30, cached input $0.50); override via env when the
-    # model or its pricing changes so cost accounting stays honest.
-    llm_price_input_per_m: float = 5.0
-    llm_price_output_per_m: float = 30.0
-    llm_price_cached_input_per_m: float = 0.5
+    # claude-opus-5-5 list rates (input $4, output $20, cached-read input $0.20); override via
+    # env when the model or its pricing changes so cost accounting stays honest.
+    llm_price_input_per_m: float = 4.0
+    llm_price_output_per_m: float = 20.0
+    llm_price_cached_input_per_m: float = 0.20
 
     # Offers (BAM)
     offers_property: str = "action_network"

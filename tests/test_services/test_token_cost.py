@@ -1,20 +1,23 @@
 """LLM token/cost accounting tests."""
 
+from app.config import get_settings
 from app.services.llm import usage_cost_usd, reset_token_usage, get_token_usage, _record_usage
 
 
 class _Usage:
-    def __init__(self, prompt, completion, cached=0):
-        self.prompt_tokens = prompt
-        self.completion_tokens = completion
-        self.total_tokens = prompt + completion
-        self.prompt_tokens_details = type("D", (), {"cached_tokens": cached})()
+    """Anthropic Messages usage shape: fresh input + separate cache read/write + output."""
+    def __init__(self, input_tokens, output_tokens, cache_read=0, cache_write=0):
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
+        self.cache_read_input_tokens = cache_read
+        self.cache_creation_input_tokens = cache_write
 
 
 def test_usage_cost_uses_configured_rates():
-    # gpt-5.5 defaults: $5/M in, $30/M out.
+    s = get_settings()
     cost = usage_cost_usd({"prompt_tokens": 10_000, "cached_input_tokens": 0, "completion_tokens": 2_000})
-    assert abs(cost - (10_000 / 1e6 * 5 + 2_000 / 1e6 * 30)) < 1e-9
+    expected = 10_000 / 1e6 * s.llm_price_input_per_m + 2_000 / 1e6 * s.llm_price_output_per_m
+    assert abs(cost - expected) < 1e-9
 
 
 def test_cached_input_billed_at_cheap_rate():
@@ -25,8 +28,9 @@ def test_cached_input_billed_at_cheap_rate():
 
 def test_token_usage_accumulates_across_calls():
     reset_token_usage()
-    _record_usage("structured", "gpt-5.5", _Usage(1000, 200))
-    _record_usage("completion", "gpt-5.5", _Usage(3000, 500, cached=1000))
+    _record_usage("structured", "claude-opus-5-5", _Usage(1000, 200))
+    # 2000 fresh + 1000 cache-read = 3000 total input, 1000 of it cached.
+    _record_usage("completion", "claude-opus-5-5", _Usage(2000, 500, cache_read=1000))
     u = get_token_usage()
     assert u["calls"] == 2
     assert u["prompt_tokens"] == 4000
