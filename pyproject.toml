@@ -14,7 +14,8 @@ dependencies = [
     "itsdangerous>=2.2.0",
 
     # Database
-    "sqlalchemy>=2.0.25",
+    "sqlalchemy[asyncio]>=2.0.25",
+    "greenlet>=3.0.0",  # required by SQLAlchemy's async engine; pin explicitly so a dependency re-resolve never drops it
     "alembic>=1.13.1",
     "aiosqlite>=0.19.0",
     "asyncpg>=0.30.0",
